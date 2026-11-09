@@ -1,0 +1,6 @@
+{
+  "name": "printease-firebase-tools",
+  "private": true,
+  "scripts": {"test:rules": "firebase emulators:exec --only firestore,storage --project demo-printease \"node --test firebase/rules.test.cjs\""},
+  "devDependencies": {"@firebase/rules-unit-testing": "^5.0.0", "firebase": "^12.0.0", "firebase-admin": "^13.0.0", "firebase-tools": "^14.0.0"}
+}

@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function admin() { return signedIn() && request.auth.token.get('admin', false) == true; }
+    function validOptions(o) {
+      return o.keys().hasAll(['paper','pages','copies','color','duplex'])
+        && o.keys().hasOnly(['paper','pages','copies','color','duplex'])
+        && o.paper in ['A4','Letter','Legal']
+        && o.pages is int && o.pages >= 1 && o.pages <= 1000
+        && o.copies is int && o.copies >= 1 && o.copies <= 100
+        && o.color is bool && o.duplex is bool;
+    }
+    function validPrice(d) {
+      return d.estimatedCost == d.options.pages * d.options.copies *
+        ((d.options.color ? 10 : 2) + (d.options.paper == 'Legal' ? 1 : 0));
+    }
+    function validTransition(old, next) {
+      return (old == 'Pending' && next in ['Accepted','Rejected'])
+        || (old == 'Accepted' && next == 'Printing')
+        || (old == 'Printing' && next == 'Ready for Pickup')
+        || (old == 'Ready for Pickup' && next == 'Completed');
+    }
+    match /orders/{orderId} {
+      allow read: if admin() || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn() && !admin()
+        && request.resource.data.keys().hasAll(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
+        && request.resource.data.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.studentName is string && request.resource.data.studentName.size() > 0 && request.resource.data.studentName.size() <= 200
+        && request.resource.data.fileName is string && request.resource.data.fileName.size() > 0 && request.resource.data.fileName.size() <= 255
+        && request.resource.data.storagePath == 'documents/' + request.auth.uid + '/' + orderId + '.pdf'
+        && validOptions(request.resource.data.options) && validPrice(request.resource.data)
+        && request.resource.data.createdAt is int
+        && request.resource.data.createdAt >= request.time.toMillis() - 300000
+        && request.resource.data.createdAt <= request.time.toMillis() + 300000
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.queue == null && request.resource.data.queueDay == null
+        && request.resource.data.note == '';
+      allow update: if admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','queue','queueDay','note'])
+        && validTransition(resource.data.status, request.resource.data.status)
+        && request.resource.data.note is string && request.resource.data.note.size() <= 500
+        && (request.resource.data.status != 'Rejected' || request.resource.data.note.size() > 0)
+        && ((request.resource.data.status == 'Accepted'
+          && request.resource.data.queueDay is string
+          && request.resource.data.queueDay.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.queue is int && request.resource.data.queue > 0
+          && getAfter(/databases/$(database)/documents/counters/$(request.resource.data.queueDay)).data.last == request.resource.data.queue)
+          || (request.resource.data.status != 'Accepted'
+            && request.resource.data.queue == resource.data.queue
+            && request.resource.data.queueDay == resource.data.queueDay));
+      allow delete: if false;
+    }
+    match /counters/{day} {
+      allow read: if admin();
+      allow create: if admin() && request.resource.data.keys().hasOnly(['last']) && request.resource.data.last == 1;
+      allow update: if admin() && request.resource.data.keys().hasOnly(['last']) && request.resource.data.last == resource.data.last + 1;
+      allow delete: if false;
+    }
+  }
+}

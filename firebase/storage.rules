@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function admin() { return request.auth != null && request.auth.token.get('admin', false) == true; }
+    match /documents/{uid}/{file} {
+      allow read: if request.auth != null && (request.auth.uid == uid || admin());
+      allow create: if request.auth != null && request.auth.uid == uid && !admin()
+        && file.matches('^[A-Za-z0-9-]+[.]pdf$')
+        && request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+      allow delete: if request.auth != null && (request.auth.uid == uid || admin());
+      allow update: if false;
+    }
+  }
+}
