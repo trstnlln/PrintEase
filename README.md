@@ -17,6 +17,12 @@ Students can use **Continue with Google** to choose their Gmail/Google account w
 
 The [PrintEase logo](docs/branding/printease-logo.png) is included as a transparent PNG and used in the app header and adaptive launcher icon.
 
+## Use on an iPhone
+
+Open **[PrintEase Web](https://printease-campus.consideratefennel8.chatgpt.site)** in Safari, then use **Share → Add to Home Screen**. The Site starts owner-private: use the owning ChatGPT account if prompted, then PrintEase’s Google/email sign-in. Live web and Android accounts/orders share the same Firebase project; their local demos remain separate.
+
+The owner must add the deployed hostname under Firebase Authentication’s authorized domains. See **[web setup and checks](web-app/README.md)** for the exact domain, Storage/CORS setup and remaining iPhone checks. The web source is in `web-app/`; the native Android app remains in `app/`.
+
 ## Open and run
 
 This Kotlin version is on the **`kotlin-native` branch**. In an existing clone:

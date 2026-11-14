@@ -3,3 +3,6 @@ legacy/flutter/** linguist-vendored
 *.kts text eol=lf
 gradlew text eol=lf
 gradlew.bat text eol=crlf
+
+web-app/dist/** -whitespace linguist-generated
+web-app/tests/*.pdf binary
