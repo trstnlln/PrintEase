@@ -1,113 +1,118 @@
-# PrintEase
+# PrintEase · Native Android
 
-A Flutter + Dart + Firebase Android prototype for BSU Alangilan's campus printing queue. Open this folder in **Android Studio**. Student and shop administrator views live in the same app.
+Campus printing without the wait. **Kotlin + Jetpack Compose + Firebase**, developed in Android Studio. Students submit PDFs and follow their orders; shop staff review documents, assign daily queue numbers and update progress.
 
-## Run the demo in Android Studio
+<p>
+  <img src="docs/screenshots/student.png" width="280" alt="PrintEase student dashboard" />
+  <img src="docs/screenshots/admin.png" width="280" alt="PrintEase administrator print queue" />
+</p>
 
-1. Install the Flutter SDK (stable; Dart >=3.10) and Android Studio's **Flutter** plugin (which includes Dart support).
-2. In Android Studio's SDK Manager, install the Android SDK and an emulator image. Set the Flutter SDK path in Settings → Languages & Frameworks → Flutter.
-3. Open this project folder (the folder containing `pubspec.yaml`, not only `android/`). Run `flutter pub get` in the terminal.
-4. Start an Android emulator or connect a phone with USB debugging. Select `lib/main.dart` and press Run.
-5. Choose **Try as student** or **Try as administrator**. In Account, switch demo roles to manage the same orders. Demo mode is enabled by default; it uses in-memory data and resets on restart. Sample orders have no attached PDF; upload your own to test preview.
+Screenshots captured from the native Compose app using the Android host test renderer.
 
-Terminal equivalent:
+## Open and run
+
+This Kotlin version is on the **`kotlin-native` branch**. In an existing clone:
 
 ```sh
-flutter pub get
-flutter run --dart-define=DEMO=true
+git fetch origin
+git switch kotlin-native
 ```
 
-A web target is included for convenient demo checks (`flutter run -d chrome`). Android is the primary target.
+Open the repository root (the folder with `settings.gradle.kts`) in Android Studio. This is a **native Android project**: no Flutter or Dart SDK is needed. Use Android Studio's embedded JDK 17 or 21, install SDK Platform 35 when prompted, and let Gradle sync.
 
-## Connect your Firebase project
+In **Build → Select Build Variant** (or the Build Variants panel), choose **`demoDebug`**, start an Android emulator or connect an Android 8+ phone, and click Run. The demo works immediately, with no Firebase account, billing or configuration file.
 
-No live Firebase project or credentials are bundled. Demo mode does not contact Firebase.
+- Student: choose **Continue as student**.
+- Administrator: choose **Explore the shop workspace**.
+- Switch roles in Account to manage the same demo requests.
+- Demo orders and role persist on the device. App data removal/uninstallation resets them.
+- Sample orders include previewable PDFs. Upload your own PDF for the full submission flow.
 
-1. Create a Firebase project. Enable **Authentication → Email/Password**, create **Cloud Firestore** in production mode, and provision **Cloud Storage**. Cloud Storage requires a Blaze billing account; check current Firebase quotas and pricing, set budget alerts, and use test PDFs.
-2. Install Node.js, Firebase CLI and FlutterFire CLI:
+Terminal builds:
 
 ```sh
-npm install -g firebase-tools
-firebase login
-dart pub global activate flutterfire_cli
-flutterfire configure
+# macOS/Linux
+./gradlew :app:assembleDemoDebug
+# Windows PowerShell
+.\gradlew.bat :app:assembleDemoDebug
 ```
 
-3. Select your project and Android platform. The existing Android application ID is `com.printease.printease`. Allow the CLI to replace `lib/firebase_options.dart` (a setup placeholder) and generate native configuration. If prompted to overwrite the file, choose yes. If you also want live Firebase on web, select web too. Keep service-account credentials outside the repository; they never belong in the app.
-4. Deploy the included rules to **your project** before using real student documents:
+APK output: `app/build/outputs/apk/demo/debug/app-demo-debug.apk`.
 
-```sh
-firebase deploy --only firestore:rules,firestore:indexes,storage --project YOUR_PROJECT_ID
+## Connect a real Firebase project
+
+See **[Firebase setup](docs/FIREBASE_SETUP.md)** for the step-by-step console instructions, including the `google-services.json` file you download from Firebase.
+
+Quick version:
+
+1. Register an Android app in your Firebase project with package **`com.printease.printease`**.
+2. Save its downloaded configuration as **`app/google-services.json`**. This file is ignored by Git. Do not place it in the repository root or the legacy Flutter folder.
+3. Enable Email/Password Authentication, create Firestore in production mode, and provision Storage. Storage may require Blaze billing; confirm current Firebase pricing before enabling it.
+4. Deploy the included Firebase rules to your project. The app enforces student ownership, admin-only management, valid pricing, correct transitions, immutable documents and unique queue assignments.
+5. Sync Gradle and select **`liveDebug`**. The demo and live apps have different application IDs, so they can coexist on a device.
+6. Register student accounts in the live app. Pre-create the admin in Firebase Authentication and assign its `admin` custom claim using `tools/set-admin.cjs` from a trusted machine. Sign in again afterward.
+
+A missing Firebase configuration produces a setup screen, not a crash or a silent switch to demo. Firebase SDKs are already included; do not paste duplicate Gradle plugins or dependencies from the console.
+
+## What changed from the Flutter prototype
+
+- Native Kotlin application code and Material 3 Compose UI, with light/dark themes, clear text hierarchy, accessible controls, responsive content widths and edge-to-edge insets.
+- Student overview, searchable order history, useful empty states, status filters, admin queue and account/price guide.
+- System PDF picker; bounded local copy; actual PDF validation/page counting with Android PDF APIs; in-app paged preview and optional external viewer. No broad storage permission needed.
+- Saved print drafts survive configuration changes and Android state restoration, including selected PDF, paper, copies, color and duplex options.
+- Explicit review step before submission; a fixed action area keeps the submit button reachable; invalid copy counts cannot be submitted.
+- Retriable upload progress with a stable request ID. An uncertain write is checked on retry, avoiding duplicate orders and avoiding deletion of documents belonging to successful orders.
+- Demo persistence and real sample PDF previews. Explicit demo and live build variants.
+- Auth restoration, student registration, password reset and admin roles obtained from trusted Firebase custom claims.
+- Daily Philippine-time queue counters assigned atomically on acceptance. Server rules prevent number reuse and bind each counter write to the accepted order.
+- Rejection reasons, student cancellation while pending, and protected status transitions. Both the client transaction and Firebase rules check the current state.
+- Connection/cached-data notices, readable errors, bounded network waits and disabled destructive actions during saves.
+- Firebase order schema remains compatible with the original prototype. Deploy updated rules before using cancellation or queue assignment in the new app.
+
+The original Flutter source is preserved in `legacy/flutter/` as a reference. The root project is now the native Android app. The legacy frontend will need corresponding changes before it can use the new counter rules; use the Kotlin live app after deploying the updated rules.
+
+## Structure
+
+```
+app/                         Kotlin Android application
+  src/main/java/com/printease/app/
+    Models.kt                Pricing, orders, workflow, queue sorting
+    Documents.kt             Bounded PDF import, validation and rendering
+    Repository.kt            Persistent demo and Firebase repositories
+    PrintViewModel.kt        Session-aware state, drafts and actions
+    Screens.kt               Compose screens and PDF preview
+    Theme.kt                 Light/dark theme
+  src/test/                  Model, repository/PDF and Compose tests
+firebase/                    Firestore/Storage rules and emulator tests
+tools/set-admin.cjs          Trusted admin provisioning helper
+docs/                        Setup and verification notes
+legacy/flutter/              Preserved original Flutter app
 ```
 
-5. In Android Studio, edit the run configuration for `lib/main.dart`, add `--dart-define=DEMO=false` to Additional run args, and restart the app. Or:
+## Validation
 
 ```sh
-flutter run --dart-define=DEMO=false
-```
-
-6. Register student accounts using the app. Pre-create the shop administrator account in Firebase Authentication and copy its UID. Assign its custom claim from a trusted machine:
-
-```sh
-npm ci
-# Set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON path using
-# your operating system's environment settings. Do not paste keys into source.
-node tools/set-admin.cjs THE_ADMIN_USER_UID
-```
-
-The service account needs permission to manage Firebase Authentication users. The administrator must sign out and back in afterward. Student registration cannot grant admin access. In live mode there is no role switch. Use the same Firebase project for the service account, app, and rules.
-
-## Included features
-
-- Email/password registration and sign-in; trusted administrator custom claim.
-- Student dashboard, order history, filters, account details, and shop information.
-- PDF selection (5 MB maximum), signature check, actual PDF parsing, page counting, and preview. Invalid/unreadable files produce a retryable error. Password-protected PDFs are not supported for this prototype.
-- A4, Letter or Legal paper; 1–100 copies; black & white or color; single/double sided.
-- Review-before-submit and upload progress. PDF bytes go to private Cloud Storage; order metadata goes to Firestore. Uploads and submissions require connectivity.
-- Administrator PDF preview, acceptance, rejection with reason, and ordered status updates: Pending → Accepted → Printing → Ready for Pickup → Completed.
-- Atomic daily queue counter, assigned on acceptance. Queue day uses Philippine time (UTC+8); numbers are unique within that day when using the acceptance transaction. Older orders display their queue date.
-- Firestore listeners synchronize views while the app is running. No background push notifications are included.
-- Private document rules, owner-scoped order queries, and administrator-only queue/status changes. Firestore rules also validate the estimate against the sample price formula.
-
-## Pricing
-
-These are **sample rates**, not confirmed shop prices:
-
-- A4 / Letter: PHP 2 per black & white printed side; PHP 10 per color printed side.
-- Legal adds PHP 1 per printed side.
-- Estimate = pages × copies × rate. Duplex reduces sheet count, not price per printed side.
-- Duplex sheets = ceil(pages / 2) × copies. Blank final backs are not charged.
-
-Update `PrintOptions.rate`, the pricing text in the Account screen, and `validPrice` in Firestore rules together if the shop changes rates. All pages in an order use the selected color mode; no mixed-color detection or page ranges. The shop reviews the PDF and confirms pricing before accepting. Page count is parsed on the client; a modified client could misreport it, so the administrator must verify it. Strict server-side PDF validation would require a trusted backend.
-
-## Project layout
-
-- `lib/main.dart`: theme, bootstrapping and Firebase initialization.
-- `lib/screens.dart`: authentication, dashboards, submission, details and PDF preview.
-- `lib/models.dart`: order model, pricing, status transitions and queue day.
-- `lib/store.dart`: Firebase operations plus isolated in-memory demo mode.
-- `firebase/`: Firestore/Storage rules, indexes and emulator tests.
-- `tools/set-admin.cjs`: trusted administrator provisioning.
-- `android/`: generated Android Studio project and manifest with internet permission.
-
-The app uses Flutter's `ChangeNotifier` / `ListenableBuilder`; no additional state management framework is needed for this scope. Orders are sorted on the client to avoid requiring composite indexes for the small prototype dataset. A production deployment should use pagination.
-
-## Checks
-
-```sh
-flutter analyze
-flutter test
-
+./gradlew :app:testDemoDebugUnitTest :app:lintDemoDebug :app:assembleDemoDebug
 npm ci
 npm run test:rules
 ```
 
-Rule tests launch local Firestore and Storage emulators against the `demo-printease` project; they do not access a production project. Firebase emulators require a supported Java runtime. Flutter native host tests may require a C/C++ toolchain for the PDF library. Android development needs the SDK/NDK versions requested by Flutter and its plugins.
+Host tests use Robolectric (Android 34 for Compose and Android 35 for repositories); the first run downloads its Android runtime. Compose tests cover starting a print, search empty states, rejection validation, disabled empty submission and the dark account screen. Screenshots are written under `app/build/screenshots/`. Firebase emulator tests cover private access, spoofing/price tampering, workflow, PDF ownership/type/size, stable-ID retry lookup, cancellation, duplicate queue rejection and simultaneous acceptance.
 
-## Before your class demonstration
+Android's native PDF engine is not implemented by Robolectric. The separate tests in `app/src/androidTest` validate real PDF page counts, rendering and system-picker import on a connected phone/emulator:
 
-Use two Android devices/emulators with live Firebase: one student, one administrator. Test 10 uploads up to 5 MB; record completion time, 20 orders for field accuracy, concurrent acceptance from two administrator sessions for unique numbers, and status propagation on Wi-Fi and cellular. Verify estimates manually for color, Legal, copies, and odd-page duplex cases. Compare measurements to your proposal's 15-second upload and 5-second update targets; they are evaluation targets, not guaranteed network performance.
+```sh
+./gradlew :app:connectedDemoDebugAndroidTest
+```
 
-Submission writes Storage and Firestore in separate operations. A failed metadata write triggers best-effort file cleanup, but network failures can still leave an orphaned file or an uncertain submission result. Check order history before retrying and inspect old orphaned uploads manually. The prototype has no automatic retention policy or cancellation flow. Set an agreed retention policy before using real student documents.
+Those device tests require a running Android device; compiling their test APK is not the same as executing them.
 
-Actual printing and payments happen manually at the shop. No printer integration, online payments, multiple shops, offline submissions, or automatic printing is included. Release signing is not configured: use your own Android signing key before distributing a production release. The generated Gradle project signs demo release builds with the debug key.
+## Pricing and limits
+
+Sample prices: A4/Letter = PHP 2 B&W or PHP 10 color per printed side; Legal adds PHP 1 per side. `pages × copies × rate` is the estimate. Duplex saves sheets (`ceil(pages/2) × copies`) but does not reduce printed-side pricing. Use `Models.kt`, `Screens.kt` price guide and `firebase/firestore.rules` together when changing rates.
+
+The administrator verifies the document and page count before acceptance. Firebase rules validate the formula, but PDF page count is client-provided; strict server-side PDF inspection would need a trusted backend. Payment and printing are manual. No direct printer integration, online payments, multiple shops or background push notifications are included. Statuses update through Firestore while the app is active.
+
+Live orders currently load up to 500 records per account/shop and warn at that limit. Plan pagination/archive policy for longer deployments. Live uploads need connectivity. Interrupted uploads may leave orphaned objects; admin cleanup and a retention policy are required before handling real student documents. Sensitive local PDFs are private to the app and backups are disabled. Sign-out discards the current draft; demo order files remain until app data is cleared.
+
+Do not use debug builds as a production release. Configure your own release signing key and run the two-device Wi-Fi/cellular checks in `docs/VERIFICATION.md` before a real deployment. This migration does not promise that every possible bug has been eliminated.
