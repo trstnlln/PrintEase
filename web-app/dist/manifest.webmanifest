@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "PrintEase \u00b7 Campus Print Shop",
+  "short_name": "PrintEase",
+  "description": "Campus printing, on your schedule.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f9f5",
+  "theme_color": "#174f3e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/assets/touch-icon.png",
+      "sizes": "1280x1280",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

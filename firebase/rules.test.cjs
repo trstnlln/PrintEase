@@ -2,7 +2,7 @@ const { test, before, after } = require('node:test');
 const fs = require('node:fs');
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { doc, setDoc, getDoc, updateDoc, runTransaction } = require('firebase/firestore');
-const { ref, uploadBytes, getBytes } = require('firebase/storage');
+const { ref, uploadBytes, getBytes, deleteObject } = require('firebase/storage');
 let env;
 before(async () => {
   env = await initializeTestEnvironment({projectId: 'demo-printease', firestore: {rules: fs.readFileSync('firebase/firestore.rules','utf8')}, storage: {rules: fs.readFileSync('firebase/storage.rules','utf8')}});
@@ -34,7 +34,7 @@ test('admin must follow workflow and cannot change price', async () => {
   await assertSucceeds(runTransaction(db, async tx => {
     const counter = doc(db,'counters/2026-11-09');
     const snap = await tx.get(counter); const number = (snap.data()?.last ?? 0) + 1;
-    tx.set(counter,{last:number});
+    tx.set(counter,{last:number,orderId:'workflow'});
     tx.update(target,{status:'Accepted',queue:number,queueDay:'2026-11-09'});
   }));
   await assertFails(updateDoc(target,{status:'Printing',estimatedCost:0}));
@@ -53,4 +53,39 @@ test('private PDFs enforce ownership, size and MIME type', async () => {
   await assertFails(uploadBytes(ref(student().storage(),'documents/other/forged.pdf'),data,{contentType:'application/pdf'}));
   await assertFails(uploadBytes(ref(student().storage(),'documents/student/wrong.pdf'),data,{contentType:'text/plain'}));
   await assertFails(uploadBytes(ref(student().storage(),'documents/student/large.pdf'),new Uint8Array(5*1024*1024+1),{contentType:'application/pdf'}));
+});
+
+test('retry can inspect missing IDs without reading another student order', async () => {
+  await assertSucceeds(getDoc(doc(student().firestore(),'orders/new-id')));
+});
+test('students may cancel only their own pending requests', async () => {
+  const db = student().firestore(), target = doc(db,'orders/cancel');
+  await setDoc(target,order('cancel'));
+  await assertFails(updateDoc(doc(env.authenticatedContext('other').firestore(),'orders/cancel'),{status:'Cancelled'}));
+  await assertSucceeds(updateDoc(target,{status:'Cancelled',note:''}));
+  await assertFails(updateDoc(target,{status:'Pending'}));
+});
+test('counter reuse cannot assign a duplicate number to another order', async () => {
+  await setDoc(doc(student().firestore(),'orders/duplicate'),order('duplicate'));
+  await assertFails(updateDoc(doc(admin().firestore(),'orders/duplicate'),{status:'Accepted',queue:1,queueDay:'2026-11-09'}));
+});
+test('concurrent admin transactions allocate distinct queue numbers', async () => {
+  const ids = ['concurrent-a','concurrent-b','concurrent-c'];
+  await Promise.all(ids.map(id=>setDoc(doc(student().firestore(),'orders/'+id),order(id))));
+  const db = admin().firestore();
+  await Promise.all(ids.map(id=>runTransaction(db,async tx=>{
+    const counter=doc(db,'counters/2026-11-14'),target=doc(db,'orders/'+id);
+    await tx.get(target);
+    const snap=await tx.get(counter);const n=(snap.data()?.last ?? 0)+1;
+    tx.set(counter,{last:n,orderId:id});tx.update(target,{status:'Accepted',queue:n,queueDay:'2026-11-14'});
+  })));
+  const numbers=await Promise.all(ids.map(async id=>(await getDoc(doc(db,'orders/'+id))).data().queue));
+  require('node:assert/strict').equal(new Set(numbers).size,3);
+});
+
+test('submitted PDFs cannot be deleted by students', async () => {
+  const path='documents/student/no-delete.pdf';
+  await uploadBytes(ref(student().storage(),path),new TextEncoder().encode('%PDF-test'),{contentType:'application/pdf'});
+  await assertFails(deleteObject(ref(student().storage(),path)));
+  await assertSucceeds(deleteObject(ref(admin().storage(),path)));
 });

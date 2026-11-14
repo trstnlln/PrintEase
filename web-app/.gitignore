@@ -1,0 +1,6 @@
+node_modules/
+build-meta.json
+*.log
+.env
+.env.*
+.openai/*.tar.gz

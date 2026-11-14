@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://printease-campus.consideratefennel8.chatgpt.site"],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Authorization", "x-firebase-gmpid", "x-goog-meta-sha256"],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -54,3 +54,15 @@ node_modules/
 .env.*
 *-service-account.json
 service-account*.json
+
+# Native Android local state
+.gradle/
+**/build/
+local.properties
+app/google-services.json
+*.jks
+*.keystore
+captures/
+
+# Kotlin compiler local state
+.kotlin/
