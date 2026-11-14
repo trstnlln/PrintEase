@@ -63,3 +63,6 @@ app/google-services.json
 *.jks
 *.keystore
 captures/
+
+# Kotlin compiler local state
+.kotlin/

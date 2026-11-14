@@ -84,13 +84,19 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         if (!busy.value) repository?.refresh()
     }
 
-    fun signOut() {
-        if (!busy.value) {
-            repository?.signOut()
-            discardDraft()
-            saved["route"] = "home"
-        }
+    fun signOut() = action {
+        repository?.signOut()
+        discardDraft()
+        saved["route"] = "home"
+        if (!BuildConfig.DEMO) GoogleSignIn.clearSession(getApplication())
     }
+
+    fun signInWithGoogle(context: android.content.Context) =
+        action("Google sign-in timed out. Check your connection and try again.") {
+            check(!BuildConfig.DEMO) { "Select the liveDebug build to sign in with Google." }
+            val token = GoogleSignIn.requestIdToken(context)
+            repository!!.signInWithGoogle(token)
+        }
 
     fun authenticate(email: String, password: String, name: String?) = action {
         require(android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
@@ -172,7 +178,11 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
 
     suspend fun loadDocument(order: PrintOrder): File = repository!!.document(order)
 
-    private fun action(block: suspend () -> Unit) {
+    private fun action(
+        timeoutMessage: String =
+            "The connection timed out. Check Orders before retrying; this draft will keep the same request ID.",
+        block: suspend () -> Unit,
+    ) {
         if (busy.value) return
         busy.value = true
         progress.value = 0f
@@ -180,9 +190,9 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
             try {
                 block()
             } catch (e: TimeoutCancellationException) {
-                events.send(
-                    "The connection timed out. Check Orders before retrying; this draft will keep the same request ID."
-                )
+                events.send(timeoutMessage)
+            } catch (_: androidx.credentials.exceptions.GetCredentialCancellationException) {
+                // Closing the account chooser is not a failed login.
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -204,15 +214,32 @@ fun friendlyError(e: Exception): String =
     when (e) {
         is com.google.firebase.FirebaseNetworkException ->
             "You appear to be offline. Check your internet connection and try again."
+        is androidx.credentials.exceptions.NoCredentialException ->
+            "No Google account is available. Add an account to this device and check that Google Play services are enabled."
+        is androidx.credentials.exceptions.GetCredentialProviderConfigurationException ->
+            "Google sign-in needs Google Play services. Use a supported phone or a Google Play emulator."
+        is androidx.credentials.exceptions.GetCredentialException ->
+            "Google sign-in could not finish. Check your connection and the Firebase Google provider, signing fingerprints, and updated configuration file."
         is FirebaseAuthException ->
-            when (e.errorCode) {
-                "ERROR_INVALID_EMAIL" -> "Enter a valid email address."
-                "ERROR_EMAIL_ALREADY_IN_USE" ->
-                    "This email is registered. Sign in or reset your password."
-                "ERROR_WEAK_PASSWORD" -> "Choose a stronger password with at least 8 characters."
-                "ERROR_TOO_MANY_REQUESTS" ->
-                    "Too many attempts. Please wait a moment before trying again."
-                else -> "Could not sign in. Check your email, password, and internet connection."
+            when {
+                e.message.orEmpty().contains("CONFIGURATION_NOT_FOUND", ignoreCase = true) ->
+                    "Firebase Authentication is not ready. Enable Google or Email/Password sign-in in your Firebase project."
+                else ->
+                    when (e.errorCode) {
+                        "ERROR_OPERATION_NOT_ALLOWED" ->
+                            "This sign-in method is disabled. Enable it in Firebase Authentication and try again."
+                        "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL" ->
+                            "This email uses another sign-in method. Sign in with that method first."
+                        "ERROR_INVALID_EMAIL" -> "Enter a valid email address."
+                        "ERROR_EMAIL_ALREADY_IN_USE" ->
+                            "This email is registered. Sign in or reset your password."
+                        "ERROR_WEAK_PASSWORD" ->
+                            "Choose a stronger password with at least 8 characters."
+                        "ERROR_TOO_MANY_REQUESTS" ->
+                            "Too many attempts. Please wait a moment before trying again."
+                        else ->
+                            "Could not sign in. Check your email, password, and internet connection."
+                    }
             }
         is FirebaseFirestoreException ->
             "Could not save or sync the request. Check your connection and Firebase rules, then review Orders before retrying."

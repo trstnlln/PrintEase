@@ -25,6 +25,10 @@ interface ShopRepository {
 
     suspend fun signIn(email: String, password: String, name: String? = null)
 
+    suspend fun signInWithGoogle(idToken: String) {
+        error("Google sign-in is available in the live app. Use a demo role to explore locally.")
+    }
+
     suspend fun resetPassword(email: String)
 
     fun demoSignIn(admin: Boolean)
@@ -308,6 +312,13 @@ class FirebaseRepository(context: Context) : ShopRepository {
             mutable.value =
                 mutable.value.copy(session = mutable.value.session?.copy(name = name.trim()))
         }
+    }
+
+    override suspend fun signInWithGoogle(idToken: String) {
+        require(idToken.isNotBlank()) { "Google did not return a credential. Please try again." }
+        val credential = com.google.firebase.auth.GoogleAuthProvider.getCredential(idToken, null)
+        withTimeout(25000) { auth.signInWithCredential(credential).await() }
+        // Firebase validates the ID token; the usual auth listener loads trusted admin claims.
     }
 
     override suspend fun resetPassword(email: String) {

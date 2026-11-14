@@ -3,9 +3,9 @@
 The migration is checked with native Android builds, Android lint, Kotlin/JVM model tests, Robolectric repository/PDF tests, Compose interaction tests and Firebase emulator rules tests. Final local results (November 14, 2026):
 
 - Gradle 8.11.1 / JDK 17 / Android SDK 35: **BUILD SUCCESSFUL**.
-- Kotlin/Android host tests: **18 passed, 0 failed** (7 model, 5 repository, 6 Compose).
+- Kotlin/Android host tests: **28 passed, 0 failed** (7 model, 5 repository, 9 Compose, 7 Google credential/configuration tests).
 - Firebase emulator rules: **9 passed, 0 failed**.
-- Android lint: **0 errors, 14 warnings**. Remaining warnings are dependency-update notices and Kotlin-extension style suggestions; they are not runtime errors.
+- Android lint: **0 errors, 18 warnings**. Remaining warnings are dependency-update notices, Kotlin-extension style suggestions and an SDK resource-folder suggestion; they are not runtime errors.
 - `assembleDemoDebug` and `assembleLiveDebug`: both APKs built.
 - `assembleDemoDebugAndroidTest`: device-test APK built. The two native PDF device tests were **not executed** here.
 - Student/admin screenshots captured from the native Compose test renderer and visually reviewed. Dark account layout checked at 150% font scale.
@@ -42,3 +42,9 @@ The demo APK is generated at `app/build/outputs/apk/demo/debug/app-demo-debug.ap
 8. Confirm the shop's actual rates and update both Kotlin and Firebase validation together. Review PDF page counts before accepting; the client estimate is not a trusted server PDF inspection.
 
 No real Firebase account/project is provisioned by this code change. Physical-device execution, real-world network latency, Firebase billing and production release signing must be validated in the user's setup. There is no claim that every possible device/network bug is eliminated.
+
+## Google sign-in and branding update
+
+The Google credential request, supported response types, missing-client configuration, disabled/busy button, login/registration button routing and demo isolation are covered by host tests. Both app variants build with the new adaptive logo. Authentication/configuration errors are translated into readable guidance. The Google account chooser and real Firebase token exchange still require the user’s configured Google provider, local signing fingerprints, updated JSON file and a device with Google Play services. No real Google account was used in automated tests.
+
+The logo is available under `docs/branding/`; screenshots under `docs/screenshots/` show the current native UI.

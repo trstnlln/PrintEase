@@ -9,6 +9,14 @@ Campus printing without the wait. **Kotlin + Jetpack Compose + Firebase**, devel
 
 Screenshots captured from the native Compose app using the Android host test renderer.
 
+## Google sign-in and app logo
+
+Students can use **Continue with Google** to choose their Gmail/Google account without creating a separate PrintEase password. Set up the Google provider, local signing fingerprints and updated configuration using **[Google sign-in setup](docs/GOOGLE_SIGN_IN.md)**. Email/password remains an alternative; Google sign-in is available only in the live variant.
+
+[Preview the Google sign-in screen](docs/screenshots/google-sign-in.png).
+
+The [PrintEase logo](docs/branding/printease-logo.png) is included as a transparent PNG and used in the app header and adaptive launcher icon.
+
 ## Open and run
 
 This Kotlin version is on the **`kotlin-native` branch**. In an existing clone:
@@ -47,10 +55,10 @@ Quick version:
 
 1. Register an Android app in your Firebase project with package **`com.printease.printease`**.
 2. Save its downloaded configuration as **`app/google-services.json`**. This file is ignored by Git. Do not place it in the repository root or the legacy Flutter folder.
-3. Enable Email/Password Authentication, create Firestore in production mode, and provision Storage. Storage may require Blaze billing; confirm current Firebase pricing before enabling it.
+3. Enable Google Authentication (and optionally Email/Password), create Firestore in production mode, and provision Storage. Storage may require Blaze billing; confirm current Firebase pricing before enabling it.
 4. Deploy the included Firebase rules to your project. The app enforces student ownership, admin-only management, valid pricing, correct transitions, immutable documents and unique queue assignments.
 5. Sync Gradle and select **`liveDebug`**. The demo and live apps have different application IDs, so they can coexist on a device.
-6. Register student accounts in the live app. Pre-create the admin in Firebase Authentication and assign its `admin` custom claim using `tools/set-admin.cjs` from a trusted machine. Sign in again afterward.
+6. Sign in with Google or register student accounts in the live app. Create the admin account in Firebase Authentication or by signing in with its Google account first and assign its `admin` custom claim using `tools/set-admin.cjs` from a trusted machine. Sign in again afterward.
 
 A missing Firebase configuration produces a setup screen, not a crash or a silent switch to demo. Firebase SDKs are already included; do not paste duplicate Gradle plugins or dependencies from the console.
 
@@ -63,7 +71,7 @@ A missing Firebase configuration produces a setup screen, not a crash or a silen
 - Explicit review step before submission; a fixed action area keeps the submit button reachable; invalid copy counts cannot be submitted.
 - Retriable upload progress with a stable request ID. An uncertain write is checked on retry, avoiding duplicate orders and avoiding deletion of documents belonging to successful orders.
 - Demo persistence and real sample PDF previews. Explicit demo and live build variants.
-- Auth restoration, student registration, password reset and admin roles obtained from trusted Firebase custom claims.
+- Auth restoration, Google sign-in via Credential Manager, student registration, password reset and admin roles obtained from trusted Firebase custom claims.
 - Daily Philippine-time queue counters assigned atomically on acceptance. Server rules prevent number reuse and bind each counter write to the accepted order.
 - Rejection reasons, student cancellation while pending, and protected status transitions. Both the client transaction and Firebase rules check the current state.
 - Connection/cached-data notices, readable errors, bounded network waits and disabled destructive actions during saves.

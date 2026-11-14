@@ -128,4 +128,41 @@ class ComposeTest {
         compose.onRoot().captureRoboImage("build/screenshots/full-admin.png")
         model.signOut()
     }
+
+    @Test
+    fun googleButtonWorksWithoutTypingEmailOrPassword() {
+        var clicks = 0
+        compose.setContent {
+            PrintEaseTheme(dark = false) {
+                AuthContent(false, false, null, {}, { _, _, _ -> }, {}, onGoogle = { clicks++ })
+            }
+        }
+        compose
+            .onNodeWithText("Continue with Google")
+            .performScrollTo()
+            .assertIsEnabled()
+            .performClick()
+        assertEquals(1, clicks)
+        compose.onNodeWithText("Welcome back").performScrollTo()
+        compose.onRoot().captureRoboImage("build/screenshots/google-sign-in.png")
+        compose.onNodeWithText("New here? Create an account").performScrollTo().performClick()
+        compose.onNodeWithText("Continue with Google").performScrollTo().performClick()
+        assertEquals(2, clicks)
+    }
+
+    @Test
+    fun googleButtonIsDisabledDuringAuthentication() {
+        compose.setContent {
+            PrintEaseTheme { AuthContent(false, true, null, {}, { _, _, _ -> }, {}) }
+        }
+        compose.onNodeWithText("Continue with Google").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
+    fun demoDoesNotOfferRealGoogleSignIn() {
+        compose.setContent {
+            PrintEaseTheme { AuthContent(true, false, null, {}, { _, _, _ -> }, {}) }
+        }
+        compose.onNodeWithText("Continue with Google").assertDoesNotExist()
+    }
 }

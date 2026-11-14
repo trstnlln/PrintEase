@@ -10,7 +10,7 @@ From Project overview, click the **Android** icon (or Add app → Android):
 
 - Android package name: **`com.printease.printease`**
 - App nickname: **PrintEase**
-- SHA-1: optional for the email/password authentication used here.
+- SHA-1 and SHA-256: required for Google sign-in; follow `GOOGLE_SIGN_IN.md` to obtain them from your local signing report.
 
 Register the app and download **`google-services.json`**.
 
@@ -32,7 +32,7 @@ The console's **Add Firebase SDK** page explains Gradle configuration. This repo
 
 ## 3. Enable services
 
-- **Build → Authentication → Get started → Sign-in method → Email/Password → Enable → Save**. Email link sign-in is not required.
+- **Build → Authentication → Get started → Sign-in method → Google**. Enable Google, choose a support email and Save. Then add your signing fingerprints and download a fresh JSON file as described in [Google sign-in setup](GOOGLE_SIGN_IN.md). Optionally enable **Email/Password** for the alternate sign-in form; email link sign-in is not required.
 - **Build → Firestore Database → Create database**. Choose production mode. Select an appropriate nearby region (for example Singapore if offered); choose carefully because a database location cannot simply be changed later.
 - **Build → Storage → Get started**. Provision the default bucket. Firebase may require Blaze billing. Review current pricing and configure budget alerts before confirming. Firestore stores metadata; Storage stores PDFs.
 
@@ -54,13 +54,13 @@ The included rules allow students to access only their own orders/documents, sub
 
 In Android Studio, sync Gradle after adding the JSON file. Open **Build Variants** and choose **`liveDebug`** for the app module, then Run on an emulator or phone. No Flutter SDK is needed. The demo variant is deliberately separate and never uploads to Firebase.
 
-Register a student through the app. Firebase Authentication → Users should show that account. Submitting a PDF creates an object under Storage → Files → `documents/<uid>/` and a record under Firestore → `orders`.
+Choose Continue with Google, or register a student with email/password if that provider is enabled. Firebase Authentication → Users should show that account. Submitting a PDF creates an object under Storage → Files → `documents/<uid>/` and a record under Firestore → `orders`.
 
 If Gradle reports "No matching client found", the downloaded JSON package name does not match the chosen build variant. `com.printease.printease` is for the live app. The demo variant adds `.demo` and does not need Firebase configuration. When the JSON is present, the build filters Google Services tasks to live variants.
 
 ## 6. Make the administrator
 
-Create the shop account in Firebase Authentication → Users → Add user. Copy its UID. On a trusted computer, use a service account with Firebase Auth administration permission and set `GOOGLE_APPLICATION_CREDENTIALS` to the path of its JSON file using your OS environment settings. That service-account file is different from `google-services.json` and must remain private, outside this repository.
+For a Google administrator, sign in with that account once to create its Firebase user, then copy its UID under Authentication → Users. For email/password, create the shop account via Users → Add user. On a trusted computer, use a service account with Firebase Auth administration permission and set `GOOGLE_APPLICATION_CREDENTIALS` to the path of its JSON file using your OS environment settings. That service-account file is different from `google-services.json` and must remain private, outside this repository.
 
 ```sh
 node tools/set-admin.cjs THE_ADMIN_UID

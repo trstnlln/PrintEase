@@ -46,6 +46,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun PrintEase(model: PrintViewModel) {
+    val authContext = LocalContext.current
     val state by model.shop.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val progress by model.progress.collectAsStateWithLifecycle()
@@ -158,6 +159,7 @@ fun PrintEase(model: PrintViewModel) {
                         model::demoLogin,
                         model::authenticate,
                         model::resetPassword,
+                        onGoogle = { model.signInWithGoogle(authContext) },
                     )
                 route == "request" ->
                     RequestContent(
@@ -255,8 +257,12 @@ fun Brand() {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Surface(color = Forest, shape = RoundedCornerShape(12.dp)) {
-            Icon(Icons.Default.Print, null, Modifier.padding(10.dp).size(22.dp), tint = Color.White)
+        Surface(color = Cream, shape = RoundedCornerShape(12.dp)) {
+            Image(
+                androidx.compose.ui.res.painterResource(R.drawable.printease_logo),
+                null,
+                Modifier.size(44.dp),
+            )
         }
         Text("PrintEase", fontSize = 23.sp, fontWeight = FontWeight.Bold, letterSpacing = (-1).sp)
     }
@@ -345,6 +351,7 @@ fun AuthContent(
     onDemo: (Boolean) -> Unit,
     onAuth: (String, String, String?) -> Unit,
     onReset: (String) -> Unit,
+    onGoogle: () -> Unit = {},
 ) {
     var register by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
@@ -414,6 +421,39 @@ fun AuthContent(
                     if (register) "Create your student account" else "Welcome back",
                     style = MaterialTheme.typography.titleLarge,
                 )
+                OutlinedButton(
+                    onClick = onGoogle,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors =
+                        ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color.White,
+                            contentColor = Color(0xFF1F1F1F),
+                        ),
+                    border = BorderStroke(1.dp, Color(0xFF747775)),
+                ) {
+                    Image(
+                        androidx.compose.ui.res.painterResource(R.drawable.ic_google),
+                        null,
+                        Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text("Continue with Google")
+                }
+                Text(
+                    "Use your Google account. No PrintEase password needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    HorizontalDivider(Modifier.weight(1f))
+                    Text("or use email", style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider(Modifier.weight(1f))
+                }
                 if (register)
                     OutlinedTextField(
                         name,
