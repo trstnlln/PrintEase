@@ -49,6 +49,8 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 saved["copies"] ?: 1,
                 saved["color"] ?: false,
                 saved["duplex"] ?: false,
+                runCatching { parsePageRanges(saved["pageRanges"] ?: "", pdf.value?.pages ?: 1) }
+                    .getOrDefault(emptyList()),
             )
         )
     private val events = Channel<String>(Channel.BUFFERED)
@@ -85,6 +87,8 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun signOut() = action {
+        if (!BuildConfig.DEMO) runCatching { PickupAlerts.unregister() }
+        PickupAlerts.clear(getApplication())
         repository?.signOut()
         discardDraft()
         saved["route"] = "home"
@@ -128,7 +132,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["pdfPath"] = imported.path
         saved["pdfName"] = imported.name
         draftId = UUID.randomUUID().toString()
-        setOptions(options.value.copy(pages = imported.pages))
+        setOptions(options.value.copy(pages = imported.pages, pageRanges = emptyList()))
     }
 
     fun setOptions(value: PrintOptions) {
@@ -137,6 +141,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["copies"] = value.copies
         saved["color"] = value.color
         saved["duplex"] = value.duplex
+        saved["pageRanges"] = pageRangeLabel(value.pageRanges)
     }
 
     fun submit() = action {
@@ -163,6 +168,13 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["copies"] = 1
         saved["color"] = false
         saved["duplex"] = false
+        saved["pageRanges"] = ""
+    }
+
+    fun saveSettings(settings: ShopSettings) = action {
+        repository!!.saveSettings(settings)
+        events.send("Shop details saved. Existing orders keep their quoted price.")
+        saved["route"] = "account"
     }
 
     fun transition(id: String, status: OrderStatus, note: String = "") = action {

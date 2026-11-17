@@ -1,6 +1,6 @@
 # PrintEase · Native Android
 
-Campus printing without the wait. **Kotlin + Jetpack Compose + Firebase**, developed in Android Studio. Students submit PDFs and follow their orders; shop staff review documents, assign daily queue numbers and update progress.
+Printing near campus, with less waiting. **Kotlin + Jetpack Compose + Firebase**, developed in Android Studio. Students submit PDFs and follow their orders; shop staff review documents, assign daily queue numbers and update progress.
 
 <p>
   <img src="docs/screenshots/student.png" width="280" alt="PrintEase student dashboard" />
@@ -130,3 +130,9 @@ The administrator verifies the document and page count before acceptance. Fireba
 Live orders currently load up to 500 records per account/shop and warn at that limit. Plan pagination/archive policy for longer deployments. Live uploads need connectivity. Interrupted uploads may leave orphaned objects; admin cleanup and a retention policy are required before handling real student documents. Sensitive local PDFs are private to the app and backups are disabled. Sign-out discards the current draft; demo order files remain until app data is cleared.
 
 Do not use debug builds as a production release. Configure your own release signing key and run the two-device Wi-Fi/cellular checks in `docs/VERIFICATION.md` before a real deployment. This migration does not promise that every possible bug has been eliminated.
+
+## Shop experience update (2.1)
+
+Printing happens at a partner shop **near campus**. The temporary display name is **Nearby print shop**. Administrators can edit pickup details, whole-peso print rates, request availability and optional completed-PDF retention. Requests support selected page ranges and keep a price snapshot even after rates change. Android pickup alerts are opt-in; server functions must be deployed to deliver them.
+
+See [Shop operations and activation](docs/SHOP_OPERATIONS.md) for the setup steps and shared Android/web behavior. Automatic PDF cleanup is off by default.

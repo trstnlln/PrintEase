@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "PrintEase \u00b7 Campus Print Shop",
+  "name": "PrintEase \u00b7 Nearby print shop",
   "short_name": "PrintEase",
-  "description": "Campus printing, on your schedule.",
+  "description": "Printing near campus, on your schedule.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

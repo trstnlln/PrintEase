@@ -89,3 +89,38 @@ test('submitted PDFs cannot be deleted by students', async () => {
   await assertFails(deleteObject(ref(student().storage(),path)));
   await assertSucceeds(deleteObject(ref(admin().storage(),path)));
 });
+
+const settings = (version=1) => ({name:'Nearby print shop',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop',acceptingOrders:true,rates:{bw:4,color:12,legalExtra:2},retentionDays:0,version});
+test('page selections are priced by selected pages; overlapping or forged ranges are rejected',async()=>{
+ const db=student().firestore(),base=order('ranges');
+ const options={...base.options,pages:10,pageRanges:[{start:1,end:3},{start:5,end:5}],selectedPages:4};
+ const good={...base,options,estimatedCost:16,pricing:{bw:2,color:10,legalExtra:1},updatedAt:Date.now(),completedAt:null,documentDeletedAt:null};
+ await assertSucceeds(setDoc(doc(db,'orders/ranges'),good));
+ for(const [id,changes] of [['forged-count',{selectedPages:1}],['overlap',{pageRanges:[{start:1,end:3},{start:3,end:5}]}],['outside',{pageRanges:[{start:1,end:11}]}],['negative',{pageRanges:[{start:0,end:3}]}],['missing-ranges',{pageRanges:[]}],['fractional',{pageRanges:[{start:1.5,end:3}]}]]) {
+  await assertFails(setDoc(doc(db,'orders/'+id),{...good,storagePath:`documents/student/${id}.pdf`,options:{...options,...changes}}));
+ }
+ await assertFails(updateDoc(doc(db,'orders/ranges'),{options:{...options,selectedPages:1},estimatedCost:4}));
+});
+test('only admins edit shop settings; rate changes preserve old quotes and pause new requests',async()=>{
+ const adb=admin().firestore(),sdb=student().firestore(),target=doc(adb,'shopSettings/current');
+ await assertFails(setDoc(doc(sdb,'shopSettings/current'),settings()));
+ await assertSucceeds(setDoc(target,settings()));
+ await assertFails(setDoc(target,settings())); // optimistic version check
+ const old=await getDoc(doc(adb,'orders/private'));
+ require('node:assert/strict').equal(old.data().estimatedCost,12);
+ await assertFails(setDoc(doc(sdb,'orders/old-rate'),order('old-rate')));
+ const priced={...order('new-rate'),pricing:settings().rates,estimatedCost:24};
+ await assertSucceeds(setDoc(doc(sdb,'orders/new-rate'),priced));
+ await assertFails(setDoc(doc(sdb,'orders/forged-rate'),{...priced,storagePath:'documents/student/forged-rate.pdf',pricing:{bw:1,color:1,legalExtra:0},estimatedCost:6}));
+ await assertSucceeds(setDoc(target,{...settings(2),acceptingOrders:false,retentionDays:7}));
+ await assertFails(setDoc(doc(sdb,'orders/paused'),{...priced,storagePath:'documents/student/paused.pdf'}));
+ await assertFails(setDoc(target,{...settings(3),retentionDays:1}));
+ await assertSucceeds(setDoc(target,{...settings(3),acceptingOrders:true}));
+});
+test('notification tokens belong to their signed-in owner; students cannot mark files removed',async()=>{
+ const db=student().firestore(),target=doc(db,'users/student/devices/phone');
+ await assertSucceeds(setDoc(target,{token:'a-valid-looking-test-device-token',updatedAt:Date.now()}));
+ await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),'users/student/devices/phone')));
+ await assertFails(setDoc(doc(db,'users/other/devices/phone'),{token:'a-valid-looking-test-device-token',updatedAt:Date.now()}));
+ await assertFails(updateDoc(doc(db,'orders/private'),{documentDeletedAt:Date.now()}));
+});

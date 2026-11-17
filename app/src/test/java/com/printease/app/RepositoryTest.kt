@@ -94,4 +94,40 @@ class RepositoryTest {
             File(context.cacheDir, "huge.pdf").apply { writeBytes(ByteArray(MAX_PDF_BYTES + 1)) }
         assertTrue(runCatching { documents.inspect(huge, "huge.pdf") }.isFailure)
     }
+
+    @Test
+    fun settingsAndQuoteSurviveRestartAndStudentsCannotEditRates() = runBlocking {
+        val repo = DemoRepository(context, documents)
+        repo.demoSignIn(true)
+        repo.saveSettings(repo.state.value.settings.copy(rates = PrintRates(4, 12, 2)))
+        repo.demoSignIn(false)
+        assertEquals(48L, repo.state.value.orders.first { it.id == "sample-1042" }.total)
+        assertTrue(runCatching { repo.saveSettings(repo.state.value.settings) }.isFailure)
+        val source = File(context.cacheDir, "snapshot.pdf").apply { writeText("%PDF-preserve") }
+        val options =
+            PrintOptions(pages = 10, pageRanges = listOf(PageRange(1, 3), PageRange(5, 5)))
+        repo.submit(
+            "snapshot",
+            PdfFile(source.path, "Snapshot.pdf", 10, source.length(), "digest"),
+            options,
+        ) {}
+        repo.demoSignIn(true)
+        repo.saveSettings(repo.state.value.settings.copy(rates = PrintRates(5, 15, 3)))
+        val restored = DemoRepository(context, documents)
+        assertEquals(16L, restored.state.value.orders.first { it.id == "snapshot" }.total)
+        assertEquals(options, restored.state.value.orders.first { it.id == "snapshot" }.options)
+        assertEquals(5L, restored.state.value.settings.rates.bw)
+        restored.saveSettings(restored.state.value.settings.copy(acceptingOrders = false))
+        restored.demoSignIn(false)
+        assertTrue(
+            runCatching {
+                    restored.submit(
+                        "paused",
+                        PdfFile(source.path, "Snapshot.pdf", 10, source.length(), "digest"),
+                        options,
+                    ) {}
+                }
+                .isFailure
+        )
+    }
 }

@@ -41,6 +41,8 @@ interface ShopRepository {
 
     suspend fun transition(id: String, next: OrderStatus, note: String = "")
 
+    suspend fun saveSettings(settings: ShopSettings)
+
     suspend fun document(order: PrintOrder): File
 
     fun close() {}
@@ -51,6 +53,13 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
     private val mutable = MutableStateFlow(ShopState())
     override val state: StateFlow<ShopState> = mutable
     private val all = mutableListOf<PrintOrder>()
+    private var settings =
+        runCatching {
+                prefs.getString("shopSettings", null)?.let {
+                    ShopSettings.fromMap(jsonMap(JSONObject(it)))
+                }
+            }
+            .getOrNull() ?: ShopSettings()
 
     init {
         val stored = prefs.getString("orders", null)
@@ -98,7 +107,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         mutable.value =
             ShopState(
                 session =
-                    if (admin) Session("demo-admin", "Campus Print Shop", "admin@demo.local", true)
+                    if (admin) Session("demo-admin", "Nearby print shop", "admin@demo.local", true)
                     else Session("demo-student", "Alex Student", "student@demo.local", false)
             )
         publish()
@@ -108,9 +117,10 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         val session = state.value.session
         mutable.value =
             mutable.value.copy(
+                settings = settings,
                 orders =
                     all.filter { session != null && (session.admin || it.ownerId == session.uid) }
-                        .sortedByDescending { it.createdAt }
+                        .sortedByDescending { it.createdAt },
             )
     }
 
@@ -143,11 +153,32 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
     ) {
         val session = requireNotNull(state.value.session)
         check(!session.admin)
-        if (all.any { it.id == id }) return
+        all.firstOrNull { it.id == id }
+            ?.let { prior ->
+                check(
+                    prior.options == options &&
+                        prior.status !in listOf(OrderStatus.Cancelled, OrderStatus.Rejected)
+                ) {
+                    "This request was already submitted or closed. Check Orders before creating a new request."
+                }
+                return
+            }
         require(pdf.pages == options.pages)
+        check(settings.acceptingOrders) {
+            "The shop has paused new requests. Please try again later."
+        }
         withContext(Dispatchers.IO) { File(pdf.path).copyTo(documents.file(id), overwrite = true) }
         progress(1f)
-        all += PrintOrder(id, session.uid, session.name, pdf.name, documents.file(id).path, options)
+        all +=
+            PrintOrder(
+                id,
+                session.uid,
+                session.name,
+                pdf.name,
+                documents.file(id).path,
+                options,
+                pricing = settings.rates,
+            )
         save()
         publish()
     }
@@ -170,8 +201,22 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 note = note.trim().take(500),
                 queue = if (next == OrderStatus.Accepted) number else old.queue,
                 queueDay = if (next == OrderStatus.Accepted) day else old.queueDay,
+                updatedAt = System.currentTimeMillis(),
+                completedAt =
+                    if (next == OrderStatus.Completed) System.currentTimeMillis()
+                    else old.completedAt,
             )
         save()
+        publish()
+    }
+
+    override suspend fun saveSettings(settings: ShopSettings) {
+        check(state.value.session?.admin == true)
+        check(this.settings.version == settings.version) {
+            "Shop details changed. Refresh and try again."
+        }
+        this.settings = settings.copy(version = settings.version + 1)
+        prefs.edit().putString("shopSettings", JSONObject(this.settings.toMap()).toString()).apply()
         publish()
     }
 
@@ -192,11 +237,16 @@ private fun jsonMap(obj: JSONObject): Map<String, Any?> =
         when (val v = obj.get(key)) {
             JSONObject.NULL -> null
             is JSONObject -> jsonMap(v)
+            is JSONArray ->
+                (0 until v.length()).map { i ->
+                    val x = v.get(i)
+                    if (x is JSONObject) jsonMap(x) else x
+                }
             else -> v
         }
     }
 
-class FirebaseRepository(context: Context) : ShopRepository {
+class FirebaseRepository(private val context: Context) : ShopRepository {
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
     private val storage = FirebaseStorage.getInstance()
@@ -206,9 +256,15 @@ class FirebaseRepository(context: Context) : ShopRepository {
     override val state: StateFlow<ShopState> = mutable
     private var listener: ListenerRegistration? = null
     private var sessionJob: Job? = null
+    private var settingsListener: ListenerRegistration? = null
+    private var generation = 0L
     private val authListener =
         FirebaseAuth.AuthStateListener { firebaseAuth ->
+            val previous = mutable.value
+            val currentGeneration = ++generation
             sessionJob?.cancel()
+            settingsListener?.remove()
+            settingsListener = null
             listener?.remove()
             listener = null
             val user = firebaseAuth.currentUser
@@ -216,7 +272,8 @@ class FirebaseRepository(context: Context) : ShopRepository {
             else
                 sessionJob =
                     scope.launch {
-                        mutable.value = ShopState(connecting = true)
+                        if (previous.session?.uid != user.uid)
+                            mutable.value = ShopState(connecting = true)
                         try {
                             val token = withTimeout(20000) { user.getIdToken(true).await() }
                             val session =
@@ -227,7 +284,49 @@ class FirebaseRepository(context: Context) : ShopRepository {
                                     user.email.orEmpty(),
                                     token.claims["admin"] == true,
                                 )
+                            if (
+                                generation != currentGeneration || auth.currentUser?.uid != user.uid
+                            )
+                                return@launch
                             mutable.value = ShopState(session = session)
+                            if (PickupAlerts.enabled(context))
+                                scope.launch { runCatching { PickupAlerts.register(context) } }
+                            settingsListener =
+                                db.collection("shopSettings")
+                                    .document("current")
+                                    .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error
+                                        ->
+                                        if (
+                                            generation == currentGeneration &&
+                                                auth.currentUser?.uid == user.uid
+                                        ) {
+                                            if (error != null)
+                                                mutable.value =
+                                                    mutable.value.copy(
+                                                        settingsError =
+                                                            "Shop details could not sync. Refresh before submitting a request."
+                                                    )
+                                            else if (snapshot != null) {
+                                                runCatching { ShopSettings.fromMap(snapshot.data) }
+                                                    .onSuccess {
+                                                        mutable.value =
+                                                            mutable.value.copy(
+                                                                settings = it,
+                                                                settingsError = null,
+                                                                settingsCached =
+                                                                    snapshot.metadata.isFromCache,
+                                                            )
+                                                    }
+                                                    .onFailure {
+                                                        mutable.value =
+                                                            mutable.value.copy(
+                                                                settingsError =
+                                                                    "Shop details need attention. Contact the administrator."
+                                                            )
+                                                    }
+                                            }
+                                        }
+                                    }
                             var query =
                                 db.collection("orders")
                                     .orderBy(
@@ -247,6 +346,7 @@ class FirebaseRepository(context: Context) : ShopRepository {
                             listener =
                                 query.addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error
                                     ->
+                                    if (generation != currentGeneration) return@addSnapshotListener
                                     if (error != null)
                                         mutable.value =
                                             mutable.value.copy(
@@ -282,11 +382,21 @@ class FirebaseRepository(context: Context) : ShopRepository {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (_: Exception) {
-                            mutable.value =
-                                ShopState(
-                                    syncError =
-                                        "Could not restore your account. Check your connection and sign in again."
-                                )
+                            if (
+                                generation == currentGeneration && auth.currentUser?.uid == user.uid
+                            )
+                                mutable.value =
+                                    if (previous.session?.uid == user.uid)
+                                        previous.copy(
+                                            cached = true,
+                                            syncError =
+                                                "Could not refresh. Showing saved orders; reconnect and tap Refresh.",
+                                        )
+                                    else
+                                        ShopState(
+                                            syncError =
+                                                "Could not restore your account. Check your connection and sign in again."
+                                        )
                         }
                     }
         }
@@ -309,8 +419,7 @@ class FirebaseRepository(context: Context) : ShopRepository {
                 )
                 .await()
             // Re-read the profile after registration without invalidating Firebase's session.
-            mutable.value =
-                mutable.value.copy(session = mutable.value.session?.copy(name = name.trim()))
+            authListener.onAuthStateChanged(auth)
         }
     }
 
@@ -359,6 +468,20 @@ class FirebaseRepository(context: Context) : ShopRepository {
             }
             return
         }
+        val quoted = state.value.settings
+        val currentSettings =
+            ShopSettings.fromMap(
+                withTimeout(15000) {
+                        db.collection("shopSettings").document("current").get(Source.SERVER).await()
+                    }
+                    .data
+            )
+        check(currentSettings.acceptingOrders) {
+            "The shop has paused new requests. Your draft is saved."
+        }
+        check(currentSettings.rates == quoted.rates && currentSettings.version == quoted.version) {
+            "Shop details or rates changed. Review the updated total and try again."
+        }
         val path = "documents/${session.uid}/$id.pdf"
         val blob = storage.reference.child(path)
         val metadata =
@@ -393,7 +516,15 @@ class FirebaseRepository(context: Context) : ShopRepository {
             }
         }
         val order =
-            PrintOrder(id, session.uid, session.name.take(200), pdf.name.take(255), path, options)
+            PrintOrder(
+                id,
+                session.uid,
+                session.name.take(200),
+                pdf.name.take(255),
+                path,
+                options,
+                pricing = currentSettings.rates,
+            )
         withTimeout(25000) { ref.set(order.toMap()).await() }
         // Never delete on uncertain writes: retrying uses this ID and resolves the result.
     }
@@ -415,6 +546,7 @@ class FirebaseRepository(context: Context) : ShopRepository {
                         mutableMapOf<String, Any>(
                             "status" to next.label,
                             "note" to note.trim().take(500),
+                            "updatedAt" to System.currentTimeMillis(),
                         )
                     if (next == OrderStatus.Accepted) {
                         val day = queueDay()
@@ -424,7 +556,24 @@ class FirebaseRepository(context: Context) : ShopRepository {
                         updates["queue"] = count
                         updates["queueDay"] = day
                     }
+                    if (next == OrderStatus.Completed)
+                        updates["completedAt"] = System.currentTimeMillis()
                     tx.update(ref, updates)
+                }
+                .await()
+        }
+    }
+
+    override suspend fun saveSettings(settings: ShopSettings) {
+        check(state.value.session?.admin == true)
+        withTimeout(25000) {
+            db.runTransaction { tx ->
+                    val ref = db.collection("shopSettings").document("current")
+                    val old = ShopSettings.fromMap(tx.get(ref).data)
+                    check(old.version == settings.version) {
+                        "Shop details changed. Refresh and try again."
+                    }
+                    tx.set(ref, settings.copy(version = old.version + 1).toMap())
                 }
                 .await()
         }
@@ -432,6 +581,9 @@ class FirebaseRepository(context: Context) : ShopRepository {
 
     override suspend fun document(order: PrintOrder): File =
         withContext(Dispatchers.IO) {
+            check(order.documentDeletedAt == null) {
+                "This PDF was removed under the shop’s retention policy. Your order history is still saved."
+            }
             val target = File(cache, "${order.id}.pdf")
             if (target.exists()) return@withContext target
             val blob = storage.reference.child(order.storagePath)
@@ -453,6 +605,8 @@ class FirebaseRepository(context: Context) : ShopRepository {
         }
 
     override fun close() {
+        generation++
+        settingsListener?.remove()
         listener?.remove()
         auth.removeAuthStateListener(authListener)
         scope.cancel()

@@ -88,3 +88,9 @@ Prices are samples (PHP 2 B&W / PHP 10 color per side; Legal adds PHP 1). Duplex
 ## Verification
 
 19 unit/DOM/repository tests and one real-web-SDK Firebase emulator integration scenario pass. The static production build succeeds. Actual browser visual QA was unavailable in the managed environment because its required browser-control tool was not exposed. Physical iPhone Safari testing, Google account chooser sign-in, live Firebase permissions/billing, bucket CORS and Wi-Fi/cellular timing targets remain owner/device checks. DOM checks are not a claim of real Safari execution.
+
+## Shop experience 2.1
+
+The partner shop is **near campus**. The default name is **Nearby print shop** until real details are confirmed. Android and web share `shopSettings/current`, page-range selections, quote snapshots and completion/removal timestamps. Administrators edit details and rates from Account. Students retain their drafts when new requests are paused. Existing orders keep their quoted price.
+
+Deploy the root Firebase rules before using the new clients. See [`docs/SHOP_OPERATIONS.md`](../docs/SHOP_OPERATIONS.md) for pickup notifications and opt-in retention setup. Android background alerts require the supplied cloud functions; web ready messages appear while the app observes status changes. The website does not provide iPhone background push.

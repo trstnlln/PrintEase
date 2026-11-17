@@ -11,3 +11,8 @@ test('concurrent queue acceptance allocates distinct numbers',async t=>{const re
 test('students cannot approve requests; cancellation cannot be reopened',async t=>{const repo=await setup(t);await repo.login(false);await assert.rejects(repo.transition('sample-1043','Accepted'));await repo.transition('sample-1043','Cancelled');await repo.login(true);await assert.rejects(repo.transition('sample-1043','Accepted'));});
 test('rejection requires a reason',async t=>{const repo=await setup(t);await repo.login(true);await assert.rejects(repo.transition('sample-1043','Rejected',' '));await repo.transition('sample-1043','Rejected','Please resend an unlocked PDF.');assert.equal((await db.get('orders','sample-1043')).note,'Please resend an unlocked PDF.');});
 test('sample PDFs are genuine documents with the requested page count',async()=>{const pdfjs=await import('pdfjs-dist/legacy/build/pdf.mjs');const doc=await pdfjs.getDocument({data:samplePDF(3),useSystemFonts:true,isEvalSupported:false}).promise;assert.equal(doc.numPages,3);await doc.destroy();});
+
+test('retry resolves a saved ID during a pause but rejects changed options or a closed request',async t=>{
+ const repo=await setup(t);await repo.login(false);const draft={id:'retry-check',pdf:{name:'Report.pdf'},file:new Blob([samplePDF(1)]),options:defaults()};await repo.submit(draft,()=>{});
+ await repo.login(true);await repo.saveSettings({...repo.settings,acceptingOrders:false});await repo.login(false);await repo.submit(draft,()=>{});await assert.rejects(repo.submit({...draft,options:{...draft.options,copies:2}},()=>{}));await repo.transition(draft.id,'Cancelled');await assert.rejects(repo.submit(draft,()=>{}));
+});

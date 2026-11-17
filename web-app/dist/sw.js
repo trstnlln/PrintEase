@@ -1,5 +1,5 @@
 // Cache public application assets only. Never cache Firebase requests or document data.
-const CACHE='printease-3e32b535f85c86fb';
+const CACHE='printease-b43886289841b8ab';
 const ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('printease-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

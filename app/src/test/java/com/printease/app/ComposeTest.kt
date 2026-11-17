@@ -3,6 +3,9 @@ package com.printease.app
 import android.app.Application
 import android.content.Context
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -164,5 +167,66 @@ class ComposeTest {
             PrintEaseTheme { AuthContent(true, false, null, {}, { _, _, _ -> }, {}) }
         }
         compose.onNodeWithText("Continue with Google").assertDoesNotExist()
+    }
+
+    @Test
+    fun pausedShopDisablesNewRequestAndSettingsFitLargeFonts() {
+        compose.setContent {
+            PrintEaseTheme {
+                Dashboard(
+                    ShopState(student, orders, settings = ShopSettings(acceptingOrders = false)),
+                    true,
+                    true,
+                    {},
+                    {},
+                )
+            }
+        }
+        compose.onNodeWithText("Requests paused").assertIsNotEnabled()
+        compose.onNodeWithText("Nearby print shop").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun selectedRangesChangeTheQuoteAndInvalidInputBlocksReview() {
+        var options by mutableStateOf(PrintOptions(pages = 10))
+        compose.setContent {
+            PrintEaseTheme(dark = false) {
+                RequestContent(
+                    PdfFile("draft-path", "Ten pages.pdf", 10, 100, "hash"),
+                    options,
+                    false,
+                    0f,
+                    {},
+                    { options = it },
+                    {},
+                    {},
+                    {},
+                )
+            }
+        }
+        compose.onNodeWithText("Pages to print").performScrollTo().performTextInput("1-3, 5")
+        compose.onNodeWithText("₱8.00").performScrollTo().assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/screenshots/request-selected-pages.png")
+        compose.onNodeWithText("Pages to print").performScrollTo().performTextReplacement("11")
+        compose.onNodeWithText("Review request").assertIsNotEnabled()
+    }
+
+    @Test
+    fun shopSettingsSaveWholePesoRatesAndKeepRetentionOff() {
+        var result: ShopSettings? = null
+        compose.setContent {
+            PrintEaseTheme(dark = false) {
+                ShopSettingsContent(ShopSettings(), false) { result = it }
+            }
+        }
+        compose.onRoot().captureRoboImage("build/screenshots/shop-settings.png")
+        compose
+            .onNodeWithText("Black & white · A4 / Letter")
+            .performScrollTo()
+            .performTextReplacement("4")
+        compose.onNodeWithText("Save shop details").performScrollTo().performClick()
+        assertEquals(4L, result!!.rates.bw)
+        assertEquals(0, result!!.retentionDays)
+        assertEquals("Nearby print shop", result!!.name)
     }
 }

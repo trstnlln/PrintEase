@@ -45,27 +45,154 @@ enum class OrderStatus(val label: String) {
     }
 }
 
+data class PrintRates(val bw: Long = 2, val color: Long = 10, val legalExtra: Long = 1) {
+    init {
+        require(bw in 1..1000 && color in 1..1000 && legalExtra in 0..1000)
+    }
+
+    fun toMap() = mapOf("bw" to bw, "color" to color, "legalExtra" to legalExtra)
+
+    companion object {
+        fun fromMap(m: Map<*, *>?) =
+            if (m == null) PrintRates()
+            else
+                PrintRates(
+                    (m["bw"] as Number).toLong(),
+                    (m["color"] as Number).toLong(),
+                    (m["legalExtra"] as Number).toLong(),
+                )
+    }
+}
+
+data class ShopSettings(
+    val name: String = "Nearby print shop",
+    val address: String = "Near BSU Alangilan campus",
+    val pickupHours: String = "Confirm pickup hours with the shop",
+    val acceptingOrders: Boolean = true,
+    val rates: PrintRates = PrintRates(),
+    val retentionDays: Int = 0,
+    val version: Long = 0,
+) {
+    init {
+        require(
+            name.trim().length in 2..100 &&
+                address.trim().length in 2..300 &&
+                pickupHours.trim().length in 2..200
+        )
+        require(retentionDays in listOf(0, 7, 14, 30) && version >= 0)
+    }
+
+    fun toMap(): Map<String, Any> =
+        mapOf(
+            "name" to name.trim(),
+            "address" to address.trim(),
+            "pickupHours" to pickupHours.trim(),
+            "acceptingOrders" to acceptingOrders,
+            "rates" to rates.toMap(),
+            "retentionDays" to retentionDays,
+            "version" to version,
+        )
+
+    companion object {
+        fun fromMap(m: Map<String, Any?>?) =
+            if (m == null) ShopSettings()
+            else
+                ShopSettings(
+                    m["name"] as String,
+                    m["address"] as String,
+                    m["pickupHours"] as String,
+                    m["acceptingOrders"] as Boolean,
+                    PrintRates.fromMap(m["rates"] as? Map<*, *>),
+                    (m["retentionDays"] as Number).toInt(),
+                    (m["version"] as Number).toLong(),
+                )
+    }
+}
+
+data class PageRange(val start: Int, val end: Int) {
+    val count
+        get() = end - start + 1
+
+    fun toMap() = mapOf("start" to start, "end" to end)
+}
+
+fun parsePageRanges(text: String, pages: Int): List<PageRange> {
+    if (text.isBlank()) return emptyList()
+    val raw =
+        text
+            .split(',')
+            .map { part ->
+                val match =
+                    Regex("""\s*(\d+)\s*(?:-\s*(\d+)\s*)?""").matchEntire(part)
+                        ?: error(
+                            "Use page numbers like 1-3, 5, 8-10, or leave blank for all pages."
+                        )
+                val start = match.groupValues[1].toIntOrNull() ?: error("Invalid page number.")
+                val end =
+                    if (match.groupValues[2].isEmpty()) start
+                    else match.groupValues[2].toIntOrNull() ?: error("Invalid page number.")
+                require(start in 1..pages && end in start..pages) {
+                    "Page numbers must be between 1 and $pages."
+                }
+                PageRange(start, end)
+            }
+            .sortedBy { it.start }
+    val merged = mutableListOf<PageRange>()
+    raw.forEach { r ->
+        val previous = merged.lastOrNull()
+        if (previous != null && r.start <= previous.end + 1)
+            merged[merged.lastIndex] = PageRange(previous.start, maxOf(r.end, previous.end))
+        else merged += r
+    }
+    require(merged.size <= 10) { "Choose up to 10 page ranges." }
+    return if (merged == listOf(PageRange(1, pages))) emptyList() else merged
+}
+
+fun pageRangeLabel(ranges: List<PageRange>) =
+    ranges.joinToString(", ") { if (it.start == it.end) "${it.start}" else "${it.start}-${it.end}" }
+
 data class PrintOptions(
     val paper: String = "A4",
     val pages: Int = 1,
     val copies: Int = 1,
     val color: Boolean = false,
     val duplex: Boolean = false,
+    val pageRanges: List<PageRange> = emptyList(),
 ) {
     init {
         require(paper in listOf("A4", "Letter", "Legal"))
         require(pages in 1..1000)
         require(copies in 1..100)
+        require(pageRanges.size <= 10)
+        pageRanges.forEachIndexed { i, r ->
+            require(
+                r.start in 1..pages &&
+                    r.end in r.start..pages &&
+                    (i == 0 || r.start > pageRanges[i - 1].end)
+            )
+        }
     }
 
+    val selectedPages: Int
+        get() = if (pageRanges.isEmpty()) pages else pageRanges.sumOf { it.count }
+
+    fun rate(rates: PrintRates): Long =
+        (if (color) rates.color else rates.bw) + (if (paper == "Legal") rates.legalExtra else 0)
+
+    fun total(rates: PrintRates) = selectedPages * copies * rate(rates)
+
     val rate: Long
-        get() = (if (color) 10L else 2L) + (if (paper == "Legal") 1L else 0L)
+        get() = rate(PrintRates())
 
     val total: Long
-        get() = pages * copies * rate
+        get() = total(PrintRates())
 
     val sheets: Int
-        get() = (if (duplex) (pages + 1) / 2 else pages) * copies
+        get() = (if (duplex) (selectedPages + 1) / 2 else selectedPages) * copies
+
+    val pageLabel: String
+        get() =
+            if (pageRanges.isEmpty()) "All $pages pages" else "Pages ${pageRangeLabel(pageRanges)}"
 
     fun toMap(): Map<String, Any> =
         mapOf(
@@ -74,6 +201,8 @@ data class PrintOptions(
             "copies" to copies,
             "color" to color,
             "duplex" to duplex,
+            "pageRanges" to (pageRanges.ifEmpty { listOf(PageRange(1, pages)) }).map { it.toMap() },
+            "selectedPages" to selectedPages,
         )
 }
 
@@ -99,7 +228,14 @@ data class PrintOrder(
     val queue: Int? = null,
     val queueDay: String? = null,
     val note: String = "",
+    val pricing: PrintRates = PrintRates(),
+    val updatedAt: Long = createdAt,
+    val completedAt: Long? = null,
+    val documentDeletedAt: Long? = null,
 ) {
+    val total: Long
+        get() = options.total(pricing)
+
     fun toMap(): Map<String, Any?> =
         mapOf(
             "ownerId" to ownerId,
@@ -107,7 +243,11 @@ data class PrintOrder(
             "fileName" to fileName,
             "storagePath" to storagePath,
             "options" to options.toMap(),
-            "estimatedCost" to options.total,
+            "estimatedCost" to total,
+            "pricing" to pricing.toMap(),
+            "updatedAt" to updatedAt,
+            "completedAt" to completedAt,
+            "documentDeletedAt" to documentDeletedAt,
             "createdAt" to createdAt,
             "status" to status.label,
             "queue" to queue,
@@ -130,12 +270,26 @@ data class PrintOrder(
                     (o["copies"] as Number).toInt(),
                     o["color"] as Boolean,
                     o["duplex"] as Boolean,
+                    (o["pageRanges"] as? List<*>)
+                        ?.map { v ->
+                            val r = v as Map<*, *>
+                            PageRange((r["start"] as Number).toInt(), (r["end"] as Number).toInt())
+                        }
+                        ?.let {
+                            if (it == listOf(PageRange(1, (o["pages"] as Number).toInt())))
+                                emptyList()
+                            else it
+                        } ?: emptyList(),
                 ),
                 (d["createdAt"] as Number).toLong(),
                 OrderStatus.parse(d["status"] as String),
                 (d["queue"] as? Number)?.toInt(),
                 d["queueDay"] as? String,
                 d["note"] as? String ?: "",
+                PrintRates.fromMap(d["pricing"] as? Map<*, *>),
+                (d["updatedAt"] as? Number)?.toLong() ?: (d["createdAt"] as Number).toLong(),
+                (d["completedAt"] as? Number)?.toLong(),
+                (d["documentDeletedAt"] as? Number)?.toLong(),
             )
         }
     }
@@ -147,6 +301,9 @@ data class ShopState(
     val connecting: Boolean = false,
     val cached: Boolean = false,
     val syncError: String? = null,
+    val settings: ShopSettings = ShopSettings(),
+    val settingsError: String? = null,
+    val settingsCached: Boolean = false,
 )
 
 fun sortedQueue(orders: List<PrintOrder>): List<PrintOrder> =

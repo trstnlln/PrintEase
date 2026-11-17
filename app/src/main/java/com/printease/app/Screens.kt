@@ -63,7 +63,9 @@ fun PrintEase(model: PrintViewModel) {
     }
     val session = state.session
     val mainRoute = route in listOf("home", "orders", "account")
-    BackHandler(enabled = session != null && !mainRoute) { if (!busy) model.navigate("orders") }
+    BackHandler(enabled = session != null && !mainRoute) {
+        if (!busy) model.navigate(if (route == "settings") "account" else "orders")
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -74,13 +76,22 @@ fun PrintEase(model: PrintViewModel) {
                         if (mainRoute) Brand()
                         else
                             Text(
-                                if (route == "request") "New print request" else "Order details",
+                                when (route) {
+                                    "request" -> "New print request"
+                                    "settings" -> "Shop settings"
+                                    else -> "Order details"
+                                },
                                 style = MaterialTheme.typography.titleLarge,
                             )
                     },
                     navigationIcon = {
                         if (!mainRoute)
-                            IconButton(onClick = { model.navigate("orders") }, enabled = !busy) {
+                            IconButton(
+                                onClick = {
+                                    model.navigate(if (route == "settings") "account" else "orders")
+                                },
+                                enabled = !busy,
+                            ) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                             }
                     },
@@ -171,6 +182,8 @@ fun PrintEase(model: PrintViewModel) {
                         onOptions = model::setOptions,
                         onSubmit = model::submit,
                         onPreview = { draftPreview = true },
+                        settings = state.settings,
+                        settingsError = state.settingsError,
                         onDiscard = {
                             model.discardDraft()
                             model.navigate("home")
@@ -186,6 +199,7 @@ fun PrintEase(model: PrintViewModel) {
                             state.cached,
                             model::transition,
                             { preview = order },
+                            settings = state.settings,
                         )
                     else
                         EmptyPanel(
@@ -194,6 +208,8 @@ fun PrintEase(model: PrintViewModel) {
                             Icons.Default.CloudOff,
                         )
                 }
+                route == "settings" && session.admin ->
+                    ShopSettingsContent(state.settings, busy, model::saveSettings)
                 route == "account" ->
                     AccountContent(
                         session,
@@ -201,6 +217,8 @@ fun PrintEase(model: PrintViewModel) {
                         busy,
                         model::demoLogin,
                         { signOut = true },
+                        settings = state.settings,
+                        onSettings = { model.navigate("settings") },
                     )
                 else ->
                     Dashboard(
@@ -391,7 +409,7 @@ fun AuthContent(
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
-                    "Try both sides of the campus print shop. Demo orders stay on this device.",
+                    "Try both sides of the nearby print shop. Demo orders stay on this device.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 PrimaryButton(
@@ -515,7 +533,7 @@ fun AuthContent(
                 }
             }
         Text(
-            "BSU Alangilan · Campus Print Shop",
+            "Print online · Collect near BSU Alangilan",
             Modifier.align(Alignment.CenterHorizontally),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -558,7 +576,7 @@ fun Dashboard(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Eyebrow(if (session.admin) "CAMPUS PRINT SHOP" else "BSU ALANGILAN CAMPUS")
+                Eyebrow(if (session.admin) "NEARBY PRINT SHOP" else "PRINTING NEAR BSU ALANGILAN")
                 Text(
                     if (session.admin) "A clear queue.\nA smoother day."
                     else "Hello, ${session.name.substringBefore(' ')}.",
@@ -597,11 +615,14 @@ fun Dashboard(
                                     color = Color.White,
                                 )
                                 Text(
-                                    "PDF to pickup, without the wait in line.",
+                                    "Send your PDF. Collect at the shop near campus.",
                                     color = Color(0xFFCEE1D3),
                                 )
                                 Button(
                                     onNew,
+                                    enabled =
+                                        state.settings.acceptingOrders &&
+                                            state.settingsError == null,
                                     colors =
                                         ButtonDefaults.buttonColors(
                                             containerColor = Lime,
@@ -612,12 +633,16 @@ fun Dashboard(
                                 ) {
                                     Icon(Icons.Default.Add, null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text("New print request")
+                                    Text(
+                                        if (state.settings.acceptingOrders) "New print request"
+                                        else "Requests paused"
+                                    )
                                 }
                             }
                         }
                     }
                 }
+            item { ShopCard(state.settings, Modifier.fillMaxWidth()) }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard(
@@ -638,7 +663,7 @@ fun Dashboard(
                 }
             }
         }
-        if (state.cached || state.syncError != null)
+        if (state.cached || state.syncError != null || state.settingsError != null)
             item {
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -651,6 +676,7 @@ fun Dashboard(
                         Icon(Icons.Default.CloudOff, null, Modifier.size(20.dp))
                         Text(
                             state.syncError
+                                ?: state.settingsError
                                 ?: "Showing saved orders. New updates will appear when connected.",
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -821,7 +847,7 @@ fun OrderCard(order: PrintOrder, admin: Boolean, onClick: () -> Unit) {
             ) {
                 StatusBadge(order.status)
                 Text(
-                    pesos(order.options.total),
+                    pesos(order.total),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
@@ -848,6 +874,8 @@ fun RequestContent(
     onSubmit: () -> Unit,
     onPreview: () -> Unit,
     onDiscard: () -> Unit,
+    settings: ShopSettings = ShopSettings(),
+    settingsError: String? = null,
 ) {
     val picker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
@@ -857,6 +885,18 @@ fun RequestContent(
     var discard by remember { mutableStateOf(false) }
     var copiesText by rememberSaveable(options.copies) { mutableStateOf(options.copies.toString()) }
     val validCopies = copiesText.toIntOrNull() in 1..100
+    var rangesText by
+        rememberSaveable(pdf?.path) { mutableStateOf(pageRangeLabel(options.pageRanges)) }
+    val parsedRanges = runCatching { parsePageRanges(rangesText, options.pages) }
+    val validRanges = parsedRanges.isSuccess
+    val canSubmit =
+        pdf != null &&
+            validCopies &&
+            validRanges &&
+            !busy &&
+            settings.acceptingOrders &&
+            settingsError == null
+    var reviewedRates by remember { mutableStateOf(settings.rates) }
     Column(Modifier.widthIn(max = 700.dp).fillMaxSize()) {
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(22.dp),
@@ -901,6 +941,26 @@ fun RequestContent(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Eyebrow("02 / MAKE IT YOURS")
                 Panel(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        rangesText,
+                        { value ->
+                            rangesText = value.take(120)
+                            runCatching { parsePageRanges(rangesText, options.pages) }
+                                .onSuccess { onOptions(options.copy(pageRanges = it)) }
+                        },
+                        label = { Text("Pages to print") },
+                        placeholder = { Text("All pages") },
+                        supportingText = {
+                            Text(
+                                if (validRanges) "Leave blank for all pages, or enter 1-3, 5, 8-10"
+                                else parsedRanges.exceptionOrNull()?.message.orEmpty()
+                            )
+                        },
+                        isError = !validRanges,
+                        enabled = !busy && pdf != null,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Text("Paper size", fontWeight = FontWeight.SemiBold)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         listOf("A4", "Letter", "Legal").forEachIndexed { index, paper ->
@@ -966,19 +1026,20 @@ fun RequestContent(
                     ) {
                         Text("Estimated total", Modifier.weight(1f))
                         Text(
-                            if (pdf == null || !validCopies) "—" else pesos(options.total),
+                            if (pdf == null || !validCopies || !validRanges) "—"
+                            else pesos(options.total(settings.rates)),
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
                     if (pdf != null)
                         Text(
-                            "${options.pages} pages × ${options.copies} copies × ${pesos(options.rate)} per printed side\n${options.sheets} sheets · Payment at pickup",
+                            "${options.selectedPages} selected pages × ${options.copies} copies × ${pesos(options.rate(settings.rates))} per printed side\n${options.sheets} sheets · Payment at pickup",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     Text(
-                        "Sample shop rates. Duplex saves sheets; the per-side rate stays the same. The shop reviews your PDF before accepting.",
+                        "Current shop rates. Duplex saves sheets; the per-side rate stays the same. The shop reviews your PDF before accepting.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1005,11 +1066,20 @@ fun RequestContent(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+                if (!settings.acceptingOrders || settingsError != null)
+                    Text(
+                        settingsError ?: "The shop has paused new requests. Your draft is saved.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 PrimaryButton(
                     if (busy) "Please wait…" else "Review request",
-                    { review = true },
+                    {
+                        reviewedRates = settings.rates
+                        review = true
+                    },
                     Modifier.fillMaxWidth(),
-                    pdf != null && validCopies && !busy,
+                    canSubmit,
                     Icons.AutoMirrored.Filled.ArrowForward,
                 )
             }
@@ -1023,9 +1093,12 @@ fun RequestContent(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(pdf.name, fontWeight = FontWeight.Bold)
                     Text(
-                        "${options.pages} pages · ${options.copies} copies · ${options.paper}\n${if(options.color) "Color" else "Black & white"} · ${if(options.duplex) "Double-sided" else "Single-sided"}"
+                        "${options.pageLabel} · ${options.copies} copies · ${options.paper}\n${if(options.color) "Color" else "Black & white"} · ${if(options.duplex) "Double-sided" else "Single-sided"}"
                     )
-                    Text("Estimated total: ${pesos(options.total)}", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Estimated total: ${pesos(options.total(reviewedRates))}",
+                        fontWeight = FontWeight.Bold,
+                    )
                     Text(
                         "The shop will review your request and assign a queue number. Pay when you collect."
                     )
@@ -1034,9 +1107,12 @@ fun RequestContent(
             confirmButton = {
                 TextButton({
                     review = false
-                    onSubmit()
+                    if (reviewedRates == settings.rates && canSubmit) onSubmit()
                 }) {
-                    Text("Submit request")
+                    Text(
+                        if (reviewedRates == settings.rates && canSubmit) "Submit request"
+                        else "Review updated details"
+                    )
                 }
             },
             dismissButton = { TextButton({ review = false }) { Text("Keep editing") } },
@@ -1093,6 +1169,7 @@ fun OrderDetail(
     cached: Boolean,
     onTransition: (String, OrderStatus, String) -> Unit,
     onPreview: () -> Unit,
+    settings: ShopSettings = ShopSettings(),
 ) {
     var action by remember { mutableStateOf<OrderStatus?>(null) }
     var reason by rememberSaveable { mutableStateOf("") }
@@ -1116,7 +1193,7 @@ fun OrderDetail(
                 style = MaterialTheme.typography.headlineLarge,
             )
             Text(
-                if (order.queueDay != null) "${order.queueDay} · Campus Print Shop"
+                if (order.queueDay != null) "${order.queueDay} · Pickup near campus"
                 else "Submitted ${formatDate(order.createdAt)}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1176,11 +1253,18 @@ fun OrderDetail(
             DetailLine("Sides", if (order.options.duplex) "Double-sided" else "Single-sided")
             DetailLine("Sheets", "${order.options.sheets}")
             HorizontalDivider()
-            DetailLine("Estimated total", pesos(order.options.total))
+            DetailLine("Quoted total", pesos(order.total))
+            DetailLine("Pages selected", order.options.pageLabel)
+            DetailLine("Updated", formatDate(order.updatedAt))
+            if (order.documentDeletedAt != null)
+                Text(
+                    "The PDF has been removed under the shop’s retention policy. Your order history is saved.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             OutlinedButton(
                 onPreview,
                 Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                enabled = !busy,
+                enabled = !busy && order.documentDeletedAt == null,
             ) {
                 Icon(Icons.Default.PictureAsPdf, null)
                 Spacer(Modifier.width(8.dp))
@@ -1192,6 +1276,7 @@ fun OrderDetail(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        ShopCard(settings, Modifier.fillMaxWidth())
         if (cached)
             Text(
                 "You’re viewing cached details. Connect to the internet before changing this order.",
@@ -1324,6 +1409,8 @@ fun AccountContent(
     busy: Boolean,
     onSwitch: (Boolean) -> Unit,
     onSignOut: () -> Unit,
+    settings: ShopSettings = ShopSettings(),
+    onSettings: () -> Unit = {},
 ) {
     Column(
         Modifier.widthIn(max = 700.dp)
@@ -1353,20 +1440,22 @@ fun AccountContent(
                 fontWeight = FontWeight.SemiBold,
             )
         }
+        ShopCard(settings, Modifier.fillMaxWidth(), if (session.admin) onSettings else null)
         Panel(Modifier.fillMaxWidth()) {
-            Text("Campus Print Shop", style = MaterialTheme.typography.titleLarge)
-            Text("BSU Alangilan Campus\nSubmit online. Collect and pay at the shop.")
-            HorizontalDivider()
-            Text("Sample print rates", fontWeight = FontWeight.Bold)
-            DetailLine("A4 / Letter · B&W", "₱2 per side")
-            DetailLine("A4 / Letter · Color", "₱10 per side")
-            DetailLine("Legal paper", "+₱1 per side")
+            Text("Current print rates", style = MaterialTheme.typography.titleLarge)
+            DetailLine("A4 / Letter · B&W", "${pesos(settings.rates.bw)} / side")
+            DetailLine("A4 / Letter · Color", "${pesos(settings.rates.color)} / side")
+            DetailLine("Legal paper", "+${pesos(settings.rates.legalExtra)} / side")
             Text(
-                "Pages × copies × rate per printed side. Duplex saves paper, not the per-side charge. All pages use your selected color mode. Confirm final pricing with the shop.",
+                "Selected pages × copies × rate per printed side. Duplex saves sheets. All selected pages use the same color mode. Your submitted quote stays saved if rates change.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (session.admin)
+                OutlinedButton(onSettings, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text("Manage shop details & rates")
+                }
         }
+        if (!demo && !session.admin) PickupAlertsCard()
         if (demo)
             Panel(Modifier.fillMaxWidth()) {
                 Text("Try the other side", style = MaterialTheme.typography.titleLarge)
@@ -1391,7 +1480,7 @@ fun AccountContent(
             Text("Sign out")
         }
         Text(
-            "PrintEase 2.0 · Native Android\nPDF only, up to 5 MB. Keep your queue number for pickup.",
+            "PrintEase 2.1 · Native Android\nPDF only, up to 5 MB. Keep your queue number for pickup.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

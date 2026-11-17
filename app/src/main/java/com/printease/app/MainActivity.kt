@@ -13,6 +13,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             PrintEaseTheme {
                 val model: PrintViewModel = viewModel()
+                androidx.compose.runtime.LaunchedEffect(intent.getStringExtra("orderId")) {
+                    intent.getStringExtra("orderId")?.let { model.openOrder(it) }
+                }
                 PrintEase(model)
             }
         }

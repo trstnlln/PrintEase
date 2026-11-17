@@ -66,3 +66,6 @@ captures/
 
 # Kotlin compiler local state
 .kotlin/
+
+# Local shared dependency link used by the web checkout
+web-app/node_modules

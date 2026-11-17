@@ -6,11 +6,12 @@ import {deleteApp} from 'firebase/app';
 import {connectStorageEmulator} from 'firebase/storage';
 import {FirebaseBackend} from '../src/firebase.mjs';
 import {samplePDF} from '../src/demo.mjs';
-import {defaults} from '../src/model.mjs';
+import {defaults,defaultShop} from '../src/model.mjs';
 Object.defineProperty(globalThis,'navigator',{configurable:true,value:{onLine:true}});
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn){for(let i=0;i<160;i++){if(fn())return;await delay(25);}throw new Error('Expected Firebase state did not arrive.');}
 test('web SDK shares private PDFs and queue updates through Firebase emulators',async t=>{
+ const reset=await fetch('http://127.0.0.1:8080/emulator/v1/projects/demo-printease/databases/(default)/documents',{method:'DELETE'});assert.equal(reset.status,200);
  let state;
  const backend=new FirebaseBackend({projectId:'demo-printease',apiKey:'demo-fake-key',authDomain:'demo-printease.firebaseapp.com',storageBucket:'demo-printease.appspot.com',appId:'1:123:web:test'},value=>state=value);
  assert.equal(backend.app.options.projectId,'demo-printease');
@@ -26,5 +27,10 @@ test('web SDK shares private PDFs and queue updates through Firebase emulators',
  await backend.refresh();await until(()=>state.session?.admin&&state.orders.length===1);
  await backend.transition(draft.id,'Accepted');await until(()=>state.orders[0].status==='Accepted');assert.equal(state.orders[0].queue,1);await backend.transition(draft.id,'Printing');await backend.transition(draft.id,'Ready for Pickup');
  await backend.signOut();await backend.email('web-student@example.com','test-password-123');await until(()=>state.orders[0]?.status==='Ready for Pickup');assert.equal(state.session.admin,false);assert.equal(state.orders.length,1);
+ await backend.signOut();await backend.email('web-admin@example.com','test-password-123');await until(()=>state.session?.admin);
+ await backend.saveSettings({...defaultShop(),rates:{bw:4,color:12,legalExtra:2}});await until(()=>state.settings.version===1);assert.equal(state.orders[0].estimatedCost,4);
+ await backend.signOut();await backend.email('web-student@example.com','test-password-123');await until(()=>state.session?.uid===student&&state.settings.version===1);
+ const selected={...draft,id:'web-selected',pdf:{...draft.pdf,name:'Selected.pdf'},options:{...defaults(),pages:2,pageRanges:[{start:2,end:2}]}};
+ await backend.submit(selected,()=>{});await until(()=>state.orders.length===2);assert.equal(state.orders.find(o=>o.id==='web-selected').estimatedCost,4);assert.equal(state.orders.find(o=>o.id==='web-selected').options.selectedPages,1);
  await backend.signOut();await backend.email('web-other@example.com','test-password-123','Other Student');await until(()=>state.session?.uid!==student);await until(()=>state.orders.length===0);
 });

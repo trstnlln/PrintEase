@@ -12,3 +12,13 @@ test('search and filters never expose student names as a student search term',()
 test('order metadata matches Android Firebase schema and admins cannot submit',()=>{const user={uid:'uid',name:'Alex',admin:false};const order=makeOrder('id',user,{name:'Report.pdf'},defaults());assert.equal(order.storagePath,'documents/uid/id.pdf');assert.equal(order.status,'Pending');assert.equal(order.estimatedCost,2);assert.equal(order.queue,null);assert.throws(()=>makeOrder('id',{...user,admin:true},{name:'Report.pdf'},defaults()));});
 test('user supplied text is escaped and setup errors are actionable',()=>{assert.equal(escapeHtml('<img src=x onerror="bad()">'), '&lt;img src=x onerror=&quot;bad()&quot;&gt;');assert.match(errorMessage({code:'auth/unauthorized-domain'}),/authorized domains/i);assert.equal(errorMessage({code:'auth/popup-closed-by-user'}),'');});
 test('PDF size is bounded before parsing',()=>{assert.throws(()=>validatePdf({size:MAX_BYTES+1}));assert.throws(()=>validatePdf({size:0}));assert.doesNotThrow(()=>validatePdf({size:MAX_BYTES}));});
+
+test('page range selection merges duplicates and bounds pricing to selected pages',async()=>{
+ const {parsePageRanges,selectedPages,serializeOptions,sameOptions,defaultShop,validateShop,orderTotal}=await import('../src/model.mjs');
+ const ranges=parsePageRanges('5, 1-3, 2, 8-10',10);assert.deepEqual(ranges,[{start:1,end:3},{start:5,end:5},{start:8,end:10}]);
+ const o={...defaults(),pages:10,copies:3,duplex:true,pageRanges:ranges};assert.equal(selectedPages(o),7);assert.deepEqual(estimate(o,{bw:4,color:12,legalExtra:2}),{rate:4,total:84,sheets:12});
+ assert.deepEqual(parsePageRanges('1-10',10),[]);for(const input of ['0','11','3-1','1,,2','1.5','1-9999999999999999999999'])assert.throws(()=>parsePageRanges(input,10));
+ const serialized=serializeOptions(o);assert.equal(sameOptions(Object.fromEntries(Object.entries(serialized).reverse()),o),true);
+ const order=makeOrder('snapshot',{uid:'a',name:'Alex',admin:false},{name:'PDF'},o,{bw:4,color:12,legalExtra:2});assert.equal(orderTotal(order),84);assert.equal(order.pricing.bw,4);
+ assert.equal(defaultShop().retentionDays,0);assert.throws(()=>validateShop({...defaultShop(),retentionDays:1}));
+});

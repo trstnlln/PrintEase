@@ -72,4 +72,36 @@ class ModelTest {
             sortedQueue(listOf(pending, second, first)).map { it.id },
         )
     }
+
+    @Test
+    fun selectedPagesAreMergedBoundedAndPricedWithSavedRates() {
+        val ranges = parsePageRanges("5, 1-3, 2, 8-10", 10)
+        assertEquals(listOf(PageRange(1, 3), PageRange(5, 5), PageRange(8, 10)), ranges)
+        val options = PrintOptions(pages = 10, copies = 3, duplex = true, pageRanges = ranges)
+        assertEquals(7, options.selectedPages)
+        assertEquals(12, options.sheets)
+        assertEquals(84L, options.total(PrintRates(4, 12, 2)))
+        assertTrue(parsePageRanges("1-10", 10).isEmpty())
+        listOf("0", "11", "3-1", "1,,2", "1.5", "1-9999999999999999999999").forEach {
+            assertTrue(it, runCatching { parsePageRanges(it, 10) }.isFailure)
+        }
+    }
+
+    @Test
+    fun ordersRoundTripWithPriceSnapshotAndSelectedRanges() {
+        val order =
+            PrintOrder(
+                "id",
+                "a",
+                "Alex",
+                "Report.pdf",
+                "documents/a/id.pdf",
+                PrintOptions(pages = 10, pageRanges = listOf(PageRange(1, 3), PageRange(5, 5))),
+                pricing = PrintRates(4, 12, 2),
+            )
+        assertEquals(16L, order.total)
+        assertEquals(order, PrintOrder.fromMap(order.id, order.toMap()))
+        assertEquals(0, ShopSettings().retentionDays)
+        assertTrue(runCatching { ShopSettings(retentionDays = 1) }.isFailure)
+    }
 }
