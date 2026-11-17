@@ -71,10 +71,21 @@ object PickupAlerts {
 
     suspend fun setEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean("enabled", enabled).apply()
-        if (enabled) register(context)
-        else {
+        if (enabled) {
+            try {
+                register(context)
+            } catch (e: Exception) {
+                prefs(context).edit().putBoolean("enabled", false).apply()
+                throw e
+            }
+        } else {
             clear(context)
-            unregister()
+            // Local opt-out takes effect immediately, even if the token cannot sync offline.
+            try {
+                unregister()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {}
         }
     }
 
