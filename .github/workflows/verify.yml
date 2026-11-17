@@ -3,6 +3,9 @@ on:
   push:
     branches: [kotlin-native]
   pull_request:
+concurrency:
+  group: verify-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -15,6 +18,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew :app:testDemoDebugUnitTest :app:lintDemoDebug :app:assembleDemoDebug :app:assembleLiveDebug :app:assembleDemoDebugAndroidTest
