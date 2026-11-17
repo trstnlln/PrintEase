@@ -83,14 +83,16 @@ The test creates disposable **emulator** accounts, verifies private upload/downl
 
 Live submissions and status updates need internet. Real Firebase documents are not deliberately persisted in an offline document cache; the PDF preview exists in memory while open. Local drafts/demo files remain in browser storage, which Safari may clear under storage pressure or when the user clears website data. Sign-out removes the current draft. The demo and native app are separate local demos; only **live Firebase** accounts/orders are shared.
 
-Prices are samples (PHP 2 B&W / PHP 10 color per side; Legal adds PHP 1). Duplex saves sheets, not printed-side charges. The shop reviews page counts and final pricing; server-side PDF inspection is not implemented. There is no payment processing, direct printer integration, multi-shop support or background push notification feature. Up to 500 live orders are loaded; extend with pagination/archive policy for long-running use.
+Default rates are PHP 2 B&W / PHP 10 color per side, with PHP 1 extra for Legal. Administrators can edit these rates; each order preserves its submitted quote. Selected PDF page ranges determine the printed-side count. Duplex saves sheets, not printed-side charges. The shop reviews page counts and final pricing; server-side PDF inspection is not implemented. There is no payment processing, direct printer integration, multi-shop support or background push notification feature. Up to 500 live orders are loaded; extend with pagination/archive policy for long-running use.
 
 ## Verification
 
-19 unit/DOM/repository tests and one real-web-SDK Firebase emulator integration scenario pass. The static production build succeeds. Actual browser visual QA was unavailable in the managed environment because its required browser-control tool was not exposed. Physical iPhone Safari testing, Google account chooser sign-in, live Firebase permissions/billing, bucket CORS and Wi-Fi/cellular timing targets remain owner/device checks. DOM checks are not a claim of real Safari execution.
+24 unit/DOM/repository tests and one real-web-SDK Firebase emulator integration scenario pass. The static production build succeeds. Actual browser visual QA was unavailable in the managed environment because its required browser-control tool was not exposed. Physical iPhone Safari testing, Google account chooser sign-in, live Firebase permissions/billing, bucket CORS and Wi-Fi/cellular timing targets remain owner/device checks. DOM checks are not a claim of real Safari execution.
 
 ## Shop experience 2.1
 
 The partner shop is **near campus**. The default name is **Nearby print shop** until real details are confirmed. Android and web share `shopSettings/current`, page-range selections, quote snapshots and completion/removal timestamps. Administrators edit details and rates from Account. Students retain their drafts when new requests are paused. Existing orders keep their quoted price.
 
 Deploy the root Firebase rules before using the new clients. See [`docs/SHOP_OPERATIONS.md`](../docs/SHOP_OPERATIONS.md) for pickup notifications and opt-in retention setup. Android background alerts require the supplied cloud functions; web ready messages appear while the app observes status changes. The website does not provide iPhone background push.
+
+The package override for `@grpc/grpc-js` selects patched version 1.13.6 for Firebase’s Node-only transport. It is exercised by the real Web SDK emulator test and is excluded from the browser bundle. Production dependency audit: zero advisories on November 17, 2026.

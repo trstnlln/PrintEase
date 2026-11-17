@@ -51,6 +51,8 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix web-app
       - run: npm ci --prefix functions
+      - run: npm audit --omit=dev --audit-level=high --prefix web-app
+      - run: npm audit --omit=dev --audit-level=high --prefix functions
       - run: npm test --prefix web-app
       - run: npm run build --prefix web-app
       - run: npm test --prefix functions

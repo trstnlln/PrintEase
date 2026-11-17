@@ -12,7 +12,7 @@ The migration is checked with native Android builds, Android lint, Kotlin/JVM mo
 
 - Web model, IndexedDB repository and DOM interaction tests: **24 passed**. This includes page selection, preserved quotes, admin settings, request pauses and stable-ID retry behavior.
 - Real Firebase Web SDK emulator integration: **1 passed**, including private PDF upload/download, student/admin claims, daily queue transitions, selected pages and changed rates.
-- Cloud service policy tests: **2 passed**; both handler exports also loaded and registered with the Functions SDK. No real FCM delivery or scheduled deletion was run against the live project.
+- Cloud service tests: **3 passed** (two policy tests and one real SDK handler-registration test). Both handler exports loaded and registered with the Functions SDK. No real FCM delivery or scheduled deletion was run against the live project.
 - Native screenshots for the student/admin workspace, shop settings, selected pages and dark account layout were reviewed. Browser layout/Safari QA was unavailable in this environment; DOM tests do not establish pixel-level browser behavior.
 
 Google Services configuration was also checked with a synthetic local JSON fixture: live configuration processed successfully and demo processing was skipped. The fixture was deleted and was not committed.
@@ -61,3 +61,5 @@ Page-range parsing rejects out-of-bounds, malformed and overflowing input, merge
 Ready-alert delivery and scheduled PDF removal require the new server functions to be deployed to `printease-ce44e`; they have not been deployed from this workspace. Cleanup is off by default. Real device notifications, actual Google sign-in, iPhone Safari layouts, native PDF device tests and deletion in an isolated Firebase test project remain manual acceptance checks. See [Shop operations](SHOP_OPERATIONS.md).
 
 The repository includes GitHub Actions for Android builds/tests/lint and Firebase/web/cloud-policy checks. A successful local run does not establish a successful hosted CI run; inspect the workflow after pushing.
+
+Production dependency audits on November 17, 2026 reported **0 advisories** for `functions/` and `web-app/`. Cloud services use Firebase Admin 14.5.1 and Functions 7.4.0. The web project pins the Node-only gRPC transport to patched 1.13.6; the actual Web SDK emulator scenario passed with that override. The browser bundle does not include the Node gRPC transport. GitHub Actions repeats production audits for high/critical advisories. Audit results describe the installed dependency graph at the stated date, not a guarantee about future advisories.

@@ -28,7 +28,7 @@ PrintEase/
 
 If you are still on the old Flutter `main` branch, switch to `kotlin-native` before following this folder layout. The file is ignored by Git; keep it local. Never include a Firebase service-account private key in the app.
 
-The console's **Add Firebase SDK** page explains Gradle configuration. This repository already includes the Google Services plugin and the Auth, Firestore and Storage SDKs, so you do not need to copy those snippets again. Click Next/Continue to console.
+The console's **Add Firebase SDK** page explains Gradle configuration. This repository already includes the Google Services plugin and the Auth, Firestore, Storage and Cloud Messaging SDKs, so you do not need to copy those snippets again. Click Next/Continue to console.
 
 ## 3. Enable services
 
