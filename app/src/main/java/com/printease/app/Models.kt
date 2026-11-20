@@ -65,7 +65,7 @@ data class PrintRates(val bw: Long = 2, val color: Long = 10, val legalExtra: Lo
 }
 
 data class ShopSettings(
-    val name: String = "Nearby print shop",
+    val name: String = "Nano Alangilan",
     val address: String = "Near BSU Alangilan campus",
     val pickupHours: String = "Confirm pickup hours with the shop",
     val acceptingOrders: Boolean = true,

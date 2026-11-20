@@ -183,7 +183,7 @@ class ComposeTest {
             }
         }
         compose.onNodeWithText("Requests paused").assertIsNotEnabled()
-        compose.onNodeWithText("Nearby print shop").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Nano Alangilan").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -227,6 +227,6 @@ class ComposeTest {
         compose.onNodeWithText("Save shop details").performScrollTo().performClick()
         assertEquals(4L, result!!.rates.bw)
         assertEquals(0, result!!.retentionDays)
-        assertEquals("Nearby print shop", result!!.name)
+        assertEquals("Nano Alangilan", result!!.name)
     }
 }

@@ -7,7 +7,7 @@
 - The live Firestore API returned SERVICE_DISABLED before the owner began setup. The console then reported that the database already exists. Open the existing `(default)` database; do not create a second ID.
 - Firebase's authorized domains already include the published Site hostname.
 
-These observations are point-in-time diagnostics. They do not establish that current rules, indexes or the hosted document service are live.
+The observations above describe the original failures. The deployment section below records the newer live checks.
 
 ## Source changes
 
@@ -22,16 +22,27 @@ These observations are point-in-time diagnostics. They do not establish that cur
 - Preserve the session and existing orders during same-account refresh.
 - Check production Worker assets, rules, emulator integration and native builds in CI.
 
-## Deployment is separate
+## Deployment and live checks — November 20, 2026
 
-The coding workspace became unavailable during this repair. Source changes can be committed and checked through GitHub, but publishing the new Worker to the existing Sites source repository requires the workspace connection to recover. Until a new Site deployment succeeds, the live website remains on its previous version and hosted PDF uploads are not available.
+The workspace recovered and Site version **6** was deployed successfully to https://printease-campus.consideratefennel8.chatgpt.site. The Site remains public. Its source commit is `96248a63f19d76d2d1645a41b8fe5b3261d9808b` in the separate Sites source repository; this is distinct from the GitHub branch history.
 
-The owner must also publish the validated current Firestore rules and index to the existing database. These cannot be applied with a public Firebase client config. [Firebase setup](FIREBASE_SETUP.md) gives console and CLI steps.
+The managed storage manifest uses `"r2": "BUCKET"`. The hosting service validated this format and provisioned the private binding. No Firebase Storage bucket or Blaze upgrade is required for new PDFs.
 
-The existing Site audience is public and must remain public on the next deployment.
+Live checks confirmed:
+
+- Hosted storage readiness returns 200 and ready true.
+- Temporary email registration and password sign-in return 200.
+- The owner published the Firestore rules. An authenticated shop-settings read reaches the database and returns 404 because no settings document exists yet; clients use the defaults.
+- An unauthenticated PDF request is rejected with 401.
+- A private PDF upload and authenticated download return 200, with identical bytes/SHA-256 and `Cache-Control: private, no-store`.
+- Temporary QA accounts were deleted. No production order was created. Synthetic PDF test objects remain private; hosted orphan cleanup is not implemented.
+
+**The orders query still needs its composite index:** `orders`, collection scope, `ownerId` Ascending and `createdAt` Descending. The live API returns FAILED_PRECONDITION until the index is built. The owner has been given Firebase's direct index-creation link. [Firebase setup](FIREBASE_SETUP.md) also gives the console and CLI steps.
+
+The default shop display name is **Nano Alangilan**, near BSU Alangilan. The exact address, hours and shop participation still need confirmation. The shop name, pickup details and rates remain editable by its trusted administrator.
 
 ## Remaining device and operational checks
 
-After deployment and Firebase setup, test registration/sign-in, selecting a PDF from iPhone Files/iCloud, uploading and previewing it, and shop-admin access. Real Safari visual QA and the real Google account chooser have not been exercised by the emulator suite. Hosted PDF retention and orphan cleanup are not implemented; files stay private and retention is shown as Off.
+After the index is enabled, test the full student request and shop-admin workflow on the actual iPhone. API checks do not exercise Safari’s picker, pop-up or visual layout. Real Safari visual QA and the real Google account chooser have not been exercised by the emulator suite. Hosted PDF retention and orphan cleanup are not implemented; files stay private and retention is shown as Off.
 
 Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.

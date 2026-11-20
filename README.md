@@ -133,7 +133,7 @@ Do not use debug builds as a production release. Configure your own release sign
 
 ## Shop experience update (2.1)
 
-Printing happens at a partner shop **near campus**. The temporary display name is **Nearby print shop**. Administrators can edit pickup details, whole-peso print rates, request availability and optional completed-PDF retention. Requests support selected page ranges and keep a price snapshot even after rates change. Android pickup alerts are opt-in; server functions must be deployed to deliver them.
+Printing happens at a partner shop **near campus**. The default display name is **Nano Alangilan**; the exact address and pickup hours still need confirmation. Administrators can edit pickup details, whole-peso print rates, request availability and optional completed-PDF retention. Requests support selected page ranges and keep a price snapshot even after rates change. Android pickup alerts are opt-in; server functions must be deployed to deliver them.
 
 See [Shop operations and activation](docs/SHOP_OPERATIONS.md) for the setup steps and shared Android/web behavior. Automatic PDF cleanup is off by default.
 

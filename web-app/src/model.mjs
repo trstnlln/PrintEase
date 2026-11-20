@@ -2,7 +2,7 @@ export const MAX_BYTES = 5 * 1024 * 1024;
 export const statuses = ['Pending', 'Accepted', 'Printing', 'Ready for Pickup', 'Completed', 'Rejected', 'Cancelled'];
 export const terminal = ['Completed', 'Rejected', 'Cancelled'];
 export const defaultRates = () => ({bw:2,color:10,legalExtra:1});
-export const defaultShop = () => ({name:'Nearby print shop',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop',acceptingOrders:true,rates:defaultRates(),retentionDays:0,version:0});
+export const defaultShop = () => ({name:'Nano Alangilan',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop',acceptingOrders:true,rates:defaultRates(),retentionDays:0,version:0});
 export function validateShop(s) {
  for(const [key,min,max] of [['name',2,100],['address',2,300],['pickupHours',2,200]]) if(typeof s[key]!=='string'||s[key].trim().length<min||s[key].trim().length>max) throw new Error('Complete the shop name, address and pickup hours.');
  if(typeof s.acceptingOrders!=='boolean'||![0,7,14,30].includes(s.retentionDays)||!Number.isSafeInteger(s.version)||s.version<0) throw new Error('Check the shop settings.');

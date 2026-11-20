@@ -104,7 +104,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         mutable.value =
             ShopState(
                 session =
-                    if (admin) Session("demo-admin", "Nearby print shop", "admin@demo.local", true)
+                    if (admin) Session("demo-admin", "Nano Alangilan", "admin@demo.local", true)
                     else Session("demo-student", "Alex Student", "student@demo.local", false)
             )
         publish()
