@@ -124,3 +124,19 @@ test('notification tokens belong to their signed-in owner; students cannot mark 
  await assertFails(setDoc(doc(db,'users/other/devices/phone'),{token:'a-valid-looking-test-device-token',updatedAt:Date.now()}));
  await assertFails(updateDoc(doc(db,'orders/private'),{documentDeletedAt:Date.now()}));
 });
+test('hosted PDFs bind immutable hashes and paths to the student',async()=>{
+ const hash='a'.repeat(64), db=student().firestore();
+ const saved={...order('hosted'),documentStore:'hosted',fileHash:hash,storagePath:`hosted/student/${hash}.pdf`,pricing:settings().rates,estimatedCost:24};
+ await assertSucceeds(setDoc(doc(db,'orders/hosted'),saved));
+ await assertFails(setDoc(doc(db,'orders/bad-hosted-owner'),{...saved,storagePath:`hosted/other/${hash}.pdf`}));
+ await assertFails(setDoc(doc(db,'orders/bad-hosted-hash'),{...saved,fileHash:'wrong'}));
+ await assertFails(updateDoc(doc(db,'orders/hosted'),{fileHash:'b'.repeat(64),storagePath:`hosted/student/${'b'.repeat(64)}.pdf`}));
+});
+test('only the console can grant administrator documents; students cannot promote themselves',async()=>{
+ const db=student().firestore();
+ await assertSucceeds(getDoc(doc(db,'admins/student')));
+ await assertFails(setDoc(doc(db,'admins/student'),{enabled:true}));
+ await assertFails(getDoc(doc(db,'admins/other')));
+ await env.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'admins/console-admin'),{enabled:true}));
+ await assertSucceeds(getDoc(doc(env.authenticatedContext('console-admin').firestore(),'orders/private')));
+});

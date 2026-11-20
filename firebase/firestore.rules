@@ -2,7 +2,163 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function admin() { return signedIn() && request.auth.token.get('admin', false) == true; }
+    function admin() {
+      return signedIn() && (request.auth.token.get('admin', false) == true
+        || (exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('enabled', false) == true));
+    }
+    function validDocument(d, orderId) {
+      return (d.get('documentStore','firebase') == 'firebase'
+          && d.get('fileHash',null) == null
+          && d.storagePath == 'documents/' + request.auth.uid + '/' + orderId + '.pdf')
+        || (d.get('documentStore','firebase') == 'hosted'
+          && d.fileHash is string && d.fileHash.matches('^[a-f0-9]{64}
+    function rates() {
+      return exists(/databases/$(database)/documents/shopSettings/current)
+        ? get(/databases/$(database)/documents/shopSettings/current).data.rates
+        : {'bw':2,'color':10,'legalExtra':1};
+    }
+    function accepting() {
+      return !exists(/databases/$(database)/documents/shopSettings/current)
+        || get(/databases/$(database)/documents/shopSettings/current).data.acceptingOrders;
+    }
+    function validRates(r) {
+      return r is map && r.keys().hasAll(['bw','color','legalExtra']) && r.keys().hasOnly(['bw','color','legalExtra'])
+        && r.bw is int && r.bw >= 1 && r.bw <= 1000
+        && r.color is int && r.color >= 1 && r.color <= 1000
+        && r.legalExtra is int && r.legalExtra >= 0 && r.legalExtra <= 1000;
+    }
+    function rangeValid(r, i, pages) {
+      return r.size() <= i || (r[i] is map && r[i].keys().hasAll(['start','end']) && r[i].keys().hasOnly(['start','end'])
+        && r[i].start is int && r[i].end is int && r[i].start >= 1 && r[i].end >= r[i].start && r[i].end <= pages
+        && (i == 0 || r[i].start > r[i-1].end));
+    }
+    function rangeCount(r, i) { return r.size() <= i ? 0 : r[i].end - r[i].start + 1; }
+    function validRanges(o) {
+      let r = o.pageRanges;
+      return r is list && r.size() >= 1 && r.size() <= 10 && o.selectedPages is int
+        && rangeValid(r,0,o.pages)
+        && rangeValid(r,1,o.pages)
+        && rangeValid(r,2,o.pages)
+        && rangeValid(r,3,o.pages)
+        && rangeValid(r,4,o.pages)
+        && rangeValid(r,5,o.pages)
+        && rangeValid(r,6,o.pages)
+        && rangeValid(r,7,o.pages)
+        && rangeValid(r,8,o.pages)
+        && rangeValid(r,9,o.pages)
+        && o.selectedPages == rangeCount(r,0) + rangeCount(r,1) + rangeCount(r,2) + rangeCount(r,3) + rangeCount(r,4) + rangeCount(r,5) + rangeCount(r,6) + rangeCount(r,7) + rangeCount(r,8) + rangeCount(r,9);
+    }
+    function validOptions(o) {
+      return o.keys().hasAll(['paper','pages','copies','color','duplex'])
+        && o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages'])
+        && o.paper in ['A4','Letter','Legal']
+        && o.pages is int && o.pages >= 1 && o.pages <= 1000
+        && o.copies is int && o.copies >= 1 && o.copies <= 100
+        && o.color is bool && o.duplex is bool
+        && ((!o.keys().hasAny(['pageRanges','selectedPages'])) || validRanges(o));
+    }
+    function validPrice(d) {
+      let r = d.get('pricing', {'bw':2,'color':10,'legalExtra':1});
+      return validRates(r) && r == rates() && d.estimatedCost == d.options.get('selectedPages',d.options.pages) * d.options.copies *
+        ((d.options.color ? r.color : r.bw) + (d.options.paper == 'Legal' ? r.legalExtra : 0));
+    }
+    function recent(t) { return t is int && t >= request.time.toMillis() - 300000 && t <= request.time.toMillis() + 300000; }
+    function validUpdated(d) { return !d.keys().hasAny(['updatedAt']) || recent(d.updatedAt); }
+    function validTransition(old, next) {
+      return (old == 'Pending' && next in ['Accepted','Rejected','Cancelled'])
+        || (old == 'Accepted' && next == 'Printing')
+        || (old == 'Printing' && next == 'Ready for Pickup')
+        || (old == 'Ready for Pickup' && next == 'Completed');
+    }
+    match /orders/{orderId} {
+      allow get: if signedIn() && (!exists(/databases/$(database)/documents/orders/$(orderId)) || admin() || resource.data.ownerId == request.auth.uid);
+      allow list: if admin() || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn() && !admin()
+        && request.resource.data.keys().hasAll(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
+        && request.resource.data.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash'])
+        && accepting() && validUpdated(request.resource.data)
+        && request.resource.data.get('completedAt',null) == null && request.resource.data.get('documentDeletedAt',null) == null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.studentName is string && request.resource.data.studentName.size() > 0 && request.resource.data.studentName.size() <= 200
+        && request.resource.data.fileName is string && request.resource.data.fileName.size() > 0 && request.resource.data.fileName.size() <= 255
+        && validDocument(request.resource.data, orderId)
+        && validOptions(request.resource.data.options) && validPrice(request.resource.data)
+        && request.resource.data.createdAt is int
+        && request.resource.data.createdAt >= request.time.toMillis() - 300000
+        && request.resource.data.createdAt <= request.time.toMillis() + 300000
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.queue == null && request.resource.data.queueDay == null
+        && request.resource.data.note == '';
+      allow update: if signedIn() && resource.data.ownerId == request.auth.uid
+        && resource.data.status == 'Pending' && request.resource.data.status == 'Cancelled'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','note','updatedAt'])
+        && validUpdated(request.resource.data)
+        && request.resource.data.note == '';
+      allow update: if admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','queue','queueDay','note','updatedAt','completedAt'])
+        && validUpdated(request.resource.data)
+        && (request.resource.data.status == 'Completed'
+          ? (!request.resource.data.keys().hasAny(['completedAt']) || recent(request.resource.data.completedAt))
+          : request.resource.data.get('completedAt',null) == resource.data.get('completedAt',null))
+        && validTransition(resource.data.status, request.resource.data.status)
+        && request.resource.data.note is string && request.resource.data.note.size() <= 500
+        && (request.resource.data.status != 'Rejected' || request.resource.data.note.size() > 0)
+        && ((request.resource.data.status == 'Accepted'
+          && request.resource.data.queueDay is string
+          && request.resource.data.queueDay.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.queue is int && request.resource.data.queue > 0
+          && getAfter(/databases/$(database)/documents/counters/$(request.resource.data.queueDay)).data.last == request.resource.data.queue
+          && getAfter(/databases/$(database)/documents/counters/$(request.resource.data.queueDay)).data.orderId == orderId)
+          || (request.resource.data.status != 'Accepted'
+            && request.resource.data.queue == resource.data.queue
+            && request.resource.data.queueDay == resource.data.queueDay));
+      allow delete: if false;
+    }
+match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+    match /shopSettings/{id} {
+      allow read: if signedIn() && id == 'current';
+      function validSettings(d) {
+        return d.keys().hasAll(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version'])
+          && d.keys().hasOnly(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version'])
+          && d.name is string && d.name.size() >= 2 && d.name.size() <= 100
+          && d.address is string && d.address.size() >= 2 && d.address.size() <= 300
+          && d.pickupHours is string && d.pickupHours.size() >= 2 && d.pickupHours.size() <= 200
+          && d.acceptingOrders is bool && validRates(d.rates)
+          && d.retentionDays in [0,7,14,30] && d.version is int;
+      }
+      allow create: if admin() && id == 'current' && validSettings(request.resource.data) && request.resource.data.version == 1;
+      allow update: if admin() && id == 'current' && validSettings(request.resource.data) && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
+    match /users/{uid}/devices/{deviceId} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['token','updatedAt']) && request.resource.data.keys().hasOnly(['token','updatedAt'])
+        && request.resource.data.token is string && request.resource.data.token.size() >= 20 && request.resource.data.token.size() <= 4096
+        && recent(request.resource.data.updatedAt);
+    }
+    match /counters/{day} {
+      allow read: if admin();
+      function validCounter() {
+        return request.resource.data.keys().hasOnly(['last','orderId'])
+          && request.resource.data.last is int && request.resource.data.orderId is string
+          && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.status == 'Accepted'
+          && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.queue == request.resource.data.last
+          && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.queueDay == day;
+      }
+      allow create: if admin() && validCounter() && request.resource.data.last == 1;
+      allow update: if admin() && validCounter() && request.resource.data.last == resource.data.last + 1;
+      allow delete: if false;
+    }
+  }
+}
+)
+          && d.storagePath == 'hosted/' + request.auth.uid + '/' + d.fileHash + '.pdf');
+    }
     function rates() {
       return exists(/databases/$(database)/documents/shopSettings/current)
         ? get(/databases/$(database)/documents/shopSettings/current).data.rates

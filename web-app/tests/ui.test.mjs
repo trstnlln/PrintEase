@@ -26,3 +26,35 @@ test('admin settings persist, price quotes remain stable, and paused requests ca
 test('shop details are escaped and pickup guidance consistently refers to shops near campus',async t=>{
  const app=await setup(t);await app.backend.login(false);app.s.settings.name='<img id="shop-xss" src=x>';app.render();assert.equal(document.getElementById('shop-xss'),null);assert.doesNotMatch(document.body.textContent,/Campus Print Shop|campus print shop/);assert.match(document.body.textContent,/near campus/);
 });
+async function selectedFile(pages=2){const {samplePDF}=await import('../src/demo.mjs');const file=new Blob([samplePDF(pages)],{type:'application/pdf'});file.name='iPhone.pdf';return file;}
+test('returning from the phone file picker preserves the signed-in account and selected PDF',async t=>{
+ const app=await setup(t);await app.backend.login(false);app.go('request');const uid=app.s.session.uid;let refreshes=0;
+ app.backend.refresh=async()=>{refreshes++;app.s.session=null;app.s.route='home';};
+ const pending=app.pick(await selectedFile(2));window.dispatchEvent(new window.Event('focus'));await pending;
+ assert.equal(refreshes,0);assert.equal(app.s.session.uid,uid);assert.equal(app.s.route,'request');assert.equal(app.s.draft.pdf.pages,2);assert.equal(app.s.draft.pdf.name,'iPhone.pdf');
+ assert.match(document.body.textContent,/PDF selected/);assert.equal(document.querySelector('[data-action="review"]').disabled,false);
+});
+test('Safari autofilled credentials are read from the form before it is re-rendered',async t=>{
+ const app=await setup(t);app.s.mode='live';app.s.auth.register=true;app.render();let received;
+ app.backend.email=async(...args)=>{received=args;};
+ document.getElementById('auth-name').value='Safari Student';document.getElementById('auth-email').value='safari@example.com';document.getElementById('auth-password').value='good-password-123';
+ await app.onSubmit({target:document.getElementById('auth-form'),preventDefault(){}});
+ assert.deepEqual(received,['safari@example.com','good-password-123','Safari Student']);
+});
+test('registration errors stay visible in the form and preserve the entered account details',async t=>{
+ const app=await setup(t);app.s.mode='live';app.s.auth.register=true;app.render();
+ app.backend.email=async()=>{throw Object.assign(new Error('disabled'),{code:'auth/operation-not-allowed'});};
+ document.getElementById('auth-name').value='Safari Student';document.getElementById('auth-email').value='safari@example.com';document.getElementById('auth-password').value='good-password-123';
+ await app.onSubmit({target:document.getElementById('auth-form'),preventDefault(){}});
+ assert.match(document.querySelector('#auth-form [role="alert"]').textContent,/currently unavailable/);assert.equal(document.getElementById('auth-email').value,'safari@example.com');assert.equal(app.s.busy,false);
+});
+test('an invalid PDF displays a persistent message and keeps the previous valid selection',async t=>{
+ const app=await setup(t);await app.backend.login(false);app.go('request');await app.pick(await selectedFile(2));const id=app.s.draft.id;
+ const invalid=new Blob(['not a PDF file']);invalid.name='wrong.pdf';await app.pick(invalid);
+ assert.equal(app.s.draft.id,id);assert.match(document.querySelector('.request-error').textContent,/valid PDF/);assert.equal(app.s.fileReading,false);
+});
+test('a local storage failure keeps a valid PDF selected in memory',async t=>{
+ const app=await setup(t);await app.backend.login(false);app.go('request');const database=await db.database(),original=database.transaction;
+ database.transaction=function(stores,...rest){if(Array.isArray(stores)&&stores.includes('files'))throw new Error('Quota exceeded');return original.call(this,stores,...rest);};
+ try{await app.pick(await selectedFile(2));assert.equal(app.s.draft.pdf.pages,2);assert.match(document.querySelector('.draft-warning').textContent,/Keep this tab open/);assert.equal(document.querySelector('[data-action="review"]').disabled,false);}finally{database.transaction=original;}
+});
