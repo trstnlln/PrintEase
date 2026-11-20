@@ -1,3 +1,4 @@
+import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import { HostedDocuments } from "./documents.mjs";
 import { initializeApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, getIdTokenResult, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail, signOut, browserLocalPersistence, inMemoryPersistence, setPersistence } from "firebase/auth";
@@ -20,6 +21,7 @@ class FirebaseBackend {
     this.error = null;
     this.settings = defaultShop();
     this.settingsError = null;
+    this.reviewAvailable = false;
   }
   async init() {
     try {
@@ -43,6 +45,7 @@ class FirebaseBackend {
       this.settingsError = null;
       this.error = null;
       this.cache = false;
+      this.reviewAvailable = false;
       this.emit();
       return;
     }
@@ -54,6 +57,7 @@ class FirebaseBackend {
       this.settingsError = null;
       this.error = null;
       this.cache = false;
+      this.reviewAvailable = false;
       this.change({ session: null, orders: [], ready: false, syncError: null });
     }
     try {
@@ -69,6 +73,12 @@ class FirebaseBackend {
       if (!same || previous.session.admin !== isAdmin) this.orders = [];
       this.session = { uid: user.uid, name: user.displayName || user.email?.split("@")[0] || "Student", email: user.email, admin: isAdmin, photoUrl: user.photoURL || null, provider: user.providerData?.some((p) => p.providerId === "google.com") ? "google" : "email" };
       this.emit();
+      timeout(getDocFromServer(doc(this.db, "capabilities", "print-review-v1")), 10000).then(() => {
+        if (generation === this.generation) {
+          this.reviewAvailable = true;
+          this.emit();
+        }
+      }).catch(() => {});
       this.unSettings = onSnapshot(doc(this.db, "shopSettings", "current"), { includeMetadataChanges: true }, (snapshot) => {
         if (generation !== this.generation) return;
         try {
@@ -116,7 +126,7 @@ class FirebaseBackend {
     }
   }
   emit() {
-    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, syncError: this.error || this.persistenceWarning || null });
+    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, reviewAvailable: this.reviewAvailable, syncError: this.error || this.persistenceWarning || null });
   }
   google() {
     online();
@@ -155,13 +165,15 @@ class FirebaseBackend {
     online();
     const session = this.session;
     if (!session) throw new Error("Sign in first.");
+    const review = draft.addons != null && this.reviewAvailable ? newReview(draft.addons) : null;
+    if (draft.addons?.length && !review) throw new Error("Add-ons are unavailable. Refresh before submitting.");
     let order = makeOrder(draft.id, session, draft.pdf, draft.options, this.settings.rates);
     const orderRef = doc(this.db, "orders", order.id);
     const prior = await timeout(getDocFromServer(orderRef));
     if (prior.exists()) {
       const saved = prior.data();
       if (["Cancelled", "Rejected"].includes(saved.status)) throw new Error("This request was closed. Check Orders, then discard the draft to start a new request.");
-      if (saved.documentStore === "hosted" && saved.fileHash !== draft.pdf.sha256 || !sameOptions(saved.options, draft.options)) throw new Error("This request was already submitted with an earlier document or options. Check Orders before starting a new request.");
+      if (saved.documentStore === "hosted" && saved.fileHash !== draft.pdf.sha256 || !sameOptions(saved.options, draft.options) || JSON.stringify(saved.review?.addons || []) !== JSON.stringify(review?.addons || [])) throw new Error("This request was already submitted with an earlier document or options. Check Orders before starting a new request.");
       return order.id;
     }
     const shop = await timeout(getDocFromServer(doc(this.db, "shopSettings", "current")));
@@ -171,7 +183,8 @@ class FirebaseBackend {
     order = makeOrder(draft.id, session, draft.pdf, draft.options, current.rates);
     const user = this.auth.currentUser;
     if (!user || user.uid !== session.uid || this.session?.uid !== session.uid) throw new Error("Sign in again before sending your PDF.");
-    Object.assign(order, await this.documents.upload(user, draft, onProgress));
+    if (review) order.review = review;
+    Object.assign(order, await this.documents.upload(user, draft, onProgress, review ? order.id : null));
     const { id, ...metadata } = order;
     await timeout(setDoc(orderRef, metadata));
     onProgress(1);
@@ -191,6 +204,7 @@ class FirebaseBackend {
       const updates = { status: next, note: note.trim().slice(0, 500), updatedAt: Date.now() };
       if (next === "Completed") updates.completedAt = Date.now();
       if (next === "Accepted") {
+        if (!canAccept(old)) throw new Error("The student must approve the final price first.");
         const day = dayKey(), counter = doc(this.db, "counters", day), current = await tx.get(counter), number = (current.data()?.last ?? 0) + 1;
         tx.set(counter, { last: number, orderId: id });
         updates.queue = number;
@@ -198,6 +212,38 @@ class FirebaseBackend {
       }
       tx.update(target, updates);
     }));
+  }
+  async reviewOrder(id, action, version, input = {}) {
+    online();
+    const session = this.session;
+    const target = doc(this.db, "orders", id);
+    const user = this.auth.currentUser;
+    if (!session || user?.uid !== session.uid) throw new Error("Sign in to update this request.");
+    let changes = {};
+    if (action === "revise") {
+      const prior = (await timeout(getDocFromServer(target))).data();
+      const draft = input.draft;
+      // The transaction may have committed before the network acknowledged it.
+      if (prior?.ownerId === session.uid && prior.review?.stage === "revised" &&
+          prior.review.version === version + 1 && prior.fileHash === draft.pdf.sha256 &&
+          prior.fileName === draft.pdf.name.slice(0, 255) && sameOptions(prior.options, draft.options)) return;
+      reviewUpdate(prior, session, action, version);
+      const settings = await timeout(getDocFromServer(doc(this.db, "shopSettings", "current")));
+      const shop = validateShop(settings.exists() ? settings.data() : defaultShop());
+      if (shop.version !== this.settings.version) throw new Error("Shop rates changed. Review the new estimate.");
+      const { fileName, options, pricing, estimatedCost } = makeOrder(id, session, draft.pdf, draft.options, shop.rates);
+      changes = { fileName, options, pricing, estimatedCost, ...await this.documents.upload(user, draft, input.onProgress ?? (() => {}), id) };
+    }
+    await timeout(runTransaction(this.db, async tx => {
+      if (this.auth.currentUser?.uid !== session.uid) throw new Error("Your account changed. Sign in again.");
+      const order = (await tx.get(target)).data();
+      const review = reviewUpdate(order, session, action, version, input);
+      tx.update(target, { ...changes, review, updatedAt: Date.now() });
+    }));
+  }
+  async cleanupPdf(id) {
+    if (!this.session?.admin) throw new Error("Only the shop can remove an expired PDF.");
+    return this.documents.cleanup(this.auth.currentUser, id);
   }
   async setPickupTime(id, time) {
     online();

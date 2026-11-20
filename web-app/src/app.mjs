@@ -1,3 +1,4 @@
+import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
 import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, selectedPages, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
@@ -7,7 +8,7 @@ const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, opti
 class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
     this.root = root;
-    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
+    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
     this.modal = null;
     this.preview = null;
     this.generation = 0;
@@ -47,7 +48,7 @@ class PrintEase {
     this.backend?.close();
     const generation = ++this.generation;
     this.closeModal();
-    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
+    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
     try {
       localStorage.setItem("pe_mode", mode);
     } catch {
@@ -250,6 +251,39 @@ class PrintEase {
         this.closeModal();
         return this.action(callback);
       }
+      case "final-quote":
+      case "request-correction":
+        return this.staffReviewDialog(action === "final-quote" ? "quote" : "correction");
+      case "approve-quote":
+      case "decline-quote": {
+        const order = this.s.orders.find(item => item.id === this.s.selected);
+        if (order?.review?.stage !== "quoted") return;
+        const approve = action === "approve-quote";
+        const title = approve ? "Approve this price?" : "Decline this quote?";
+        const detail = approve
+          ? `Pay ${pesos(order.review.quote)} when you collect your prints. The shop can accept the request after approval.`
+          : "The shop can send another price. Printing stays on hold.";
+        return this.confirm(title, detail, approve ? "Approve price" : "Decline price", async () => {
+          await this.backend.reviewOrder(order.id, approve ? "approve" : "decline", order.review.version);
+          this.toast(approve ? "Price approved. The shop can now accept your request." : "Quote declined.");
+        });
+      }
+      case "edit-correction": {
+        const order = this.s.orders.find(item => item.id === this.s.selected);
+        if (order?.review?.stage !== "correction") return;
+        const revision = this.s.draft.revision;
+        if (revision?.id === order.id && revision.version === order.review.version) return this.go("request");
+        const prepare = () => this.prepareReorder(order, true);
+        if (this.s.draft.pdf) return this.confirm("Replace your draft?", "The corrected request will use this draft slot.", "Edit request", prepare);
+        return this.action(prepare);
+      }
+      case "cleanup-pdf": {
+        const id = this.s.selected;
+        return this.confirm("Remove the stored PDF?", "This removes the document and any earlier versions for this request. Your order history stays available.", "Remove PDF", async () => {
+          const removed = await this.backend.cleanupPdf(id);
+          this.toast(removed ? "PDF removed. The order history is still saved." : "More PDF versions remain. Run cleanup again.");
+        });
+      }
       case "estimate": return this.pickupEstimateDialog();
       case "estimate-save": {
         const minutes=Number(document.getElementById('pickup-minutes')?.value),id=node.dataset.id;
@@ -335,7 +369,7 @@ class PrintEase {
       this.s.shopEdit ??= structuredClone(this.s.settings);
       const edit = this.s.shopEdit;
       if (target.dataset.rate) edit.rates[target.dataset.rate] = target.value;
-      else if (["acceptingOrders","ratesConfirmed"].includes(target.dataset.setting)) edit.acceptingOrders = target.checked;
+      else if (["acceptingOrders","ratesConfirmed"].includes(target.dataset.setting)) edit[target.dataset.setting] = target.checked;
       else edit[target.dataset.setting] = target.dataset.setting === "retentionDays" ? Number(target.value) : target.value;
       return;
     }
@@ -354,6 +388,11 @@ class PrintEase {
       } catch (error) {
         d.rangeError = error.message;
       }
+    } else if (target.dataset.addon && !d.revision) {
+      const chosen = new Set(d.addons || []);
+      if (target.checked) chosen.add(target.dataset.addon);
+      else chosen.delete(target.dataset.addon);
+      d.addons = addons.filter(addon => chosen.has(addon.id)).map(addon => addon.id);
     } else if (id === "color") d.options.color = target.checked;
     else if (id === "duplex") d.options.duplex = target.checked;
     else if (target.name === "paper") d.options.paper = target.value;
@@ -362,6 +401,30 @@ class PrintEase {
     this.saveDraft().catch((e2) => this.toast(errorMessage(e2)));
   }
   async onSubmit(event) {
+    if (event.target.id === "review-form") {
+      event.preventDefault();
+      if (this.s.busy) return;
+      const { order, reviewAction } = this.modal ?? {};
+      if (!order) return;
+      const form = event.target;
+      const note = form.elements.namedItem("note").value.trim();
+      const quoteInput = form.elements.namedItem("quote");
+      const quote = quoteInput ? Number(quoteInput.value) : null;
+      if ((reviewAction === "quote" && (!Number.isSafeInteger(quote) || quote < 1 || quote > MAX_QUOTE)) ||
+          (reviewAction === "correction" && !note)) {
+        form.querySelector("[role=alert]").textContent = reviewAction === "quote" ? "Enter a valid price in whole pesos." : "Describe what the student should change.";
+        return;
+      }
+      return this.action(async () => {
+        try {
+          await this.backend.reviewOrder(order.id, reviewAction, order.review?.version ?? -1, { quote, note });
+          this.closeModal();
+          this.toast(reviewAction === "quote" ? "Final price sent for student approval." : "Correction requested.");
+        } catch (error) {
+          form.querySelector("[role=alert]").textContent = errorMessage(error);
+        }
+      });
+    }
     if (event.target.id === "shop-form") {
       event.preventDefault();
       if (this.s.busy || !this.s.session?.admin) return;
@@ -372,7 +435,6 @@ class PrintEase {
           if (String(edit.rates[key]).trim() === "") throw new Error("Enter all three print rates.");
           edit.rates[key] = Number(edit.rates[key]);
         }
-        edit.retentionDays = 0;
         validateShop(edit);
         await this.backend.saveSettings(edit);
         this.s.route = "account";
@@ -445,7 +507,7 @@ class PrintEase {
         const pdf = await inspectPdf(file);
         if (generation !== this.generation || uid !== this.s.session?.uid) return;
         const { selectedPages: ignored, ...oldOptions } = this.s.draft.options;
-        const draft = { id: crypto.randomUUID(), pdf, file, options: { ...oldOptions, pages: pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null, rawCopies: this.s.draft.rawCopies };
+        const draft = { ...this.s.draft, id: this.s.draft.revision ? this.s.draft.id : crypto.randomUUID(), pdf, file, options: { ...oldOptions, pages: pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null, rawCopies: this.s.draft.rawCopies };
         this.s.draft = draft;
         this.s.draftWarning = null;
         const { file: blob, ...value } = draft;
@@ -481,36 +543,58 @@ class PrintEase {
     set("copy-help", Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 ? "Choose 1\u2013100 copies." : "Enter a whole number from 1 to 100.");
     document.getElementById("copy-help")?.classList.toggle("danger-text", !valid);
     document.getElementById("copies")?.setAttribute("aria-invalid", String(!valid));
-    document.querySelectorAll('[data-action="review"]').forEach((button) => button.disabled = !d.pdf || !valid || this.s.busy || !this.s.settings.acceptingOrders || !!this.s.settingsError);
+    document.querySelectorAll('[data-action="review"]').forEach((button) => button.disabled = !d.pdf || !valid || this.s.busy || (!this.s.settings.acceptingOrders && !d.revision) || !!this.s.settingsError);
   }
   review() {
     const d = this.s.draft;
     if (!d.pdf || !d.rawCopies.trim() || Number(d.rawCopies) !== d.options.copies || d.rangeError) return this.toast("Choose a PDF and a valid number of copies.");
-    if (!this.s.settings.acceptingOrders || this.s.settingsError) return this.toast(this.s.settingsError || "The shop has paused new requests. Your draft is saved.");
+    if ((!this.s.settings.acceptingOrders && !d.revision) || this.s.settingsError) return this.toast(this.s.settingsError || "The shop has paused new requests. Your draft is saved.");
     const quotedVersion = this.s.settings.version;
     const cost = estimate(d.options, this.s.settings.rates);
     const summary=`<div class="review-sheet"><div class="review-file">${icon('pdf')}<div><b>${e(d.pdf.name)}</b><p class="small">${d.pdf.pages} pages in PDF · ${Math.ceil(d.pdf.bytes/1024)} KB</p></div></div><dl class="review-options">${[['Pages to print',pageLabel(d.options)],['Copies',d.options.copies],['Paper',d.options.paper],['Print mode',d.options.color?'Color':'Black & white'],['Sides',d.options.duplex?'Double-sided':'Single-sided'],['Pickup at',this.s.settings.name]].map(([label,value])=>`<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join('')}</dl><div class="review-total"><span>Estimated total</span><strong>${pesos(cost.total)}</strong></div><p class="small">${this.s.settings.ratesConfirmed?'Pay at pickup.':'Sample prices. Confirm the actual price with the shop.'} The shop reviews your PDF before assigning a queue number.</p></div>`;
-    this.confirm("Ready to send?", `${d.pdf.name}
+    const selectedAddons = addons.filter(addon => d.addons?.includes(addon.id)).map(addon => addon.label);
+    const addonSummary = selectedAddons.length ? `<p><b>Requested add-ons:</b> ${e(selectedAddons.join(", "))}. The shop includes these in the final quote.</p>` : "";
+    this.confirm(d.revision ? "Send the corrected request?" : "Ready to send?", `${d.pdf.name}
 
 ${pageLabel(d.options)} \xD7 ${d.options.copies} copies
 ${d.options.paper} \xB7 ${d.options.color ? "Color" : "Black & white"} \xB7 ${d.options.duplex ? "Double-sided" : "Single-sided"}
 
 Estimated total: ${pesos(cost.total)}
-Pay at pickup. The shop reviews your PDF before assigning a queue number.`, "Submit request", async () => {
+Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.revision ? "Send correction" : "Submit request", async () => {
       if (quotedVersion !== this.s.settings.version) throw new Error("Shop details or rates changed. Review your updated total.");
       await this.saveDraft();
-      await this.backend.submit(this.s.draft, (p) => {
+      const progress = (p) => {
         this.s.progress = p;
         const bar = document.querySelector(".progress span");
         if (bar) bar.style.width = Math.round(p * 100) + "%";
         const label = document.getElementById("progress-text");
         if (label) label.textContent = p >= 1 ? "Saving your request\u2026" : `Uploading your PDF \xB7 ${Math.round(p * 100)}%`;
-      });
+      };
+      if (d.revision) {
+        await this.backend.reviewOrder(d.revision.id, "revise", d.revision.version, { draft: d, onProgress: progress });
+      } else {
+        await this.backend.submit({ ...d, addons: this.s.reviewAvailable ? d.addons ?? [] : d.addons }, progress);
+      }
       await this.clearDraft();
       this.s.route = "orders";
       history.replaceState(null, "", "#orders");
-      this.toast("Request submitted. Follow its progress in Orders.");
-    }, summary);
+      this.toast(d.revision ? "Correction sent. The shop will review it again." : "Request submitted. Follow its progress in Orders.");
+    }, summary + addonSummary);
+  }
+  staffReviewDialog(action) {
+    const order = this.s.orders.find(item => item.id === this.s.selected);
+    if (!order || !this.s.session?.admin || !this.s.reviewAvailable || order.status !== "Pending") return;
+    const quote = action === "quote";
+    this.openModal(`<form id="review-form" class="dialog-content stack">
+      <h2>${quote ? "Set the final price" : "Request a correction"}</h2>
+      <p class="small">${quote ? "Include any confirmed add-ons. The student must approve before you can accept the request." : "Tell the student what needs to change. They can update this same request."}</p>
+      ${quote ? `<label>Final price (₱)<input name="quote" type="number" inputmode="numeric" min="1" max="${MAX_QUOTE}" required value="${order.review?.quote ?? estimate(order.options, order.pricing).total}"></label>` : ""}
+      <label>${quote ? "Note for the student (optional)" : "What needs to change?"}<textarea name="note" maxlength="500" rows="3" ${quote ? "" : "required"}></textarea></label>
+      <p class="danger-text" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="button outline" data-action="close-modal">Back</button><button class="button" type="submit">${quote ? "Send price" : "Request correction"}</button></div>
+    </form>`);
+    this.modal.order = order;
+    this.modal.reviewAction = action;
   }
   status(next) {
     const order = this.s.orders.find((o) => o.id === this.s.selected);
@@ -545,19 +629,20 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, "Sub
     if(this.s.draft.pdf)return this.confirm('Replace the unfinished draft?','The new draft will use this previous PDF and print options. You will review current prices before sending.','Prepare repeat order',prepare);
     return this.action(prepare);
   }
-  async prepareReorder(order){
+  async prepareReorder(order, correcting = false){
     const uid=this.s.session?.uid,generation=this.generation,key=this.draftKey;
     const bytes=await this.backend.bytes(order),file=new Blob([bytes],{type:'application/pdf'});file.name=order.fileName;
     const {inspectPdf}=await import('./pdf.mjs'),pdf=await inspectPdf(file);
     if(uid!==this.s.session?.uid||generation!==this.generation)return;
     const options=structuredClone(order.options);delete options.selectedPages;options.pages=pdf.pages;validateOptions(options);
-    const draft={id:crypto.randomUUID(),pdf,file,options,rawCopies:String(options.copies),rawRanges:rangeText(options.pageRanges),rangeError:null};
+    const revision = correcting ? { id: order.id, version: order.review.version, note: order.review.note } : null;
+    const draft={id:correcting ? order.id : crypto.randomUUID(),revision,addons:order.review?.addons,pdf,file,options,rawCopies:String(options.copies),rawRanges:rangeText(options.pageRanges),rangeError:null};
     this.s.draft=draft;this.s.draftWarning=null;this.s.requestError=null;
     const {file:blob,...value}=draft;
     try{await db.transact(['settings','files'],tx=>{tx.objectStore('settings').put({id:key,value});tx.objectStore('files').put({id:key,blob});});}
     catch{this.s.draftWarning='Your repeat order is ready, but a recovery copy could not be saved. Keep this tab open until you submit.';}
     this.s.route='request';history.replaceState(null,'','#request');
-    this.toast('Repeat draft ready. Review current prices before submitting.');
+    this.toast(correcting ? 'Update the PDF or print options, then send your correction.' : 'Repeat draft ready. Review current prices before submitting.');
   }
   confirm(title, text, label, callback, details = "") {
     this.openModal(`<div class="dialog-content"><h2 id="dialog-title">${e(title)}</h2>${details || `<p style="white-space:pre-line">${e(text)}</p>`}<div class="dialog-actions"><button class="button outline" data-action="close-modal">Go back</button><button class="button" data-action="confirm">${e(label)}</button></div></div>`, callback);

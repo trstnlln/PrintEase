@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Source
@@ -34,9 +35,29 @@ interface ShopRepository {
 
     fun refresh() {}
 
-    suspend fun submit(id: String, pdf: PdfFile, options: PrintOptions, progress: (Float) -> Unit)
+    suspend fun submit(
+        id: String,
+        pdf: PdfFile,
+        options: PrintOptions,
+        addons: List<String>? = null,
+        progress: (Float) -> Unit,
+    )
 
     suspend fun transition(id: String, next: OrderStatus, note: String = "")
+
+    suspend fun reviewOrder(
+        id: String,
+        action: ReviewAction,
+        version: Long,
+        note: String = "",
+        quote: Long? = null,
+        draft: CorrectionDraft? = null,
+        progress: (Float) -> Unit = {},
+    ) {
+        error("Order review is unavailable.")
+    }
+
+    suspend fun cleanupPdf(id: String): Boolean = error("PDF cleanup is unavailable.")
 
     suspend fun setPickupTime(id: String, time: Long?) {
         error("Pickup estimates are unavailable.")
@@ -110,7 +131,8 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 session =
                     if (admin)
                         Session("demo-admin", "Nano Print Alangilan", "admin@demo.local", true)
-                    else Session("demo-student", "Alex Student", "student@demo.local", false)
+                    else Session("demo-student", "Alex Student", "student@demo.local", false),
+                reviewAvailable = true,
             )
         publish()
     }
@@ -151,6 +173,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         id: String,
         pdf: PdfFile,
         options: PrintOptions,
+        addons: List<String>?,
         progress: (Float) -> Unit,
     ) {
         val session = requireNotNull(state.value.session)
@@ -159,6 +182,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
             ?.let { prior ->
                 check(
                     prior.options == options &&
+                        prior.review?.addons.orEmpty() == addons.orEmpty() &&
                         prior.status !in listOf(OrderStatus.Cancelled, OrderStatus.Rejected)
                 ) {
                     "This request was already submitted or closed. Check Orders before creating a new request."
@@ -180,6 +204,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 documents.file(id).path,
                 options,
                 pricing = settings.rates,
+                review = addons?.let { OrderReview(addons = it) },
             )
         save()
         publish()
@@ -190,6 +215,9 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         val index = all.indexOfFirst { it.id == id }
         check(index >= 0)
         val old = all[index]
+        check(next != OrderStatus.Accepted || old.canAccept) {
+            "The student must approve the final price first."
+        }
         check(old.status.canMoveTo(next)) { "This order has already changed." }
         check(session.admin || (old.ownerId == session.uid && next == OrderStatus.Cancelled))
         require(next != OrderStatus.Rejected || note.trim().isNotEmpty()) {
@@ -210,6 +238,40 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
             )
         save()
         publish()
+    }
+
+    override suspend fun reviewOrder(
+        id: String,
+        action: ReviewAction,
+        version: Long,
+        note: String,
+        quote: Long?,
+        draft: CorrectionDraft?,
+        progress: (Float) -> Unit,
+    ) {
+        val session = requireNotNull(state.value.session)
+        val index = all.indexOfFirst { it.id == id }
+        check(index >= 0) { "This request is unavailable." }
+        val order = all[index]
+        val review = order.updateReview(session, action, version, note, quote)
+        val revised =
+            if (action == ReviewAction.Revise) {
+                val correction = requireNotNull(draft)
+                val pdf = correction.pdf
+                require(pdf.pages == correction.options.pages)
+                val target = documents.file("$id-revision-${review.version}")
+                withContext(Dispatchers.IO) { File(pdf.path).copyTo(target, overwrite = true) }
+                order.copy(
+                    fileName = pdf.name.take(255),
+                    storagePath = target.path,
+                    options = correction.options,
+                    pricing = settings.rates,
+                )
+            } else order
+        all[index] = revised.copy(review = review, updatedAt = System.currentTimeMillis())
+        save()
+        publish()
+        progress(1f)
     }
 
     override suspend fun setPickupTime(id: String, time: Long?) {
@@ -240,9 +302,10 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
 
     override suspend fun document(order: PrintOrder): File =
         withContext(Dispatchers.IO) {
-            if (order.id.startsWith("sample-")) documents.sample(order.id, order.options.pages)
+            if (order.storagePath.isBlank() && order.id.startsWith("sample-"))
+                documents.sample(order.id, order.options.pages)
             else
-                documents.file(order.id).also {
+                File(order.storagePath).also {
                     check(it.exists()) {
                         "This local document is no longer available. Submit a new request."
                     }
@@ -326,6 +389,27 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                                 )
                                     previous.copy(session = session, connecting = false)
                                 else ShopState(session = session)
+                            scope.launch {
+                                val available =
+                                    try {
+                                        withTimeout(10000) {
+                                            db.collection("capabilities")
+                                                .document("print-review-v1")
+                                                .get(Source.SERVER)
+                                                .await()
+                                        }
+                                        true
+                                    } catch (_: FirebaseFirestoreException) {
+                                        false
+                                    } catch (_: TimeoutCancellationException) {
+                                        false
+                                    }
+                                if (
+                                    generation == currentGeneration &&
+                                        auth.currentUser?.uid == user.uid
+                                )
+                                    mutable.value = mutable.value.copy(reviewAvailable = available)
+                            }
                             if (PickupAlerts.enabled(context))
                                 scope.launch { runCatching { PickupAlerts.register(context) } }
                             settingsListener =
@@ -487,6 +571,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         id: String,
         pdf: PdfFile,
         options: PrintOptions,
+        addons: List<String>?,
         progress: (Float) -> Unit,
     ) {
         val session = requireNotNull(state.value.session)
@@ -502,6 +587,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             }
             check(
                 prior.options == options &&
+                    prior.review?.addons.orEmpty() == addons.orEmpty() &&
                     (prior.documentStore != "hosted" || prior.fileHash == pdf.sha256)
             ) {
                 "This request was already submitted with earlier print options. Check Orders before creating a new request."
@@ -509,20 +595,21 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             return
         }
         val quoted = state.value.settings
-        val currentSettings =
-            ShopSettings.fromMap(
-                withTimeout(15000) {
-                        db.collection("shopSettings").document("current").get(Source.SERVER).await()
-                    }
-                    .data
-            )
+        val currentSettings = currentShopSettings()
         check(currentSettings.acceptingOrders) {
             "The shop has paused new requests. Your draft is saved."
         }
         check(currentSettings.rates == quoted.rates && currentSettings.version == quoted.version) {
             "Shop details or rates changed. Review the updated total and try again."
         }
-        val path = HostedDocuments.upload(pdf, progress, session.uid)
+        val review =
+            addons?.let {
+                check(state.value.reviewAvailable) {
+                    "Order review is unavailable. Refresh and try again."
+                }
+                OrderReview(addons = it)
+            }
+        val path = HostedDocuments.upload(pdf, progress, session.uid, id.takeIf { review != null })
         val order =
             PrintOrder(
                 id,
@@ -534,6 +621,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 pricing = currentSettings.rates,
                 documentStore = "hosted",
                 fileHash = pdf.sha256,
+                review = review,
             )
         withTimeout(25000) { ref.set(order.toMap()).await() }
         progress(1f)
@@ -547,6 +635,9 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                     val ref = db.collection("orders").document(id)
                     val old =
                         PrintOrder.fromMap(id, tx.get(ref).data ?: error("Order no longer exists."))
+                    check(next != OrderStatus.Accepted || old.canAccept) {
+                        "The student must approve the final price first."
+                    }
                     check(old.status.canMoveTo(next)) { "Order changed. Review its latest status." }
                     check(
                         session.admin ||
@@ -573,6 +664,95 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 }
                 .await()
         }
+    }
+
+    private suspend fun currentShopSettings(): ShopSettings =
+        ShopSettings.fromMap(
+            withTimeout(15000) {
+                    db.collection("shopSettings").document("current").get(Source.SERVER).await()
+                }
+                .data
+        )
+
+    override suspend fun reviewOrder(
+        id: String,
+        action: ReviewAction,
+        version: Long,
+        note: String,
+        quote: Long?,
+        draft: CorrectionDraft?,
+        progress: (Float) -> Unit,
+    ) {
+        val session = requireNotNull(state.value.session)
+        check(auth.currentUser?.uid == session.uid) { "Sign in to update this request." }
+        val ref = db.collection("orders").document(id)
+        val revisionChanges =
+            if (action == ReviewAction.Revise) {
+                val correction = requireNotNull(draft)
+                val pdf = correction.pdf
+                require(pdf.pages == correction.options.pages)
+                val prior = withTimeout(15000) { ref.get(Source.SERVER).await() }
+                val order =
+                    PrintOrder.fromMap(id, prior.data ?: error("This request is unavailable."))
+                if (
+                    order.ownerId == session.uid &&
+                        order.review?.stage == ReviewStage.Revised &&
+                        order.review.version == version + 1 &&
+                        order.fileHash == pdf.sha256 &&
+                        order.fileName == pdf.name.take(255) &&
+                        order.options == correction.options
+                )
+                    return
+                order.updateReview(session, action, version)
+                val shop = currentShopSettings()
+                check(shop.version == state.value.settings.version) {
+                    "Shop rates changed. Review the new estimate."
+                }
+                val path = HostedDocuments.upload(pdf, progress, session.uid, id)
+                mapOf(
+                    "fileName" to pdf.name.take(255),
+                    "storagePath" to path,
+                    "documentStore" to "hosted",
+                    "fileHash" to pdf.sha256,
+                    "options" to correction.options.toMap(),
+                    "pricing" to shop.rates.toMap(),
+                    "estimatedCost" to correction.options.total(shop.rates),
+                )
+            } else emptyMap()
+        withTimeout(25000) {
+            db.runTransaction { transaction ->
+                    check(auth.currentUser?.uid == session.uid) {
+                        "Your account changed. Sign in again."
+                    }
+                    val current =
+                        PrintOrder.fromMap(
+                            id,
+                            transaction.get(ref).data ?: error("This request is unavailable."),
+                        )
+                    val review = current.updateReview(session, action, version, note, quote)
+                    transaction.update(
+                        ref,
+                        revisionChanges +
+                            mapOf(
+                                "review" to review.toMap(),
+                                "updatedAt" to System.currentTimeMillis(),
+                            ),
+                    )
+                }
+                .await()
+        }
+        progress(1f)
+    }
+
+    override suspend fun cleanupPdf(id: String): Boolean {
+        check(state.value.session?.admin == true) { "Only the shop can remove expired PDFs." }
+        val removed = HostedDocuments.cleanup(id)
+        if (removed)
+            cache
+                .listFiles()
+                ?.filter { it.name == "$id.pdf" || it.name.startsWith("$id-") }
+                ?.forEach { it.delete() }
+        return removed
     }
 
     override suspend fun setPickupTime(id: String, time: Long?) {
@@ -625,7 +805,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             check(session.admin || session.uid == order.ownerId) {
                 "You do not have access to this PDF."
             }
-            val target = File(cache, "${order.id}.pdf")
+            val target = File(cache, "${order.id}-${order.fileHash ?: "original"}.pdf")
             if (target.exists()) return@withContext target
             if (order.documentStore == "hosted")
                 return@withContext HostedDocuments.download(order, target)

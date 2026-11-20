@@ -52,6 +52,8 @@ fun PrintEase(model: PrintViewModel) {
     val progress by model.progress.collectAsStateWithLifecycle()
     val route by model.route.collectAsStateWithLifecycle()
     val selected by model.selectedId.collectAsStateWithLifecycle()
+    val requestedAddons by model.addons.collectAsStateWithLifecycle()
+    val revisionNote by model.revisionNote.collectAsStateWithLifecycle()
     val pdf by model.pdf.collectAsStateWithLifecycle()
     val options by model.options.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -184,6 +186,10 @@ fun PrintEase(model: PrintViewModel) {
                         onPreview = { draftPreview = true },
                         settings = state.settings,
                         settingsError = state.settingsError,
+                        reviewAvailable = state.reviewAvailable,
+                        requestedAddons = requestedAddons,
+                        revisionNote = revisionNote,
+                        onAddon = model::toggleAddon,
                         onDiscard = {
                             model.discardDraft()
                             model.navigate("home")
@@ -203,6 +209,12 @@ fun PrintEase(model: PrintViewModel) {
                             onEstimate = model::setPickupTime,
                             onReorder = model::reorder,
                             hasDraft = pdf != null,
+                            reviewAvailable = state.reviewAvailable,
+                            onReview = { action, version, note, price ->
+                                model.reviewOrder(order.id, action, version, note, price)
+                            },
+                            onEdit = { model.editCorrection(order) },
+                            onCleanup = { model.cleanupPdf(order.id) },
                         )
                     else
                         EmptyPanel(
@@ -212,7 +224,12 @@ fun PrintEase(model: PrintViewModel) {
                         )
                 }
                 route == "settings" && session.admin ->
-                    ShopSettingsContent(state.settings, busy, model::saveSettings)
+                    ShopSettingsContent(
+                        state.settings,
+                        busy,
+                        retentionAvailable = state.reviewAvailable && !BuildConfig.DEMO,
+                        onSave = model::saveSettings,
+                    )
                 route == "account" ->
                     AccountContent(
                         session,
@@ -645,6 +662,40 @@ fun Dashboard(
                         }
                     }
                 }
+            if (!session.admin) {
+                val needsResponse =
+                    source.filter {
+                        it.status == OrderStatus.Pending &&
+                            it.review?.stage in listOf(ReviewStage.Quoted, ReviewStage.Correction)
+                    }
+                if (needsResponse.isNotEmpty())
+                    item {
+                        Panel(Modifier.fillMaxWidth()) {
+                            Text(
+                                "Requests that need you",
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                            needsResponse.take(4).forEach { order ->
+                                OutlinedButton(
+                                    { onOrder(order.id) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column {
+                                        Text(
+                                            order.fileName,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            order.reviewStatus,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+            }
             item { ShopCard(state.settings, Modifier.fillMaxWidth()) }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -848,7 +899,13 @@ fun OrderCard(order: PrintOrder, admin: Boolean, onClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                StatusBadge(order.status)
+                if (order.reviewStatus != order.status.label) {
+                    Text(
+                        order.reviewStatus,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else StatusBadge(order.status)
                 Text(
                     pesos(order.total),
                     style = MaterialTheme.typography.titleMedium,
@@ -879,6 +936,10 @@ fun RequestContent(
     onDiscard: () -> Unit,
     settings: ShopSettings = ShopSettings(),
     settingsError: String? = null,
+    reviewAvailable: Boolean = false,
+    requestedAddons: List<String> = emptyList(),
+    revisionNote: String? = null,
+    onAddon: (String) -> Unit = {},
 ) {
     val picker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
@@ -897,7 +958,7 @@ fun RequestContent(
             validCopies &&
             validRanges &&
             !busy &&
-            settings.acceptingOrders &&
+            (settings.acceptingOrders || revisionNote != null) &&
             settingsError == null
     var reviewedRates by remember { mutableStateOf(settings.rates) }
     Column(Modifier.widthIn(max = 700.dp).fillMaxSize()) {
@@ -905,6 +966,11 @@ fun RequestContent(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
+            if (revisionNote != null)
+                Panel(Modifier.fillMaxWidth()) {
+                    Text("Correction requested", style = MaterialTheme.typography.titleMedium)
+                    Text(revisionNote)
+                }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Eyebrow("01 / YOUR DOCUMENT")
                 Panel(Modifier.fillMaxWidth()) {
@@ -1051,6 +1117,25 @@ fun RequestContent(
                     )
                 }
             }
+            if (reviewAvailable && revisionNote == null) {
+                Panel(Modifier.fillMaxWidth()) {
+                    Text("Optional add-ons", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Ask the shop to include these in your final quote.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    PrintAddon.entries.forEach { addon ->
+                        PreferenceSwitch(
+                            addon.label,
+                            "Price confirmed by the shop",
+                            addon.key in requestedAddons,
+                            !busy,
+                        ) {
+                            onAddon(addon.key)
+                        }
+                    }
+                }
+            }
             if (pdf != null)
                 TextButton({ discard = true }, enabled = !busy) {
                     Text("Discard this draft", color = MaterialTheme.colorScheme.error)
@@ -1072,7 +1157,7 @@ fun RequestContent(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (!settings.acceptingOrders || settingsError != null)
+                if ((!settings.acceptingOrders && revisionNote == null) || settingsError != null)
                     Text(
                         settingsError ?: "The shop has paused new requests. Your draft is saved.",
                         color = MaterialTheme.colorScheme.error,
@@ -1094,7 +1179,9 @@ fun RequestContent(
     if (review && pdf != null)
         AlertDialog(
             onDismissRequest = { review = false },
-            title = { Text("Ready to send?") },
+            title = {
+                Text(if (revisionNote != null) "Send the corrected request?" else "Ready to send?")
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(pdf.name, fontWeight = FontWeight.Bold)
@@ -1105,6 +1192,13 @@ fun RequestContent(
                         "Estimated total: ${pesos(options.total(reviewedRates))}",
                         fontWeight = FontWeight.Bold,
                     )
+                    if (requestedAddons.isNotEmpty()) {
+                        val labels =
+                            PrintAddon.entries
+                                .filter { it.key in requestedAddons }
+                                .joinToString(", ") { it.label }
+                        Text("Requested add-ons · $labels")
+                    }
                     Text(
                         "Pickup at ${settings.name}. The shop will review your request and assign a queue number. Pay when you collect."
                     )
@@ -1116,8 +1210,9 @@ fun RequestContent(
                     if (reviewedRates == settings.rates && canSubmit) onSubmit()
                 }) {
                     Text(
-                        if (reviewedRates == settings.rates && canSubmit) "Submit request"
-                        else "Review updated details"
+                        if (reviewedRates == settings.rates && canSubmit) {
+                            if (revisionNote != null) "Send correction" else "Submit request"
+                        } else "Review updated details"
                     )
                 }
             },
@@ -1179,7 +1274,13 @@ fun OrderDetail(
     onEstimate: (String, Long?) -> Unit = { _, _ -> },
     onReorder: (PrintOrder) -> Unit = {},
     hasDraft: Boolean = false,
+    reviewAvailable: Boolean = false,
+    onReview: (ReviewAction, Long, String, Long?) -> Unit = { _, _, _, _ -> },
+    onEdit: () -> Unit = {},
+    onCleanup: () -> Unit = {},
 ) {
+    var replaceForCorrection by rememberSaveable(order.id) { mutableStateOf(false) }
+    var removePdf by rememberSaveable(order.id) { mutableStateOf(false) }
     var action by remember { mutableStateOf<OrderStatus?>(null) }
     var reason by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable(order.id) { mutableStateOf("") }
@@ -1192,6 +1293,9 @@ fun OrderDetail(
             .padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        ReviewPanel(order, admin, reviewAvailable, !busy && !cached, onReview) {
+            if (hasDraft) replaceForCorrection = true else onEdit()
+        }
         Panel(Modifier.fillMaxWidth()) {
             StatusBadge(order.status)
             Text(
@@ -1282,6 +1386,15 @@ fun OrderDetail(
                 Icon(Icons.Default.PictureAsPdf, null)
                 Spacer(Modifier.width(8.dp))
                 Text("View PDF")
+            }
+            if (admin && reviewAvailable && canRemovePdf(order, settings)) {
+                OutlinedButton(
+                    { removePdf = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !busy && !cached,
+                ) {
+                    Text("Remove expired PDF")
+                }
             }
             if (!admin && !order.status.active && order.documentDeletedAt == null) {
                 PrimaryButton(
@@ -1383,7 +1496,11 @@ fun OrderDetail(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 OrderStatus.entries
-                    .filter { order.status.canMoveTo(it) && it != OrderStatus.Cancelled }
+                    .filter {
+                        order.status.canMoveTo(it) &&
+                            it != OrderStatus.Cancelled &&
+                            (it != OrderStatus.Accepted || order.canAccept)
+                    }
                     .forEach { next ->
                         PrimaryButton(
                             when (next) {
@@ -1490,6 +1607,44 @@ fun OrderDetail(
                 }
             },
             dismissButton = { TextButton({ repeatDialog = false }) { Text("Keep draft") } },
+        )
+    if (replaceForCorrection)
+        AlertDialog(
+            onDismissRequest = { replaceForCorrection = false },
+            title = { Text("Edit this request?") },
+            text = {
+                Text(
+                    "The correction will use your draft slot. A draft for a different request will be replaced."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    replaceForCorrection = false
+                    onEdit()
+                }) {
+                    Text("Edit request")
+                }
+            },
+            dismissButton = { TextButton({ replaceForCorrection = false }) { Text("Keep draft") } },
+        )
+    if (removePdf)
+        AlertDialog(
+            onDismissRequest = { removePdf = false },
+            title = { Text("Remove the stored PDF?") },
+            text = {
+                Text(
+                    "This removes the PDF and earlier versions for this request. The order history stays available."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    removePdf = false
+                    onCleanup()
+                }) {
+                    Text("Remove PDF")
+                }
+            },
+            dismissButton = { TextButton({ removePdf = false }) { Text("Keep PDF") } },
         )
 }
 

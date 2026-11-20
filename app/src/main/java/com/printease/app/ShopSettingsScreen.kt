@@ -174,7 +174,12 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
 }
 
 @Composable
-fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSettings) -> Unit) {
+fun ShopSettingsContent(
+    settings: ShopSettings,
+    busy: Boolean,
+    retentionAvailable: Boolean = false,
+    onSave: (ShopSettings) -> Unit,
+) {
     // Keep an editing snapshot. A concurrent save is rejected by the repository version check.
     var name by rememberSaveable { mutableStateOf(settings.name) }
     var address by rememberSaveable { mutableStateOf(settings.address) }
@@ -186,7 +191,7 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
     var bw by rememberSaveable { mutableStateOf(settings.rates.bw.toString()) }
     var color by rememberSaveable { mutableStateOf(settings.rates.color.toString()) }
     var legal by rememberSaveable { mutableStateOf(settings.rates.legalExtra.toString()) }
-    val retention = 0
+    var retention by rememberSaveable { mutableIntStateOf(settings.retentionDays) }
     val version = rememberSaveable { settings.version }
     val valid =
         name.trim().length in 2..100 &&
@@ -307,11 +312,30 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
         }
         Panel(Modifier.fillMaxWidth()) {
             Text("PDF retention", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "Automatic PDF removal is off in this setup. Your PDFs and order history stay saved.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Text("Automatic cleanup off", style = MaterialTheme.typography.labelLarge)
+            if (retentionAvailable) {
+                Text(
+                    "Allow staff to remove PDFs from completed orders after the selected period. The order history stays saved.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    val periods = listOf(0, 7, 14, 30)
+                    periods.forEachIndexed { index, days ->
+                        SegmentedButton(
+                            retention == days,
+                            { retention = days },
+                            SegmentedButtonDefaults.itemShape(index, periods.size),
+                            enabled = !busy,
+                        ) {
+                            Text(if (days == 0) "Keep" else "${days}d")
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    "PDF cleanup is unavailable in this workspace.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
         if (!valid)
             Text(

@@ -183,3 +183,58 @@ test('browser push subscriptions are private and other students cannot register 
  await assertFails(setDoc(doc(student().firestore(),receipt),{state:'sent',updatedAt:Date.now()}));
  await assertSucceeds(setDoc(doc(admin().firestore(),receipt),{state:'sent',updatedAt:Date.now()}));
 });
+
+test('review gates acceptance, binds approval to a quote version, and allows a bounded correction', async () => {
+ const id = 'quote-review', hash = 'f'.repeat(64), newer = 'e'.repeat(64), path = 'orders/' + id;
+ const sdb = student().firestore(), adb = admin().firestore(), other = env.authenticatedContext('other').firestore();
+ const submitted = { stage:'submitted', version:0, addons:['lamination'], note:'', quote:null };
+ const quoted = { ...submitted, stage:'quoted', version:1, note:'Includes lamination', quote:35 };
+ const approved = { ...quoted, stage:'approved', version:2 };
+ const files = fileHash => ({ documentStore:'hosted', fileHash, storagePath:`hosted/student/${id}/${fileHash}.pdf` });
+ const maximum = { ...order(id), ...files(hash), pricing:settings().rates, review:submitted,
+   options: { ...order(id).options, pages:1000, pageRanges:Array.from({length:5},(_,i)=>({start:i*200+1,end:(i+1)*200-1})), selectedPages:995 },
+   estimatedCost:7960 };
+ await assertSucceeds(getDoc(doc(sdb,'capabilities/print-review-v1')));
+ await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(),'capabilities/print-review-v1')));
+ await assertSucceeds(setDoc(doc(sdb,path), maximum));
+ await assertFails(updateDoc(doc(sdb,path), { review:quoted }));
+ await assertSucceeds(updateDoc(doc(adb,path), { review:quoted, updatedAt:Date.now() }));
+ const accept = () => runTransaction(adb, async tx => {
+   const counter = doc(adb,'counters/2026-11-28');
+   tx.set(counter, { last:1, orderId:id });
+   tx.update(doc(adb,path), { status:'Accepted', queue:1, queueDay:'2026-11-28' });
+ });
+ await assertFails(accept());
+ await assertFails(updateDoc(doc(other,path), { review:approved }));
+ await assertFails(updateDoc(doc(sdb,path), { review:{...approved, quote:1} }));
+ await assertSucceeds(updateDoc(doc(sdb,path), { review:approved }));
+ const correction = { ...submitted, stage:'correction', version:3, note:'Use the correct PDF' };
+ await assertSucceeds(updateDoc(doc(adb,path), { review:correction }));
+ await assertFails(accept());
+ await assertFails(updateDoc(doc(sdb,path), { review:approved }));
+ const revised = { ...submitted, stage:'revised', version:4 };
+ await assertFails(updateDoc(doc(sdb,path), { review:revised, ...files(newer), estimatedCost:1 }));
+ await assertFails(updateDoc(doc(sdb,path), { review:revised, ...files(newer), storagePath:`hosted/other/${id}/${newer}.pdf` }));
+ await assertSucceeds(updateDoc(doc(sdb,path), { review:revised, ...files(newer), options:maximum.options, estimatedCost:7960, updatedAt:Date.now() }));
+ await assertSucceeds(updateDoc(doc(adb,path), { review:{...quoted,version:5} }));
+ await assertSucceeds(updateDoc(doc(sdb,path), { review:{...approved,version:6} }));
+ await assertSucceeds(accept());
+});
+
+test('staff can mark only completed, expired per-order PDFs as removed', async () => {
+ const adb = admin().firestore(), sdb = student().firestore(), old = Date.now() - 9*86400000;
+ const hash = 'a'.repeat(64), scoped = id => `hosted/student/${id}/${hash}.pdf`;
+ await env.withSecurityRulesDisabled(async context => {
+   const db = context.firestore();
+   await setDoc(doc(db,'shopSettings/current'), {...settings(7),retentionDays:7});
+   for (const id of ['expired','fresh','shared','still-printing']) {
+     await setDoc(doc(db,'orders/'+id), {...order(id), documentStore:'hosted', fileHash:hash,
+       storagePath:id === 'shared' ? `hosted/student/${hash}.pdf` : scoped(id),
+       status:id === 'still-printing' ? 'Printing' : 'Completed', completedAt:id === 'fresh' ? Date.now() : old });
+   }
+ });
+ await assertFails(updateDoc(doc(sdb,'orders/expired'), {documentDeletedAt:Date.now()}));
+ for (const id of ['fresh','shared','still-printing']) await assertFails(updateDoc(doc(adb,'orders/'+id), {documentDeletedAt:Date.now()}));
+ await assertFails(updateDoc(doc(adb,'orders/expired'), {documentDeletedAt:Date.now(),fileName:'new'}));
+ await assertSucceeds(updateDoc(doc(adb,'orders/expired'), {documentDeletedAt:Date.now()}));
+});

@@ -49,4 +49,56 @@ let state;const snapshots=[],bucket=new MemoryBucket(),host='https://test.printe
  assert.deepEqual(await backend.bytes(state.orders.find(o=>o.id==='web-cloud-stable')),bytes);
  const orphanToken=await backend.auth.currentUser.getIdToken();
  const wrongOrigin=await worker.fetch(new Request(host+'/api/uploads/'+hash,{headers:{Authorization:'Bearer '+orphanToken,Origin:'https://unrelated.example'}}),{BUCKET:bucket});assert.equal(wrongOrigin.status,403);
+ // A current client submits a request with an add-on and uses per-order storage.
+ const reviewedId='web-review-order', suffix='@example.com';
+ await backend.signOut();
+ await backend.email('web-student'+suffix,'test-password-123');
+ await until(()=>state.session?.uid===student&&state.reviewAvailable&&state.settings.version===1);
+ const reviewed={...draft,id:reviewedId,addons:['lamination']};
+ await backend.submit(reviewed,()=>{});
+ const findReview=()=>state.orders.find(o=>o.id===reviewedId);
+ await until(()=>findReview()?.review?.stage==='submitted');
+ assert.equal(findReview().storagePath,`hosted/${student}/${reviewedId}/${hash}.pdf`);
+ await backend.signOut();await backend.email('web-admin'+suffix,'test-password-123');
+ await until(()=>state.session?.admin&&findReview()?.review?.stage==='submitted');
+ await assert.rejects(backend.transition(reviewedId,'Accepted'),/must approve/);
+ await backend.reviewOrder(reviewedId,'correction',0,{note:'Use the updated document'});
+ await backend.signOut();await backend.email('web-student'+suffix,'test-password-123');
+ await until(()=>state.session?.uid===student&&findReview()?.review?.stage==='correction');
+ const changed=samplePDF(3), newHash=Buffer.from(await crypto.subtle.digest('SHA-256',changed)).toString('hex');
+ const replacement={...reviewed,file:new Blob([changed],{type:'application/pdf'}),
+   pdf:{name:'Corrected.pdf',pages:3,sha256:newHash},options:{...defaults(),pages:3}};
+ await backend.reviewOrder(reviewedId,'revise',1,{draft:replacement,onProgress:()=>{}});
+ await backend.reviewOrder(reviewedId,'revise',1,{draft:replacement,onProgress:()=>{}});
+ await until(()=>findReview()?.review?.stage==='revised');
+ assert.equal(findReview().options.pages,3);
+ assert.deepEqual(await backend.bytes(findReview()),changed);
+ await backend.signOut();await backend.email('web-admin'+suffix,'test-password-123');
+ await until(()=>state.session?.admin&&findReview()?.review?.stage==='revised');
+ await backend.reviewOrder(reviewedId,'quote',2,{quote:36,note:'Includes lamination'});
+ await backend.signOut();await backend.email('web-student'+suffix,'test-password-123');
+ await until(()=>state.session?.uid===student&&findReview()?.review?.stage==='quoted');
+ await assert.rejects(backend.reviewOrder(reviewedId,'approve',2),/request changed/i);
+ await backend.reviewOrder(reviewedId,'approve',3);
+ await backend.signOut();await backend.email('web-admin'+suffix,'test-password-123');
+ await until(()=>state.session?.admin&&findReview()?.review?.stage==='approved');
+ await backend.transition(reviewedId,'Accepted');
+ await backend.transition(reviewedId,'Printing');
+ await backend.transition(reviewedId,'Ready for Pickup');
+ await backend.transition(reviewedId,'Completed');
+ await until(()=>findReview()?.status==='Completed');
+ await backend.saveSettings({...state.settings,retentionDays:7});
+ await assert.rejects(backend.cleanupPdf(reviewedId),/retention period/);
+ const aged=await fetch('http://127.0.0.1:8080/v1/projects/demo-printease/databases/(default)/documents/orders/'+reviewedId+'?updateMask.fieldPaths=completedAt',{
+   method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},
+   body:JSON.stringify({fields:{completedAt:{integerValue:String(Date.now()-8*86400000)}}})
+ });
+ assert.equal(aged.status,200);
+ assert.equal(await backend.cleanupPdf(reviewedId),true);
+ await until(()=>!!findReview()?.documentDeletedAt);
+ assert.equal(await backend.cleanupPdf(reviewedId),true);
+ assert.equal([...bucket.objects.keys()].some(key=>key.startsWith(`hosted/${student}/${reviewedId}/`)),false);
+ assert.ok(await bucket.head(`hosted/${student}/${hash}.pdf`),'Cleanup must preserve the legacy PDF shared by other requests');
+ assert.equal(findReview().review.quote,36);
+
 });

@@ -7,9 +7,11 @@ export class HostedDocuments {
   if(response.ok)return response;let data;try{data=await response.json();}catch{}
   const error=new Error(data?.error?.message||'The PDF could not transfer. Keep this draft and try again.');error.code=data?.error?.code||'document/transfer-failed';throw error;
  }
- async upload(user,draft,progress){
+ async upload(user,draft,progress,orderId=null){
   if(!/^[a-f0-9]{64}$/.test(draft.pdf?.sha256||''))throw new Error('Choose the PDF again before sending.');
-  const headers=await this.headers(user),url=this.baseUrl+'/api/uploads/'+draft.pdf.sha256;
+  if(orderId&&!/^[A-Za-z0-9_-]{1,128}$/.test(orderId))throw new Error('This request ID is invalid.');
+  const path = orderId ? orderId+'/'+draft.pdf.sha256 : draft.pdf.sha256;
+  const headers=await this.headers(user),url=this.baseUrl+'/api/uploads/'+path;
   if(this.XHR)await new Promise((resolve,reject)=>{
    const xhr=new this.XHR();xhr.open('PUT',url);xhr.timeout=90000;xhr.setRequestHeader('Authorization',headers.Authorization);xhr.setRequestHeader('Content-Type','application/pdf');
    xhr.upload.onprogress=event=>{if(event.lengthComputable)progress(Math.min(.95,event.loaded/event.total*.95));};
@@ -18,7 +20,13 @@ export class HostedDocuments {
    xhr.ontimeout=()=>reject(new Error('The upload timed out. Keep this draft and retry; it uses the same request ID.'));
    xhr.onabort=()=>reject(new Error('The upload stopped. Your PDF is still selected.'));xhr.send(draft.file);
   });else await this.response(await timeout(this.request(url,{method:'PUT',headers:{...headers,'Content-Type':'application/pdf'},body:draft.file}),90000));
-  progress(.97);return {documentStore:'hosted',fileHash:draft.pdf.sha256,storagePath:`hosted/${user.uid}/${draft.pdf.sha256}.pdf`};
+  progress(.97);return {documentStore:'hosted',fileHash:draft.pdf.sha256,storagePath:`hosted/${user.uid}/${path}.pdf`};
+ }
+ async cleanup(user,id){
+  const response = await this.response(await timeout(this.request(this.baseUrl+'/api/document-cleanup/'+encodeURIComponent(id),{
+   method:'POST',headers:await this.headers(user),cache:'no-store'
+  }),30000));
+  return (await response.json()).removed === true;
  }
  async bytes(user,order){
   const response=await this.response(await timeout(this.request(this.baseUrl+'/api/documents/'+encodeURIComponent(order.id),{headers:await this.headers(user),cache:'no-store'}),60000));

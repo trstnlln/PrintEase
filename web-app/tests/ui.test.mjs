@@ -94,3 +94,28 @@ test('a failed repeat download preserves the unfinished draft',async t=>{
  const app=await setup(t);await app.backend.login(false);await app.pick(await selectedFile(2));const id=app.s.draft.id;app.backend.bytes=async()=>{throw new Error('Offline');};
  await assert.rejects(()=>app.prepareReorder(app.s.orders[0]),/Offline/);assert.equal(app.s.draft.id,id);assert.equal(app.s.draft.pdf.pages,2);
 });
+
+test("confirming rates keeps requests paused", async t => {
+  const app = await setup(t);
+  await app.backend.login(true);
+  await app.backend.saveSettings({ ...app.s.settings, acceptingOrders:false });
+  app.go("settings");
+  const checkbox = document.getElementById("shop-ratesConfirmed");
+  checkbox.checked = true;
+  app.onInput({ target:checkbox });
+  await app.onSubmit({ target:document.getElementById("shop-form"), preventDefault() {} });
+  assert.equal(app.s.settings.ratesConfirmed, true);
+  assert.equal(app.s.settings.acceptingOrders, false);
+});
+
+test("a quoted request shows the confirmed amount and approval action", async t => {
+  const app = await setup(t);
+  await app.backend.login(true);
+  await app.backend.reviewOrder("sample-1043", "quote", -1, { quote:45, note:"Quote from the shop" });
+  await app.backend.login(false);
+  app.go("detail", "sample-1043");
+  assert.match(document.querySelector(".review-panel").textContent, /₱45\.00/);
+  await app.onClick({ target:document.querySelector('[data-action=approve-quote]'), preventDefault() {} });
+  await app.onClick({ target:document.querySelector('[data-action=confirm]'), preventDefault() {} });
+  assert.equal(app.s.orders.find(o=>o.id==="sample-1043").review.stage, "approved");
+});

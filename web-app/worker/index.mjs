@@ -35,6 +35,47 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   const {response,data}=await firestore(user,'admins/'+encodeURIComponent(user.uid));return response.ok&&value(data,'enabled')?.booleanValue===true;
  }
  const pushApi=createPushApi({authorize,administrator,firestore,json,fail,origin,now,fetchImpl});
+ const validRequestId = /^[A-Za-z0-9_-]{1,128}$/;
+ const validHash = /^[a-f0-9]{64}$/;
+ const scopedKey = (owner, id, hash) => `hosted/${owner}/${id}/${hash}.pdf`;
+
+ async function removeCompletedPdf(user, env, id) {
+  if (!await administrator(user)) fail(403, 'document/access-denied', 'Only the shop can remove expired PDFs.');
+  const { response, data: order } = await firestore(user, 'orders/' + id);
+  if (!response.ok) fail(404, 'document/order-missing', 'Refresh Orders to find this request.');
+  const owner = value(order, 'ownerId')?.stringValue;
+  const hash = value(order, 'fileHash')?.stringValue;
+  const key = value(order, 'storagePath')?.stringValue;
+  if (!owner || /[\/\\]/.test(owner) || !validHash.test(hash || '') ||
+      value(order, 'documentStore')?.stringValue !== 'hosted' || key !== scopedKey(owner, id, hash)) {
+   fail(409, 'document/ineligible', 'This PDF uses shared storage and cannot be removed from this request.');
+  }
+  if (value(order, 'documentDeletedAt')?.integerValue) return json({ removed: true });
+  const settings = await firestore(user, 'shopSettings/current');
+  const days = Number(value(settings.data, 'retentionDays')?.integerValue);
+  const completedAt = Number(value(order, 'completedAt')?.integerValue);
+  if (!settings.response.ok || ![7, 14, 30].includes(days) ||
+      value(order, 'status')?.stringValue !== 'Completed' || !Number.isSafeInteger(completedAt) ||
+      completedAt <= 0 || completedAt + days * 86400000 > now()) {
+   fail(409, 'document/ineligible', 'This PDF has not reached the shop’s retention period.');
+  }
+  const prefix = `hosted/${owner}/${id}/`;
+  const files = await env.BUCKET.list({ prefix, limit: 100 });
+  const older = files.objects.filter(object => object.key !== key).map(object => object.key);
+  if (older.length) await env.BUCKET.delete(older);
+  if (files.truncated) return json({ removed: false });
+  await env.BUCKET.delete(key);
+  const saved = await firestore(user, 'orders/' + id + '?updateMask.fieldPaths=documentDeletedAt', {
+   method: 'PATCH', body: JSON.stringify({ fields: { documentDeletedAt: { integerValue: String(now()) } } })
+  });
+  if (!saved.response.ok) {
+   const latest = await firestore(user, 'orders/' + id);
+   if (!latest.response.ok || !value(latest.data, 'documentDeletedAt')?.integerValue)
+    fail(503, 'document/cleanup-incomplete', 'The PDF was removed. Try again to update the order history.');
+  }
+  return json({ removed: true });
+ }
+
  async function boundedPdf(request){
   if(request.headers.get('Content-Length')&&Number(request.headers.get('Content-Length'))>LIMIT)fail(413,'document/too-large','Choose a PDF no larger than 5 MB.');
   if((request.headers.get('Content-Type')||'').split(';')[0]!=='application/pdf')fail(415,'document/not-pdf','Choose a PDF document.');
@@ -55,17 +96,39 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   if(path==='/api/status'&&request.method==='GET')return json({ready:!!env.BUCKET,documentStore:'hosted',maxBytes:LIMIT});
   if(!env.BUCKET)fail(503,'document/storage-not-ready','PDF storage is not ready yet. Keep your draft and try again later.');
   const user=await authorize(request);
-  const upload=/^\/api\/uploads\/([a-f0-9]{64})$/.exec(path);
-  if(upload){
-   const hash=upload[1],key=`hosted/${user.uid}/${hash}.pdf`;
-   if(request.method==='PUT'){
-    const bytes=await boundedPdf(request),actual=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),n=>n.toString(16).padStart(2,'0')).join('');
-    if(hash!==actual)fail(409,'document/changed','The PDF changed. Choose it again before sending.');
-    if(!await env.BUCKET.head(key))await env.BUCKET.put(key,bytes,{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/pdf'},customMetadata:{ownerId:user.uid,sha256:hash}});
-    return json({documentStore:'hosted',storagePath:key,fileHash:hash,bytes:bytes.length});
+  const upload = /^\/api\/uploads\/(?:(?<orderId>[A-Za-z0-9_-]{1,128})\/)?(?<hash>[a-f0-9]{64})$/.exec(path);
+  if (upload) {
+   const { orderId, hash } = upload.groups;
+   const key = orderId ? scopedKey(user.uid, orderId, hash) : `hosted/${user.uid}/${hash}.pdf`;
+   if (request.method === 'PUT') {
+    const bytes = await boundedPdf(request);
+    const actual = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+    if (hash !== actual) fail(409, 'document/changed', 'The PDF changed. Choose it again before sending.');
+    if (orderId) {
+     const prior = await firestore(user, 'orders/' + orderId);
+     if (prior.response.ok) {
+      const owner = value(prior.data, 'ownerId')?.stringValue;
+      const stage = value(prior.data, 'review')?.mapValue?.fields?.stage?.stringValue;
+      if (owner !== user.uid || value(prior.data, 'status')?.stringValue !== 'Pending' || stage !== 'correction') {
+       fail(409, 'document/order-closed', 'Refresh this request before replacing its PDF.');
+      }
+     } else if (prior.response.status !== 404) {
+      fail(403, 'document/access-denied', 'You cannot upload a PDF for this request.');
+     }
+    }
+    if (!await env.BUCKET.head(key)) {
+     await env.BUCKET.put(key, bytes, {
+      onlyIf: { etagDoesNotMatch: '*' },
+      httpMetadata: { contentType: 'application/pdf' },
+      customMetadata: { ownerId: user.uid, sha256: hash }
+     });
+    }
+    return json({ documentStore: 'hosted', storagePath: key, fileHash: hash, bytes: bytes.length });
    }
-   if(request.method==='GET')return download(env,key);
+   if (request.method === 'GET' && !orderId) return download(env, key);
   }
+  const cleanupId = path.startsWith('/api/document-cleanup/') ? path.slice('/api/document-cleanup/'.length) : '';
+  if (request.method === 'POST' && validRequestId.test(cleanupId)) return removeCompletedPdf(user, env, cleanupId);
   const order=/^\/api\/documents\/([A-Za-z0-9_-]{1,128})$/.exec(path);
   if(order&&request.method==='GET'){
    const {response,data}=await firestore(user,'orders/'+encodeURIComponent(order[1]));
@@ -74,7 +137,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
    const owner=value(data,'ownerId')?.stringValue,key=value(data,'storagePath')?.stringValue,hash=value(data,'fileHash')?.stringValue;
    if(owner!==user.uid&&!await administrator(user))fail(403,'document/access-denied','You do not have access to this PDF.');
    if(value(data,'documentDeletedAt')?.integerValue)fail(410,'document/removed','This PDF has been removed. Your order history is saved.');
-   if(value(data,'documentStore')?.stringValue!=='hosted'||!/^[a-f0-9]{64}$/.test(hash||'')||key!==`hosted/${owner}/${hash}.pdf`)fail(409,'document/store-mismatch','This PDF uses an older storage service. Open it in the matching app version.');
+   if(value(data,'documentStore')?.stringValue!=='hosted'||!/^[a-f0-9]{64}$/.test(hash||'')||(key!==`hosted/${owner}/${hash}.pdf` && key!==scopedKey(owner,order[1],hash)))fail(409,'document/store-mismatch','This PDF uses an older storage service. Open it in the matching app version.');
    return download(env,key);
   }
   fail(404,'document/not-found','This document action is unavailable.');

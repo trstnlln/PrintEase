@@ -301,12 +301,16 @@ data class PrintOrder(
     val documentStore: String = "firebase",
     val fileHash: String? = null,
     val expectedReadyAt: Long? = null,
+    val review: OrderReview? = null,
 ) {
     init {
         require(documentStore in listOf("firebase", "hosted"))
         if (documentStore == "hosted") {
             require(fileHash != null && Regex("[a-f0-9]{64}").matches(fileHash))
-            require(storagePath == "hosted/$ownerId/$fileHash.pdf")
+            require(
+                storagePath == "hosted/$ownerId/$fileHash.pdf" ||
+                    storagePath == "hosted/$ownerId/$id/$fileHash.pdf"
+            )
         }
     }
 
@@ -332,7 +336,9 @@ data class PrintOrder(
             "queue" to queue,
             "queueDay" to queueDay,
             "note" to note,
-        ) + (expectedReadyAt?.let { mapOf("expectedReadyAt" to it) } ?: emptyMap())
+        ) +
+            (expectedReadyAt?.let { mapOf("expectedReadyAt" to it) } ?: emptyMap()) +
+            (review?.let { mapOf("review" to it.toMap()) } ?: emptyMap())
 
     companion object {
         fun fromMap(id: String, d: Map<String, Any?>): PrintOrder {
@@ -372,6 +378,7 @@ data class PrintOrder(
                 d["documentStore"] as? String ?: "firebase",
                 d["fileHash"] as? String,
                 (d["expectedReadyAt"] as? Number)?.toLong(),
+                (d["review"] as? Map<*, *>)?.let(OrderReview::fromMap),
             )
         }
     }
@@ -386,6 +393,7 @@ data class ShopState(
     val settings: ShopSettings = ShopSettings(),
     val settingsError: String? = null,
     val settingsCached: Boolean = false,
+    val reviewAvailable: Boolean = false,
 )
 
 fun sortedQueue(orders: List<PrintOrder>): List<PrintOrder> =

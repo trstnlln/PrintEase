@@ -1,3 +1,4 @@
+import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import * as db from "./db.mjs";
 import { canTransition, dayKey, makeOrder, defaultShop, validateShop, sameOptions, validPickupTime } from "./model.mjs";
 class DemoBackend {
@@ -30,7 +31,7 @@ class DemoBackend {
   async refresh() {
     const orders = await db.all("orders");
     this.settings = validateShop((await db.get("settings", "shop-details"))?.value || defaultShop());
-    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, ready: true });
+    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, ready: true });
   }
   async signOut() {
     this.session = null;
@@ -49,6 +50,7 @@ class DemoBackend {
       if (!shop.acceptingOrders) throw new Error("The shop has paused new requests. Your draft is saved.");
       if (shop.version !== this.settings.version) throw new Error("Shop details changed. Review your updated total and try again.");
       const order = makeOrder(draft.id, this.session, draft.pdf, draft.options, shop.rates);
+      if (draft.addons != null) order.review = newReview(draft.addons);
       store.put(order);
       tx.objectStore("files").put({ id: order.id, blob: draft.file });
     });
@@ -63,6 +65,7 @@ class DemoBackend {
       if (!this.session?.admin && !(old.ownerId === this.session?.uid && next === "Cancelled")) throw new Error("You cannot update this order.");
       if (next === "Rejected" && !note.trim()) throw new Error("Please give the student a reason.");
       if (next === "Accepted") {
+        if (!canAccept(old)) throw new Error("The student must approve the final price first.");
         const day = dayKey(), settings = tx.objectStore("settings"), key = "queue-" + day;
         const existing = await db.request(settings.get(key));
         const seeded = (await db.request(orders.getAll())).filter((o) => o.queueDay === day).reduce((max, o) => Math.max(max, o.queue ?? 0), 0);
@@ -72,6 +75,24 @@ class DemoBackend {
         settings.put({ id: key, value: number });
       }
       orders.put({ ...old, updatedAt: Date.now(), completedAt: next === "Completed" ? Date.now() : old.completedAt ?? null, status: next, note: note.trim().slice(0, 500) });
+    });
+    await this.refresh();
+    this.channel?.postMessage("update");
+  }
+  async reviewOrder(id, action, version, input = {}) {
+    await db.transact(["orders", "files", "settings"], async tx => {
+      const orders = tx.objectStore("orders");
+      const order = await db.request(orders.get(id));
+      const review = reviewUpdate(order, this.session, action, version, input);
+      if (action === "revise") {
+        const draft = input.draft;
+        const shop = (await db.request(tx.objectStore("settings").get("shop-details")))?.value || defaultShop();
+        if (shop.version !== this.settings.version) throw new Error("Shop rates changed. Review the new estimate.");
+        const { fileName, options, pricing, estimatedCost } = makeOrder(id, this.session, draft.pdf, draft.options, shop.rates);
+        Object.assign(order, { fileName, options, pricing, estimatedCost });
+        tx.objectStore("files").put({ id, blob: draft.file });
+      }
+      orders.put({ ...order, review, updatedAt: Date.now() });
     });
     await this.refresh();
     this.channel?.postMessage("update");

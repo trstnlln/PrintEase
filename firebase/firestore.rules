@@ -13,7 +13,8 @@ service cloud.firestore {
           && d.storagePath == 'documents/' + request.auth.uid + '/' + orderId + '.pdf')
         || (d.get('documentStore','firebase') == 'hosted'
           && d.fileHash is string && d.fileHash.matches('^[a-f0-9]{64}$')
-          && d.storagePath == 'hosted/' + request.auth.uid + '/' + d.fileHash + '.pdf');
+          && ((d.get('review',null) == null && d.storagePath == 'hosted/' + request.auth.uid + '/' + d.fileHash + '.pdf')
+            || (d.get('review',null) != null && d.storagePath == 'hosted/' + request.auth.uid + '/' + orderId + '/' + d.fileHash + '.pdf')));
     }
     function rates() {
       return exists(/databases/$(database)/documents/shopSettings/current)
@@ -72,12 +73,55 @@ service cloud.firestore {
         || (old == 'Printing' && next == 'Ready for Pickup')
         || (old == 'Ready for Pickup' && next == 'Completed');
     }
+    function validReview(review) {
+      return review is map && review.keys().hasOnly(['stage','version','addons','note','quote'])
+        && review.version is int && review.version >= 0
+        && review.addons is list && review.addons.size() <= 2
+        && review.addons.hasOnly(['bookbinding','lamination'])
+        && review.addons.size() == review.addons.toSet().size()
+        && review.note is string && review.note.size() <= 500;
+    }
+    function canReview(old, next) {
+      return old.status == 'Pending' && next.status == 'Pending'
+        && next.get('review',null) != null && validReview(next.review)
+        && next.review.version == old.get('review',{}).get('version',-1) + 1
+        && next.review.addons == old.get('review',{}).get('addons',[])
+        && validUpdated(next);
+    }
+    function staffReview(old, next) {
+      let stage = old.get('review',{}).get('stage','submitted');
+      return next.diff(old).affectedKeys().hasOnly(['review','updatedAt'])
+        && (next.review.stage == 'quoted'
+            && stage in ['submitted','revised','quoted','declined']
+            && next.review.quote is int && next.review.quote >= 1 && next.review.quote <= 200000000
+          || next.review.stage == 'correction'
+            && stage in ['submitted','revised','quoted','declined','approved']
+            && next.review.quote == null && next.review.note.size() > 0);
+    }
+    function studentReview(old, next, orderId) {
+      let stage = old.get('review',{}).get('stage','submitted');
+      return next.diff(old).affectedKeys().hasOnly(['review','updatedAt']) && stage == 'quoted'
+          && (next.review.stage == 'approved' && next.review.quote == old.review.quote && next.review.note == old.review.note
+            || next.review.stage == 'declined' && next.review.quote == null && next.review.note == '')
+        || stage == 'correction' && next.review.stage == 'revised'
+          && next.review.quote == null && next.review.note == ''
+          && next.diff(old).affectedKeys().hasOnly(['review','updatedAt','fileName','storagePath','fileHash','documentStore','options','pricing','estimatedCost'])
+          && next.documentStore == 'hosted'
+          && next.fileName is string && next.fileName.size() > 0 && next.fileName.size() <= 255
+          && validDocument(next, orderId) && validOptions(next.options) && validPrice(next);
+    }
+    // A permitted read of this fixed path lets clients detect the published rule version.
+    match /capabilities/print-review-v1 {
+      allow get: if signedIn();
+    }
     function validOrder(d,orderId) {
       // All required fields are accessed below; a missing field rejects the write.
-      return d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash','expectedReadyAt'])
+      return d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash','expectedReadyAt','review'])
         && accepting() && validUpdated(d)
         && d.get('completedAt',null) == null && d.get('documentDeletedAt',null) == null
         && d.get('expectedReadyAt',null) == null
+        && (d.get('review',null) == null || (validReview(d.review) && d.review.stage == 'submitted'
+          && d.review.version == 0 && d.review.quote == null && d.review.note == ''))
         && d.ownerId == request.auth.uid
         && d.studentName is string && d.studentName.size() > 0 && d.studentName.size() <= 200
         && d.fileName is string && d.fileName.size() > 0 && d.fileName.size() <= 255
@@ -107,6 +151,7 @@ service cloud.firestore {
         && request.resource.data.note is string && request.resource.data.note.size() <= 500
         && (request.resource.data.status != 'Rejected' || request.resource.data.note.size() > 0)
         && ((request.resource.data.status == 'Accepted'
+          && resource.data.get('review',{}).get('stage','approved') == 'approved'
           && request.resource.data.queueDay is string
           && request.resource.data.queueDay.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
           && request.resource.data.queue is int && request.resource.data.queue > 0
@@ -115,6 +160,10 @@ service cloud.firestore {
           || (request.resource.data.status != 'Accepted'
             && request.resource.data.queue == resource.data.queue
             && request.resource.data.queueDay == resource.data.queueDay));
+      allow update: if signedIn()
+        && canReview(resource.data,request.resource.data)
+        && (admin() && staffReview(resource.data,request.resource.data)
+          || request.auth.uid == resource.data.ownerId && studentReview(resource.data,request.resource.data,orderId));
       allow update: if admin()
         && resource.data.status in ['Pending','Accepted','Printing']
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['expectedReadyAt','updatedAt'])
@@ -123,6 +172,17 @@ service cloud.firestore {
           || (request.resource.data.expectedReadyAt is int
             && request.resource.data.expectedReadyAt >= request.time.toMillis() - 60000
             && request.resource.data.expectedReadyAt <= request.time.toMillis() + 604800000));
+      allow update: if admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documentDeletedAt'])
+        && resource.data.status == 'Completed'
+        && resource.data.get('documentDeletedAt',null) == null
+        && resource.data.documentStore == 'hosted'
+        && resource.data.storagePath == 'hosted/' + resource.data.ownerId + '/' + orderId + '/' + resource.data.fileHash + '.pdf'
+        && resource.data.get('completedAt',null) is int
+        && get(/databases/$(database)/documents/shopSettings/current).data.retentionDays in [7,14,30]
+        && resource.data.completedAt <= request.time.toMillis() -
+          get(/databases/$(database)/documents/shopSettings/current).data.retentionDays * 86400000
+        && recent(request.resource.data.documentDeletedAt);
       allow delete: if false;
     }
     match /admins/{uid} {

@@ -189,3 +189,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   color: var(--ink);
   font-size: .875rem;
 }
+
+.review-panel {
+  border-top: 4px solid var(--green);
+  padding: clamp(1rem, 3vw, 1.75rem);
+  gap: .75rem;
+}
+.review-panel h2 { font-size: clamp(1.2rem, 2.8vw, 1.55rem); }
+.review-panel.needs-response { background: var(--soft); border-inline-start: 4px solid var(--green); border-top-width: 1px; }
+.review-panel .quote-amount { color: var(--green); font-size: clamp(1.7rem, 5vw, 2.3rem); font-weight: 750; }
+.review-note { padding: .75rem 1rem; border: 1px solid var(--line); border-radius: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-buttons { display: flex; flex-wrap: wrap; gap: .75rem; }
+.print-addons { min-inline-size: 0; margin: 0; }
+.print-addons legend { padding-inline: .5rem; font-weight: 700; }

@@ -52,7 +52,12 @@ object HostedDocuments {
         )
     }
 
-    suspend fun upload(pdf: PdfFile, progress: (Float) -> Unit, ownerId: String): String =
+    suspend fun upload(
+        pdf: PdfFile,
+        progress: (Float) -> Unit,
+        ownerId: String,
+        orderId: String? = null,
+    ): String =
         withContext(Dispatchers.IO) {
             require(Regex("[a-f0-9]{64}").matches(pdf.sha256)) {
                 "Choose the PDF again before sending."
@@ -63,7 +68,9 @@ object HostedDocuments {
             }
             val (uid, token) = identity()
             check(uid == ownerId) { "Your account changed. Sign in again before sending." }
-            val request = connection("/api/uploads/${pdf.sha256}", token, "PUT")
+            if (orderId != null) require(Regex("[A-Za-z0-9_-]{1,128}").matches(orderId))
+            val path = orderId?.let { "$it/${pdf.sha256}" } ?: pdf.sha256
+            val request = connection("/api/uploads/$path", token, "PUT")
             try {
                 request.doOutput = true
                 request.setFixedLengthStreamingMode(source.length())
@@ -84,7 +91,7 @@ object HostedDocuments {
                 }
                 checkResponse(request)
                 val result = request.inputStream.bufferedReader().use { JSONObject(it.readText()) }
-                val expected = "hosted/$uid/${pdf.sha256}.pdf"
+                val expected = "hosted/$uid/$path.pdf"
                 check(
                     result.getString("storagePath") == expected &&
                         result.getString("fileHash") == pdf.sha256
@@ -93,6 +100,25 @@ object HostedDocuments {
                 }
                 progress(.97f)
                 expected
+            } finally {
+                request.disconnect()
+            }
+        }
+
+    suspend fun cleanup(id: String): Boolean =
+        withContext(Dispatchers.IO) {
+            require(Regex("[A-Za-z0-9_-]{1,128}").matches(id))
+            val (_, token) = identity()
+            val request = connection("/api/document-cleanup/$id", token, "POST")
+            request.readTimeout = 30000
+            try {
+                request.doOutput = true
+                request.setFixedLengthStreamingMode(0)
+                request.outputStream.close()
+                checkResponse(request)
+                request.inputStream.bufferedReader().use {
+                    JSONObject(it.readText()).optBoolean("removed")
+                }
             } finally {
                 request.disconnect()
             }

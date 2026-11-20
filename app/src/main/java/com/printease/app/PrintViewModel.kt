@@ -57,6 +57,20 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         )
     private val events = Channel<String>(Channel.BUFFERED)
     val messages = events.receiveAsFlow()
+    val addons = saved.getStateFlow("draftAddons", arrayListOf<String>())
+    val revisionNote = saved.getStateFlow<String?>("revisionNote", null)
+    val revisionId = saved.getStateFlow<String?>("revisionId", null)
+
+    fun toggleAddon(id: String) {
+        val current = addons.value
+        saved["draftAddons"] =
+            ArrayList(
+                PrintAddon.entries
+                    .map { it.key }
+                    .filter { if (it == id) it !in current else it in current }
+            )
+    }
+
     private var draftId: String
         get() = saved["draftId"] ?: UUID.randomUUID().toString().also { saved["draftId"] = it }
         set(value) {
@@ -158,12 +172,36 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         check(File(document.path).exists()) {
             "Your saved draft is unavailable. Choose the PDF again."
         }
-        repository!!.submit(draftId, document, options.value.copy(pages = document.pages)) {
-            progress.value = it
+        val options = options.value.copy(pages = document.pages)
+        val revision = revisionId.value
+        val progressUpdate: (Float) -> Unit = { progress.value = it }
+        if (revision != null) {
+            repository!!.reviewOrder(
+                revision,
+                ReviewAction.Revise,
+                requireNotNull(saved["revisionVersion"]),
+                draft = CorrectionDraft(document, options),
+                progress = progressUpdate,
+            )
+        } else {
+            val reviewAvailable = shop.value.reviewAvailable
+            check(reviewAvailable || addons.value.isEmpty()) {
+                "Add-ons are unavailable. Refresh before submitting."
+            }
+            repository!!.submit(
+                draftId,
+                document,
+                options,
+                addons.value.takeIf { reviewAvailable },
+                progressUpdate,
+            )
         }
         discardDraft()
         saved["route"] = "orders"
-        events.send("Request submitted. Follow its progress in Orders.")
+        events.send(
+            if (revision != null) "Correction sent. The shop will review it again."
+            else "Request submitted. Follow its progress in Orders."
+        )
     }
 
     fun discardDraft() {
@@ -172,6 +210,10 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved.remove<String>("pdfPath")
         saved.remove<String>("pdfName")
         saved.remove<String>("draftId")
+        saved["draftAddons"] = arrayListOf<String>()
+        saved["revisionId"] = null as String?
+        saved["revisionNote"] = null as String?
+        saved.remove<Long>("revisionVersion")
         options.value = PrintOptions()
         saved["paper"] = "A4"
         saved["copies"] = 1
@@ -192,10 +234,56 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         )
     }
 
-    fun reorder(order: PrintOrder) = action {
+    fun reorder(order: PrintOrder) = action { prepareDraft(order, null) }
+
+    fun editCorrection(order: PrintOrder) = action {
+        check(
+            order.status == OrderStatus.Pending && order.review?.stage == ReviewStage.Correction
+        ) {
+            "This request is no longer waiting for a correction."
+        }
+        val review = requireNotNull(order.review)
+        if (
+            revisionId.value == order.id &&
+                saved.get<Long>("revisionVersion") == review.version &&
+                pdf.value != null
+        ) {
+            saved["route"] = "request"
+        } else {
+            prepareDraft(order, RequestRevision(order.id, review.version, review.note))
+        }
+    }
+
+    fun reviewOrder(id: String, action: ReviewAction, version: Long, note: String, quote: Long?) =
+        action {
+            repository!!.reviewOrder(id, action, version, note, quote)
+            events.send(
+                when (action) {
+                    ReviewAction.Quote -> "Final price sent for approval."
+                    ReviewAction.RequestCorrection -> "Correction requested."
+                    ReviewAction.Approve -> "Price approved. The shop can now accept the order."
+                    ReviewAction.Decline -> "Quote declined."
+                    ReviewAction.Revise -> "Correction sent."
+                }
+            )
+        }
+
+    fun cleanupPdf(id: String) = action {
+        val removed = repository!!.cleanupPdf(id)
+        events.send(
+            if (removed) "PDF removed. The order history is still saved."
+            else "More PDF versions remain. Run cleanup again."
+        )
+    }
+
+    private suspend fun prepareDraft(order: PrintOrder, revision: RequestRevision?) {
         val session = requireNotNull(shop.value.session)
-        check(!session.admin && session.uid == order.ownerId && !order.status.active) {
-            "Only your finished or closed requests can be repeated."
+        check(
+            !session.admin &&
+                session.uid == order.ownerId &&
+                (revision != null || !order.status.active)
+        ) {
+            "Only your own eligible requests can be edited or repeated."
         }
         check(order.documentDeletedAt == null) {
             "This PDF is no longer available. Choose it again from your device."
@@ -217,11 +305,18 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         pdf.value = imported
         saved["pdfPath"] = imported.path
         saved["pdfName"] = imported.name
-        draftId = UUID.randomUUID().toString()
+        draftId = revision?.id ?: UUID.randomUUID().toString()
+        saved["draftAddons"] = ArrayList(order.review?.addons.orEmpty())
+        saved["revisionId"] = revision?.id
+        saved["revisionVersion"] = revision?.version
+        saved["revisionNote"] = revision?.note
         setOptions(restoredOptions)
         previous?.let { if (it.path != imported.path) File(it.path).delete() }
         saved["route"] = "request"
-        events.send("Repeat draft ready. Review current prices before sending.")
+        events.send(
+            if (revision != null) "Update the PDF or print options, then send your correction."
+            else "Repeat draft ready. Review current prices before sending."
+        )
     }
 
     fun saveSettings(settings: ShopSettings) = action {

@@ -47,11 +47,17 @@ Notification delivery is best-effort. A crash after provider acceptance but befo
 
 The legacy optional Firebase Cloud Messaging functions remain available in `functions/` for owners who choose to deploy them separately. They are not required for these periodic Android reminders or web alerts and may require Firebase billing. They have not been deployed by this workspace.
 
+## Quotes, corrections and add-ons
+
+Publish the current Firestore rules, then refresh the web app or sign in again on Android. Updated clients can detect the published rules. A new request from an updated client starts in shop review. The shop can request a correction with a note or send a final price in whole Philippine pesos. The student can update their PDF or options on the same request, or approve or decline the latest price. Staff can assign a queue number after the student approves. Orders from earlier clients can still use their original workflow.
+
+Bookbinding and lamination are optional requests on the print form. Staff include confirmed add-ons in the final quote. Students can ask the shop about its other advertised services. New requests stay paused when staff enable confirmed rates and keep the shop's availability switch off.
+
 ## Completed PDF cleanup
 
-Automatic deletion is **off (`retentionDays: 0`) by default**, including when the functions are deployed. An administrator can explicitly choose 7, 14 or 30 days. The daily **02:00 Asia/Manila** function removes only completed PDFs past their completion timestamp. Pending, accepted, printing, ready, rejected and cancelled PDFs are not removed by this policy. Older completed orders without a trustworthy completion timestamp are skipped.
+Shop administrators can select **Keep files**, **7 days**, **14 days** or **30 days** in shop settings. The default is Keep files. Once a completed order reaches the selected period, choose **Remove expired PDF** in its details and confirm. The app removes the current PDF and earlier uploads stored specifically for that order. Print options, pricing, status and the request ID remain in order history. This action does not affect copies someone already saved elsewhere.
 
-Order history, print options and saved quote remain. `documentDeletedAt` records the removal and the app explains why preview is unavailable. This policy applies to Firebase Storage copies; it cannot recall PDFs someone already downloaded or printed. Missing objects are safe to retry after a partial failure. Do not enable a period until the shop has agreed to it and the cleanup function is deployed.
+Legacy uploads shared by multiple orders are excluded from this workflow. Staff initiate cleanup from the order screen. There is no scheduled cleanup or automatic orphan removal in the hosted deployment. The legacy Firebase Functions retention job applies only to Firebase Storage if deployed separately.
 
 ## Acceptance checks on the real project
 

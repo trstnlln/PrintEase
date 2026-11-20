@@ -190,4 +190,35 @@ class ModelTest {
         assertEquals("6:00 AM–10:00 PM", shop.pickupHours)
         assertFalse(shop.ratesConfirmed)
     }
+
+    @Test
+    fun changingAQuoteOrRequestInvalidatesItsPriorApproval() {
+        val student = Session("student", "Alex", "alex@example.com", false)
+        val shop = Session("staff", "Staff", "shop@example.com", true)
+        val order =
+            PrintOrder(
+                "quote",
+                "student",
+                "Alex",
+                "Report.pdf",
+                "",
+                PrintOptions(),
+                review = OrderReview(addons = listOf(PrintAddon.Lamination.key)),
+            )
+        val quoted =
+            order.copy(review = order.updateReview(shop, ReviewAction.Quote, 0, quote = 42))
+        assertFalse(quoted.canAccept)
+        assertTrue(runCatching { quoted.updateReview(student, ReviewAction.Approve, 0) }.isFailure)
+        val approved = quoted.copy(review = quoted.updateReview(student, ReviewAction.Approve, 1))
+        assertTrue(approved.canAccept)
+        val returned =
+            approved.copy(
+                review =
+                    approved.updateReview(shop, ReviewAction.RequestCorrection, 2, "Update page 1")
+            )
+        assertFalse(returned.canAccept)
+        assertNull(returned.review?.quote)
+        assertEquals(listOf("lamination"), returned.review?.addons)
+        assertEquals(returned, PrintOrder.fromMap(returned.id, returned.toMap()))
+    }
 }
