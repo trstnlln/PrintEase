@@ -103,6 +103,9 @@ test('page selections are priced by selected pages; overlapping or forged ranges
  for(const [id,changes] of [['forged-count',{selectedPages:1}],['overlap',{pageRanges:[{start:1,end:3},{start:3,end:5}]}],['outside',{pageRanges:[{start:1,end:11}]}],['negative',{pageRanges:[{start:0,end:3}]}],['missing-ranges',{pageRanges:[]}],['fractional',{pageRanges:[{start:1.5,end:3}]}]]) {
   await assertFails(setDoc(doc(db,'orders/'+id),{...good,storagePath:`documents/student/${id}.pdf`,options:{...options,...changes}}));
  }
+ // A huge span cannot compensate an invalid overlapping/negative span in the count.
+ await assertFails(setDoc(doc(db,'orders/compensating-span'),{...good,storagePath:'documents/student/compensating-span.pdf',options:{...options,pageRanges:[{start:1,end:100001},{start:1,end:1}],selectedPages:1},estimatedCost:4}));
+ await assertFails(setDoc(doc(db,'orders/negative-compensation'),{...good,storagePath:'documents/student/negative-compensation.pdf',options:{...options,pageRanges:[{start:-100000,end:-100000},{start:-100000,end:1}],selectedPages:1},estimatedCost:4}));
  await assertFails(updateDoc(doc(db,'orders/ranges'),{options:{...options,selectedPages:1},estimatedCost:4}));
 });
 test('only admins edit shop settings; rate changes preserve old quotes and pause new requests',async()=>{

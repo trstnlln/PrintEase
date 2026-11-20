@@ -37,6 +37,7 @@ function rangeCount(entry, previousEnd) {
       // An invalid span cannot be compensated by the other four spans (at most 1,000 pages each).
       return entry is map && entry.size() == 2
         && entry.start is int && entry.end is int
+        && entry.start >= 1 && entry.end <= 1000
         && entry.start > previousEnd && entry.end >= entry.start
         ? entry.end - entry.start + 1 : -100000;
     }
