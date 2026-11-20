@@ -76,12 +76,35 @@ function detailView(s) {
 function accountView(s) {
   return `<div class="page-title"><div><div class="eyebrow">Your workspace</div><h1>Account & print guide.</h1><p class="muted">A few useful details for your next print.</p></div></div><div class="account-grid"><section class="card stack">${avatar(s.session, true)}<div><h2>${e(s.session.name)}</h2><p class="muted text-wrap" style="margin-top:8px">${e(s.session.email)}</p></div><span class="badge" style="align-self:start">${s.session.admin ? "Shop administrator" : "Student"}</span>${button("Sign out", "sign-out", { cls: "outline", icon: "logout", disabled: s.busy })}</section>${!s.session.admin&&s.mode!=="demo"?`<section class="card stack"><div class="eyebrow">Pickup updates</div><h2>A heads-up when it’s ready.</h2><p class="small">${s.push?.enabled?"Alerts are enabled on this device.":"Enable background pickup alerts on this device. On iPhone, first add PrintEase to your Home Screen in Safari, then open the installed app."}</p>${button(s.push?.enabled?"Turn off alerts":"Enable pickup alerts",s.push?.enabled?"push-disable":"push-enable",{cls:"outline",disabled:s.busy||s.push?.syncing})}${s.push?.enabled?button("Send a test alert","push-test",{cls:"ghost",disabled:s.busy}):""}${s.push?.message?`<p class="notice" role="status">${e(s.push.message)}</p>`:""}<small>Delivery can be delayed by your device or connection. Orders always shows the latest synced status.</small></section>`:""}${shopCard(s, true)}<section class="card stack"><div class="eyebrow">Know your total</div><h2>Simple, clear pricing.</h2><p class="small">${s.settings?.ratesConfirmed?"Shop-confirmed rates. Existing orders keep their estimate.":"Sample estimates. Confirm the actual printing price with the shop."}</p>${[["A4 / Letter \xB7 B&W", pesos((s.settings || defaultShop()).rates.bw) + " / side"], ["A4 / Letter \xB7 Color", pesos((s.settings || defaultShop()).rates.color) + " / side"], ["Legal paper", "+" + pesos((s.settings || defaultShop()).rates.legalExtra) + " / side"]].map(([a, b]) => `<div class="price-line"><span>${a}</span><b>${b}</b></div>`).join("")}<hr><p class="small">Selected pages \xD7 copies \xD7 rate per printed side. Duplex saves sheets. All selected pages use the same color mode. PDFs only, up to 5 MB and 1,000 pages.</p>${s.session.admin ? button("Manage shop details & rates", "shop-settings", { cls: "outline", icon: "store", disabled: s.busy }) : ""}</section><section class="card stack"><div class="row">${icon("phone", "big")}<h2>A place on your Home Screen.</h2></div><p class="small">Use PrintEase like an app on your iPhone. No App Store download needed.</p><ol class="install-steps"><li>Open this website in <b>Safari</b>.</li><li>Tap the <b>Share</b> button ${icon("share")}.</li><li>Choose <b>Add to Home Screen</b>, then tap <b>Add</b>.</li></ol><small>Live submissions need internet. Enable pickup alerts in Account, or keep PrintEase open for updates. The local demo and saved draft remain available offline after your first visit.</small></section><section class="card stack">${s.mode === "demo" ? `<h2>Try the other side.</h2><p class="small">Switch roles to review the same requests. Demo orders are local to this browser, not shared with Android or other devices.</p>${button(s.session.admin ? "Switch to student" : "Switch to administrator", "switch-role", { cls: "outline", disabled: s.busy })}` : `<h2>One account. One queue.</h2><p class="small">The website and Android app use the same PrintEase Firebase accounts and orders. Live roles are assigned by the shop\u2019s trusted administrator.</p>${button("Refresh account & orders", "refresh", { cls: "outline", icon: "refresh", disabled: s.busy })}`}</section></div><p class="footnote">${icon("info")}<span>PrintEase Web \xB7 BSU Alangilan Campus \xB7 Actual printing and payment happen at the shop.</span></p>`;
 }
+const nanoPrintServices = [
+  "Print & edit",
+  "Photocopy",
+  "Bookbind",
+  "Scan",
+  "Tarpapel",
+  "School supplies",
+  "Laminate",
+  "Rush ID",
+  "Vellum / Magazine",
+  "Tarpaulin layout & CAD",
+  "Brochure & Booklet",
+];
+
+function shopServices() {
+  return `<details class="shop-services">
+    <summary id="shop-services-toggle">View shop services</summary>
+    <p>Send PDF print requests in PrintEase. For other services and prices, contact the shop.</p>
+    <ul>${nanoPrintServices.map(service => `<li>${e(service)}</li>`).join("")}</ul>
+  </details>`;
+}
+
 function shopCard(s,account=false){
  const shop=s.settings||defaultShop();
  const generic=shop.name==='Nearby print shop'&&shop.address==='Near BSU Alangilan campus';
  const query=generic?'printing shops near BSU Alangilan':`${shop.name} ${shop.address}`;
- const mapsUrl=['Nano Print Alangilan','Nano Alangilan'].includes(shop.name)?'https://maps.app.goo.gl/gBCZetYJyz46RoeQ9':`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
- return `<section class="card shop-card ${account?'':'shop-overview'}"><div class="shop-symbol">${icon('store')}</div><div class="shop-info"><div class="row between"><h3>${e(shop.name)}</h3><span class="availability ${shop.acceptingOrders?'':'paused'}">${shop.acceptingOrders?'Accepting requests':'Requests paused'}</span></div><p>${e(shop.address)}</p><div class="shop-hours">${icon('clock')}<span>${e(shop.pickupHours)}</span></div><small>Collect and pay at the shop near campus.</small></div><div class="shop-actions"><a class="button outline" href="${e(mapsUrl)}" target="_blank" rel="noopener noreferrer">${icon('store')}${generic?'Find shops near campus':'View location'}</a>${shop.contactEmail?`<a class="button ghost" href="mailto:${encodeURIComponent(shop.contactEmail)}">Email shop</a>`:''}${shop.facebookUrl?`<a class="button ghost" href="${e(shop.facebookUrl)}" target="_blank" rel="noopener noreferrer">Facebook</a>`:''}</div></section>`;
+ const isNanoPrint = ['Nano Print Alangilan','Nano Alangilan'].includes(shop.name);
+ const mapsUrl=isNanoPrint?'https://maps.app.goo.gl/gBCZetYJyz46RoeQ9':`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+ return `<section class="card shop-card ${account?'':'shop-overview'}"><div class="shop-symbol">${icon('store')}</div><div class="shop-info"><div class="row between"><h3>${e(shop.name)}</h3><span class="availability ${shop.acceptingOrders?'':'paused'}">${shop.acceptingOrders?'Accepting requests':'Requests paused'}</span></div><p>${e(shop.address)}</p><div class="shop-hours">${icon('clock')}<span>${e(shop.pickupHours)}</span></div><small>Collect and pay at the shop near campus.</small>${isNanoPrint ? shopServices() : ""}</div><div class="shop-actions"><a class="button outline" href="${e(mapsUrl)}" target="_blank" rel="noopener noreferrer">${icon('store')}${generic?'Find shops near campus':'View location'}</a>${shop.contactEmail?`<a class="button ghost" href="mailto:${encodeURIComponent(shop.contactEmail)}">Email shop</a>`:''}${shop.facebookUrl?`<a class="button ghost" href="${e(shop.facebookUrl)}" target="_blank" rel="noopener noreferrer">Facebook</a>`:''}</div></section>`;
 }
 
 function settingsView(s) {

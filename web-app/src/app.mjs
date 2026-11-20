@@ -126,7 +126,10 @@ class PrintEase {
     } catch {
     }
     const s = this.s;
+    const servicesWereOpen = this.root.querySelector(".shop-services[open]") !== null;
     this.root.innerHTML = s.session ? shell(s, s.route === "request" ? requestView(s) : s.route === "detail" ? detailView(s) : s.route === "account" ? accountView(s) : s.route === "settings" && s.session.admin ? settingsView(s) : dashboard(s)) : authView(s);
+    const services = this.root.querySelector(".shop-services");
+    if (servicesWereOpen && services) services.open = true;
     if (id) {
       const node = document.getElementById(id);
       if (node && node !== focused) {

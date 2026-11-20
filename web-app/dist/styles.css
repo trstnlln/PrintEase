@@ -159,3 +159,33 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media(max-width:800px){ .shop-actions { grid-column: 1 / -1; width: 100%; } .shop-actions > .button.outline { width: 100%; } }
 
 .review-sheet{display:grid;gap:1.1rem;margin:1.25rem 0}.review-file{display:flex;align-items:center;gap:.85rem;padding:1rem;background:var(--bg);border-radius:1rem}.review-file>div{min-width:0;overflow-wrap:anywhere}.review-file>.icon{flex-shrink:0;width:2rem;height:2rem;color:var(--green)}.review-options{margin:0;display:grid;gap:.75rem}.review-options>div{display:flex;justify-content:space-between;gap:1.25rem}.review-options dt{color:var(--muted)}.review-options dd{margin:0;text-align:right;font-weight:600;overflow-wrap:anywhere;max-width:65%}.review-total{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:1rem 0;border-top:1px solid var(--line)}.review-total strong{font-size:1.75rem;color:var(--green)}
+
+.shop-services {
+  margin-top: .75rem;
+  border-top: 1px solid var(--line);
+}
+.shop-services summary {
+  min-height: 44px;
+  padding-block: .75rem;
+  color: var(--green);
+  font-weight: 650;
+  cursor: pointer;
+}
+.shop-services summary:focus-visible { outline: 2px solid var(--green); }
+.shop-services p { margin-block: 0 .75rem; color: var(--muted); }
+.shop-services ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shop-services li {
+  padding: .35rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: .875rem;
+}

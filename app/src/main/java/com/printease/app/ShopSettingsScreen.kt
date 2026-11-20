@@ -18,9 +18,26 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
+private val nanoPrintServices =
+    listOf(
+        "Print & edit",
+        "Photocopy",
+        "Bookbind",
+        "Scan",
+        "Tarpapel",
+        "School supplies",
+        "Laminate",
+        "Rush ID",
+        "Vellum / Magazine",
+        "Tarpaulin layout & CAD",
+        "Brochure & Booklet",
+    )
+
 @Composable
 fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() -> Unit)? = null) {
     val context = LocalContext.current
+    val isNanoPrint = settings.name in listOf("Nano Print Alangilan", "Nano Alangilan")
+    var showServices by rememberSaveable(settings.name) { mutableStateOf(false) }
     Panel(modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Surface(
@@ -66,8 +83,7 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                         "printing shops near BSU Alangilan"
                     else "${settings.name} ${settings.address}"
                 val mapsUrl =
-                    if (settings.name in listOf("Nano Print Alangilan", "Nano Alangilan"))
-                        "https://maps.app.goo.gl/gBCZetYJyz46RoeQ9"
+                    if (isNanoPrint) "https://maps.app.goo.gl/gBCZetYJyz46RoeQ9"
                     else "https://www.google.com/maps/search/?api=1&query=${Uri.encode(query)}"
                 runCatching {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(mapsUrl)))
@@ -129,6 +145,29 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                     ) {
                         Text("Facebook")
                     }
+            }
+        }
+        if (isNanoPrint) {
+            HorizontalDivider()
+            TextButton(
+                onClick = { showServices = !showServices },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text(if (showServices) "Hide shop services" else "View shop services")
+                Spacer(Modifier.width(8.dp))
+                Icon(if (showServices) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+            }
+            if (showServices) {
+                Text(
+                    "Send PDF print requests in PrintEase. For other services and prices, contact the shop.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    nanoPrintServices.forEach { service ->
+                        Text("•  $service", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         }
     }
