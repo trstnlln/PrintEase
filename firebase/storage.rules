@@ -8,7 +8,7 @@ service firebase.storage {
         && file.matches('^[A-Za-z0-9-]+[.]pdf$')
         && request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024
         && request.resource.contentType == 'application/pdf';
-      allow delete: if request.auth != null && (request.auth.uid == uid || admin());
+      allow delete: if admin();
       allow update: if false;
     }
   }

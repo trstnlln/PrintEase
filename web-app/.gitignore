@@ -1,0 +1,9 @@
+node_modules/
+build-meta.json
+*.log
+.env
+.env.*
+.openai/*.tar.gz
+
+# Rebuilt from source; packaged for Sites, not committed to GitHub.
+dist/server/

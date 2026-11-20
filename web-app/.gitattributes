@@ -1,0 +1,3 @@
+dist/** -whitespace linguist-generated
+tests/*.pdf binary
+*.png binary
