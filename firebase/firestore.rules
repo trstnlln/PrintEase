@@ -30,26 +30,26 @@ service cloud.firestore {
         && r.color is int && r.color >= 1 && r.color <= 1000
         && r.legalExtra is int && r.legalExtra >= 0 && r.legalExtra <= 1000;
     }
-    function rangeValid(r, i, pages) {
-      return r.size() <= i || (r[i] is map && r[i].keys().hasAll(['start','end']) && r[i].keys().hasOnly(['start','end'])
-        && r[i].start is int && r[i].end is int && r[i].start >= 1 && r[i].end >= r[i].start && r[i].end <= pages
-        && (i == 0 || r[i].start > r[i-1].end));
+function rangeValid(r, i, count, pages) {
+      return count <= i || validRange(r[i], i == 0 ? 0 : r[i-1].end, pages);
     }
-    function rangeCount(r, i) { return r.size() <= i ? 0 : r[i].end - r[i].start + 1; }
+    function validRange(entry, previousEnd, pages) {
+      return entry is map && entry.size() == 2
+        && entry.start is int && entry.end is int
+        && entry.start > previousEnd && entry.end >= entry.start && entry.end <= pages;
+    }
+    function rangeCount(r, i, count) { return count <= i ? 0 : r[i].end - r[i].start + 1; }
     function validRanges(o) {
       let r = o.pageRanges;
-      return r is list && r.size() >= 1 && r.size() <= 10 && o.selectedPages is int
-        && rangeValid(r,0,o.pages)
-        && rangeValid(r,1,o.pages)
-        && rangeValid(r,2,o.pages)
-        && rangeValid(r,3,o.pages)
-        && rangeValid(r,4,o.pages)
-        && rangeValid(r,5,o.pages)
-        && rangeValid(r,6,o.pages)
-        && rangeValid(r,7,o.pages)
-        && rangeValid(r,8,o.pages)
-        && rangeValid(r,9,o.pages)
-        && o.selectedPages == rangeCount(r,0) + rangeCount(r,1) + rangeCount(r,2) + rangeCount(r,3) + rangeCount(r,4) + rangeCount(r,5) + rangeCount(r,6) + rangeCount(r,7) + rangeCount(r,8) + rangeCount(r,9);
+      let n = r.size();
+      let p = o.pages;
+      return r is list && n >= 1 && n <= 10 && o.selectedPages is int
+        && rangeValid(r,0,n,p) && rangeValid(r,1,n,p) && rangeValid(r,2,n,p)
+        && rangeValid(r,3,n,p) && rangeValid(r,4,n,p) && rangeValid(r,5,n,p)
+        && rangeValid(r,6,n,p) && rangeValid(r,7,n,p) && rangeValid(r,8,n,p) && rangeValid(r,9,n,p)
+        && o.selectedPages == rangeCount(r,0,n) + rangeCount(r,1,n) + rangeCount(r,2,n)
+          + rangeCount(r,3,n) + rangeCount(r,4,n) + rangeCount(r,5,n)
+          + rangeCount(r,6,n) + rangeCount(r,7,n) + rangeCount(r,8,n) + rangeCount(r,9,n);
     }
     function validOptions(o) {
       return o.keys().hasAll(['paper','pages','copies','color','duplex'])
@@ -117,7 +117,7 @@ service cloud.firestore {
             && request.resource.data.queueDay == resource.data.queueDay));
       allow delete: if false;
     }
-match /admins/{uid} {
+    match /admins/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, create, update, delete: if false;
     }
