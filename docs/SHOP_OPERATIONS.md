@@ -1,6 +1,8 @@
 # Shop settings, page selection, pickup alerts and retention
 
-PrintEase serves a pre-registered printing shop **near BSU Alangilan**, outside the campus. Until a real partner's details are confirmed, the app displays **Nearby print shop**, **Near BSU Alangilan campus**, and **Confirm pickup hours with the shop**. It does not invent a shop address or operating schedule. The default location button searches Google Maps for printing shops near BSU Alangilan; after the administrator enters real details, it searches that shop and address. This is a map search, not a verified navigation pin.
+PrintEase displays **Nano Print Alangilan**, near BSU Alangilan and outside campus. The location button opens the owner-provided [Google Maps listing](https://maps.app.goo.gl/gBCZetYJyz46RoeQ9), verified on November 20, 2026. The link resolves to Nano Print Alangilan at marker coordinates **13.7853824, 121.0733167** (Google Maps feature `0x33bd0ff51a980455:0x1c73b020a3978e11`). These are the place marker coordinates, not the map viewport centre.
+
+The exact street address, pickup hours, prices and shop participation still need confirmation. Older saved settings named “Nano Alangilan” display the corrected name when loaded. Other administrator-configured shops retain a map search using their own name and address. No new Firebase fields or rules deployment are needed for this location update.
 
 ## Activate the update
 
@@ -10,16 +12,16 @@ PrintEase serves a pre-registered printing shop **near BSU Alangilan**, outside 
    ```sh
    npm ci
    npx firebase login
-   npx firebase deploy --only firestore:rules,firestore:indexes,storage --project printease-ce44e
+   npx firebase deploy --only firestore:rules,firestore:indexes --project printease-ce44e
    ```
 
-3. Sign in using the shop account with the trusted `admin: true` custom claim. Open **Account → Manage shop details & rates**. Set the confirmed shop name, address/landmark and pickup hours. Save. Android and web listen to `shopSettings/current` in the same project. Students cannot edit these settings.
+3. Sign in using the shop account with a console-created `admins/<uid>.enabled: true` grant or a trusted `admin: true` custom claim. Open **Account → Manage shop details & rates**. Set the confirmed shop name, address/landmark and pickup hours. Save. Android and web listen to `shopSettings/current` in the same project. Students cannot edit these settings.
 4. Enter whole-peso B&W, color and Legal surcharge rates. Defaults remain ₱2, ₱10 and +₱1 per printed side. Each new order stores its own `pricing` snapshot and total. Rate changes do not change old quotes. Old orders without a snapshot use the original sample rates. New clients reject a changed quote and ask the student to review again. Deploy clients together when changing rates: old clients with hardcoded prices cannot submit an outdated price.
 5. Switch **Accept new requests** off to pause new submissions. Existing requests can still move through the queue. A retained draft can be sent once the shop resumes. A retry of an already-saved request first resolves its existing ID.
 
 ## Pages and pricing
 
-Leave **Pages to print** blank for all pages, or enter `1-3, 5, 8-10`. Ranges refer to physical PDF page positions starting at 1, not printed labels within the document. The app sorts and merges overlapping/adjacent ranges, bounds them to the PDF's actual page count and supports up to 10 normalized ranges.
+Leave **Pages to print** blank for all pages, or enter `1-3, 5, 8-10`. Ranges refer to physical PDF page positions starting at 1, not printed labels within the document. The app sorts and merges overlapping/adjacent ranges, bounds them to the PDF's actual page count and supports up to five normalized ranges.
 
 The price is selected pages × copies × the saved rate per printed side. Duplex reduces sheets, not the printed-side price; odd selections round up separately for each copy. Every selected page uses the same color mode. The full original PDF is retained for preview. The shop operator must apply the displayed page selection, paper, copies and duplex options in their printer dialog; this application does not send Bluetooth or direct network printer jobs.
 

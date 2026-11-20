@@ -39,7 +39,7 @@ Live checks confirmed:
 
 **The orders composite index is now usable:** `orders`, collection scope, `ownerId` Ascending and `createdAt` Descending. After the owner created the index, a live signed-in account queried its own orders successfully with HTTP 200. The verification created no production order. [Firebase setup](FIREBASE_SETUP.md) records the index configuration.
 
-The default shop display name is **Nano Alangilan**, near BSU Alangilan. The exact address, hours and shop participation still need confirmation. The shop name, pickup details and rates remain editable by its trusted administrator.
+The default shop display name is **Nano Print Alangilan**, near BSU Alangilan. The exact address, hours and shop participation still need confirmation. The shop name, pickup details and rates remain editable by its trusted administrator.
 
 ## Remaining device and operational checks
 

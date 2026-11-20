@@ -65,13 +65,15 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                     )
                         "printing shops near BSU Alangilan"
                     else "${settings.name} ${settings.address}"
+                val mapsUrl =
+                    if (settings.name in listOf("Nano Print Alangilan", "Nano Alangilan"))
+                        "https://maps.app.goo.gl/gBCZetYJyz46RoeQ9"
+                    else "https://www.google.com/maps/search/?api=1&query=${Uri.encode(query)}"
                 runCatching {
                     context.startActivity(
                         Intent(
                             Intent.ACTION_VIEW,
-                            Uri.parse(
-                                "https://www.google.com/maps/search/?api=1&query=${Uri.encode(query)}"
-                            ),
+                            Uri.parse(mapsUrl),
                         )
                     )
                 }

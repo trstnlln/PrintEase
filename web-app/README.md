@@ -67,7 +67,7 @@ Physical iPhone Safari testing and the real Google account chooser remain device
 
 ## Product limits
 
-The default shop display name is **Nano Alangilan**, near BSU Alangilan. The exact address and pickup hours still need confirmation. Details, pickup hours, rates and accepting-orders status are editable by the administrator. Selected pages determine the printed-side charge; duplex reduces sheets, not charged sides. Each order keeps its submitted quote.
+The default shop display name is **Nano Print Alangilan**, near BSU Alangilan. The exact address and pickup hours still need confirmation. Details, pickup hours, rates and accepting-orders status are editable by the administrator. Selected pages determine the printed-side charge; duplex reduces sheets, not charged sides. Each order keeps its submitted quote.
 
 Live actions require internet over Wi-Fi or cellular data. Bluetooth is not used. Payment and pickup happen at the physical shop. There is no online payment, direct printer integration or iPhone background push. Android background notifications require the separately deployed optional functions. Up to 500 live orders load; extended use needs pagination/archive management.
 

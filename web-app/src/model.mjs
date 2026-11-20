@@ -2,12 +2,12 @@ export const MAX_BYTES = 5 * 1024 * 1024;
 export const statuses = ['Pending', 'Accepted', 'Printing', 'Ready for Pickup', 'Completed', 'Rejected', 'Cancelled'];
 export const terminal = ['Completed', 'Rejected', 'Cancelled'];
 export const defaultRates = () => ({bw:2,color:10,legalExtra:1});
-export const defaultShop = () => ({name:'Nano Alangilan',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop',acceptingOrders:true,rates:defaultRates(),retentionDays:0,version:0});
+export const defaultShop = () => ({name:'Nano Print Alangilan',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop',acceptingOrders:true,rates:defaultRates(),retentionDays:0,version:0});
 export function validateShop(s) {
  for(const [key,min,max] of [['name',2,100],['address',2,300],['pickupHours',2,200]]) if(typeof s[key]!=='string'||s[key].trim().length<min||s[key].trim().length>max) throw new Error('Complete the shop name, address and pickup hours.');
  if(typeof s.acceptingOrders!=='boolean'||![0,7,14,30].includes(s.retentionDays)||!Number.isSafeInteger(s.version)||s.version<0) throw new Error('Check the shop settings.');
  for(const [key,min] of [['bw',1],['color',1],['legalExtra',0]]) if(!Number.isSafeInteger(s.rates?.[key])||s.rates[key]<min||s.rates[key]>1000) throw new Error('Enter whole-peso rates from ₱1–₱1,000 (Legal surcharge may be ₱0).');
- return s;
+ return s.name==='Nano Alangilan'?{...s,name:'Nano Print Alangilan'}:s;
 }
 export const defaults = () => ({paper:'A4', pages:1, copies:1, color:false, duplex:false,pageRanges:[]});
 export function parsePageRanges(text,pages) {

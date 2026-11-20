@@ -65,7 +65,7 @@ data class PrintRates(val bw: Long = 2, val color: Long = 10, val legalExtra: Lo
 }
 
 data class ShopSettings(
-    val name: String = "Nano Alangilan",
+    val name: String = "Nano Print Alangilan",
     val address: String = "Near BSU Alangilan campus",
     val pickupHours: String = "Confirm pickup hours with the shop",
     val acceptingOrders: Boolean = true,
@@ -98,7 +98,9 @@ data class ShopSettings(
             if (m == null) ShopSettings()
             else
                 ShopSettings(
-                    m["name"] as String,
+                    (m["name"] as String).let {
+                        if (it == "Nano Alangilan") "Nano Print Alangilan" else it
+                    },
                     m["address"] as String,
                     m["pickupHours"] as String,
                     m["acceptingOrders"] as Boolean,
