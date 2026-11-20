@@ -35,7 +35,7 @@ Live checks confirmed:
 - The owner published the Firestore rules. An authenticated shop-settings read reaches the database and returns 404 because no settings document exists yet; clients use the defaults.
 - An unauthenticated PDF request is rejected with 401.
 - A private PDF upload and authenticated download return 200, with identical bytes/SHA-256 and `Cache-Control: private, no-store`.
-- The earlier PDF-verification QA accounts were deleted. The final index-check account (`printease-index-qa-…@example.invalid`) still needs manual removal from Firebase Authentication after its automatic cleanup request failed; the owner was given the exact identifying prefix. No production order was created. Synthetic PDF test objects remain private; hosted orphan cleanup is not implemented.
+- The PDF-verification QA accounts were deleted, and the owner confirmed removal of the final index-check account from Firebase Authentication. No production order was created. Synthetic PDF test objects remain private; hosted orphan cleanup is not implemented.
 
 **The orders composite index is now usable:** `orders`, collection scope, `ownerId` Ascending and `createdAt` Descending. After the owner created the index, a live signed-in account queried its own orders successfully with HTTP 200. The verification created no production order. [Firebase setup](FIREBASE_SETUP.md) records the index configuration.
 
