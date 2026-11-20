@@ -35,14 +35,14 @@ Live checks confirmed:
 - The owner published the Firestore rules. An authenticated shop-settings read reaches the database and returns 404 because no settings document exists yet; clients use the defaults.
 - An unauthenticated PDF request is rejected with 401.
 - A private PDF upload and authenticated download return 200, with identical bytes/SHA-256 and `Cache-Control: private, no-store`.
-- Temporary QA accounts were deleted. No production order was created. Synthetic PDF test objects remain private; hosted orphan cleanup is not implemented.
+- The earlier PDF-verification QA accounts were deleted. The final index-check account (`printease-index-qa-…@example.invalid`) still needs manual removal from Firebase Authentication after its automatic cleanup request failed; the owner was given the exact identifying prefix. No production order was created. Synthetic PDF test objects remain private; hosted orphan cleanup is not implemented.
 
-**The orders query still needs its composite index:** `orders`, collection scope, `ownerId` Ascending and `createdAt` Descending. The live API returns FAILED_PRECONDITION until the index is built. The owner has been given Firebase's direct index-creation link. [Firebase setup](FIREBASE_SETUP.md) also gives the console and CLI steps.
+**The orders composite index is now usable:** `orders`, collection scope, `ownerId` Ascending and `createdAt` Descending. After the owner created the index, a live signed-in account queried its own orders successfully with HTTP 200. The verification created no production order. [Firebase setup](FIREBASE_SETUP.md) records the index configuration.
 
 The default shop display name is **Nano Alangilan**, near BSU Alangilan. The exact address, hours and shop participation still need confirmation. The shop name, pickup details and rates remain editable by its trusted administrator.
 
 ## Remaining device and operational checks
 
-After the index is enabled, test the full student request and shop-admin workflow on the actual iPhone. API checks do not exercise Safari’s picker, pop-up or visual layout. Real Safari visual QA and the real Google account chooser have not been exercised by the emulator suite. Hosted PDF retention and orphan cleanup are not implemented; files stay private and retention is shown as Off.
+Test the full student request and shop-admin workflow on the actual iPhone now that the index is usable. API checks do not exercise Safari’s picker, pop-up or visual layout. Real Safari visual QA and the real Google account chooser have not been exercised by the emulator suite. Hosted PDF retention and orphan cleanup are not implemented; files stay private and retention is shown as Off.
 
 Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.
