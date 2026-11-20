@@ -96,9 +96,9 @@ test('page selections are priced by selected pages; overlapping or forged ranges
  const options={...base.options,pages:10,pageRanges:[{start:1,end:3},{start:5,end:5}],selectedPages:4};
  const good={...base,options,estimatedCost:16,pricing:{bw:2,color:10,legalExtra:1},updatedAt:Date.now(),completedAt:null,documentDeletedAt:null};
  await assertSucceeds(setDoc(doc(db,'orders/ranges'),good)).catch(e=>{e.message='Valid two-range order failed: '+e.message;throw e;});
- const maximum={...good,storagePath:'documents/student/ten-ranges.pdf',options:{...options,pages:20,pageRanges:Array.from({length:10},(_,i)=>({start:i*2+1,end:i*2+1})),selectedPages:10},estimatedCost:40};
- await assertSucceeds(setDoc(doc(db,'orders/ten-ranges'),maximum)).catch(e=>{e.message='Valid ten-range order failed: '+e.message;throw e;});
- await assertFails(setDoc(doc(db,'orders/eleven-ranges'),{...maximum,storagePath:'documents/student/eleven-ranges.pdf',options:{...maximum.options,pages:22,pageRanges:[...maximum.options.pageRanges,{start:21,end:21}],selectedPages:11},estimatedCost:44}));
+ const maximum={...good,storagePath:'documents/student/five-ranges.pdf',options:{...options,pages:20,pageRanges:Array.from({length:5},(_,i)=>({start:i*2+1,end:i*2+1})),selectedPages:5},estimatedCost:20};
+ await assertSucceeds(setDoc(doc(db,'orders/five-ranges'),maximum)).catch(e=>{e.message='Valid five-range order failed: '+e.message;throw e;});
+ await assertFails(setDoc(doc(db,'orders/six-ranges'),{...maximum,storagePath:'documents/student/six-ranges.pdf',options:{...maximum.options,pages:22,pageRanges:[...maximum.options.pageRanges,{start:21,end:21}],selectedPages:6},estimatedCost:24}));
  await assertFails(setDoc(doc(db,'orders/extra-range-key'),{...maximum,storagePath:'documents/student/extra-range-key.pdf',options:{...maximum.options,pageRanges:[{start:1,end:1,extra:true}],selectedPages:1},estimatedCost:4}));
  for(const [id,changes] of [['forged-count',{selectedPages:1}],['overlap',{pageRanges:[{start:1,end:3},{start:3,end:5}]}],['outside',{pageRanges:[{start:1,end:11}]}],['negative',{pageRanges:[{start:0,end:3}]}],['missing-ranges',{pageRanges:[]}],['fractional',{pageRanges:[{start:1.5,end:3}]}]]) {
   await assertFails(setDoc(doc(db,'orders/'+id),{...good,storagePath:`documents/student/${id}.pdf`,options:{...options,...changes}}));
@@ -132,6 +132,9 @@ test('hosted PDFs bind immutable hashes and paths to the student',async()=>{
  const hash='a'.repeat(64), db=student().firestore();
  const saved={...order('hosted'),documentStore:'hosted',fileHash:hash,storagePath:`hosted/student/${hash}.pdf`,pricing:settings().rates,estimatedCost:24};
  await assertSucceeds(setDoc(doc(db,'orders/hosted'),saved));
+ const maximum={...saved,options:{...saved.options,pages:1000,pageRanges:Array.from({length:5},(_,i)=>({start:i*200+1,end:(i+1)*200-1})),selectedPages:995},estimatedCost:7960,updatedAt:Date.now(),completedAt:null,documentDeletedAt:null};
+ await assertSucceeds(setDoc(doc(db,'orders/hosted-max-ranges'),maximum));
+ await assertFails(setDoc(doc(db,'orders/hosted-max-forged'),{...maximum,options:{...maximum.options,selectedPages:1},estimatedCost:8}));
  await assertFails(setDoc(doc(db,'orders/bad-hosted-owner'),{...saved,storagePath:`hosted/other/${hash}.pdf`}));
  await assertFails(setDoc(doc(db,'orders/bad-hosted-hash'),{...saved,fileHash:'wrong'}));
  await assertFails(updateDoc(doc(db,'orders/hosted'),{fileHash:'b'.repeat(64),storagePath:`hosted/student/${'b'.repeat(64)}.pdf`}));

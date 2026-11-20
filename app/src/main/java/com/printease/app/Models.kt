@@ -144,7 +144,7 @@ fun parsePageRanges(text: String, pages: Int): List<PageRange> {
             merged[merged.lastIndex] = PageRange(previous.start, maxOf(r.end, previous.end))
         else merged += r
     }
-    require(merged.size <= 10) { "Choose up to 10 page ranges." }
+    require(merged.size <= 5) { "Choose up to 5 separate page ranges, or leave blank for all pages." }
     return if (merged == listOf(PageRange(1, pages))) emptyList() else merged
 }
 
@@ -163,7 +163,7 @@ data class PrintOptions(
         require(paper in listOf("A4", "Letter", "Legal"))
         require(pages in 1..1000)
         require(copies in 1..100)
-        require(pageRanges.size <= 10)
+        require(pageRanges.size <= 5)
         pageRanges.forEachIndexed { i, r ->
             require(
                 r.start in 1..pages &&

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimate,defaults,dayKey,filterOrders,makeOrder,canTransition,escapeHtml,errorMessage,validatePdf,MAX_BYTES} from '../src/model.mjs';
+import {estimate,defaults,dayKey,filterOrders,makeOrder,canTransition,escapeHtml,errorMessage,validatePdf,MAX_BYTES,parsePageRanges,serializeOptions} from '../src/model.mjs';
 test('independent pricing examples and odd duplex sheet counts',()=>{
  assert.deepEqual(estimate({...defaults(),pages:12,copies:2}),{rate:2,total:48,sheets:24});
  assert.deepEqual(estimate({...defaults(),paper:'Legal',pages:3,copies:2,color:true,duplex:true}),{rate:11,total:66,sheets:4});
@@ -21,4 +21,10 @@ test('page range selection merges duplicates and bounds pricing to selected page
  const serialized=serializeOptions(o);assert.equal(sameOptions(Object.fromEntries(Object.entries(serialized).reverse()),o),true);
  const order=makeOrder('snapshot',{uid:'a',name:'Alex',admin:false},{name:'PDF'},o,{bw:4,color:12,legalExtra:2});assert.equal(orderTotal(order),84);assert.equal(order.pricing.bw,4);
  assert.equal(defaultShop().retentionDays,0);assert.throws(()=>validateShop({...defaultShop(),retentionDays:1}));
+});
+
+test('page range limit is checked before submission',()=>{
+ assert.equal(parsePageRanges('1,3,5,7,9',20).length,5);
+ assert.throws(()=>parsePageRanges('1,3,5,7,9,11',20),/up to 5/);
+ assert.throws(()=>serializeOptions({...defaults(),pages:20,pageRanges:Array.from({length:6},(_,i)=>({start:i*2+1,end:i*2+1}))}),/up to 5/);
 });

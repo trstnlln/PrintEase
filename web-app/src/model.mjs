@@ -14,7 +14,7 @@ export function parsePageRanges(text,pages) {
  if(!text.trim()) return [];
  const ranges=text.split(',').map(part=>{const match=/^\s*(\d+)\s*(?:-\s*(\d+)\s*)?$/.exec(part);if(!match)throw new Error('Use page numbers like 1-3, 5, 8-10, or leave blank for all pages.');const start=Number(match[1]),end=Number(match[2]||match[1]);if(!Number.isSafeInteger(start)||start<1||end<start||end>pages)throw new Error(`Page numbers must be between 1 and ${pages}.`);return{start,end};}).sort((a,b)=>a.start-b.start);
  const merged=[];for(const r of ranges){const prior=merged.at(-1);if(prior&&r.start<=prior.end+1)prior.end=Math.max(prior.end,r.end);else merged.push({...r});}
- if(merged.length>10)throw new Error('Choose up to 10 page ranges.');
+ if(merged.length>5)throw new Error('Choose up to 5 separate page ranges, or leave blank for all pages.');
  return merged.length===1&&merged[0].start===1&&merged[0].end===pages?[]:merged;
 }
 export const rangeText = ranges => (ranges||[]).map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ');
@@ -26,7 +26,7 @@ export const orderTotal = order => estimate(order.options,order.pricing||default
 
 export function validateOptions(o) {
   if (!['A4','Letter','Legal'].includes(o.paper) || !Number.isInteger(o.pages) || o.pages < 1 || o.pages > 1000 || !Number.isInteger(o.copies) || o.copies < 1 || o.copies > 100 || typeof o.color !== 'boolean' || typeof o.duplex !== 'boolean') throw new Error('Check your printing preferences. Copies must be between 1 and 100.');
-  if(o.pageRanges!==undefined){if(!Array.isArray(o.pageRanges)||o.pageRanges.length>10)throw new Error('Choose up to 10 page ranges.');let end=0;for(const r of o.pageRanges){if(!Number.isInteger(r.start)||!Number.isInteger(r.end)||r.start<=end||r.end<r.start||r.end>o.pages)throw new Error('Check your selected page ranges.');end=r.end;}}
+  if(o.pageRanges!==undefined){if(!Array.isArray(o.pageRanges)||o.pageRanges.length>5)throw new Error('Choose up to 5 separate page ranges, or leave blank for all pages.');let end=0;for(const r of o.pageRanges){if(!Number.isInteger(r.start)||!Number.isInteger(r.end)||r.start<=end||r.end<r.start||r.end>o.pages)throw new Error('Check your selected page ranges.');end=r.end;}}
   if(o.selectedPages!==undefined&&o.selectedPages!==selectedPages(o))throw new Error('The selected page count is invalid.');
   return o;
 }

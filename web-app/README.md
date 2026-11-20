@@ -72,3 +72,5 @@ The partner is a **Nearby print shop**, near campus. Details, pickup hours, rate
 Live actions require internet over Wi-Fi or cellular data. Bluetooth is not used. Payment and pickup happen at the physical shop. There is no online payment, direct printer integration or iPhone background push. Android background notifications require the separately deployed optional functions. Up to 500 live orders load; extended use needs pagination/archive management.
 
 Local draft files can be cleared by Safari storage pressure or website-data removal. Sign-out clears the current draft. Demo data remains separate from live accounts.
+
+Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.

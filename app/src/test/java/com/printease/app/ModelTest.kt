@@ -88,6 +88,12 @@ class ModelTest {
     }
 
     @Test
+    fun pageRangeLimitIsCheckedBeforeSubmission() {
+        assertEquals(5, parsePageRanges("1,3,5,7,9", 20).size)
+        assertTrue(runCatching { parsePageRanges("1,3,5,7,9,11", 20) }.isFailure)
+    }
+
+    @Test
     fun ordersRoundTripWithPriceSnapshotAndSelectedRanges() {
         val order =
             PrintOrder(
@@ -104,11 +110,22 @@ class ModelTest {
         assertEquals(0, ShopSettings().retentionDays)
         assertTrue(runCatching { ShopSettings(retentionDays = 1) }.isFailure)
     }
-@Test fun hostedDocumentMetadataRoundTripsAndRejectsAnUnboundPath() {
+    @Test
+    fun hostedDocumentMetadataRoundTripsAndRejectsAnUnboundPath() {
         val hash = "a".repeat(64)
-        val order = PrintOrder("id","student","Alex","Report.pdf","hosted/student/$hash.pdf",PrintOptions(pages=3),documentStore="hosted",fileHash=hash)
+        val order =
+            PrintOrder(
+                "id",
+                "student",
+                "Alex",
+                "Report.pdf",
+                "hosted/student/$hash.pdf",
+                PrintOptions(pages = 3),
+                documentStore = "hosted",
+                fileHash = hash,
+            )
         assertEquals(order, PrintOrder.fromMap(order.id, order.toMap()))
-        assertTrue(runCatching { order.copy(storagePath="hosted/other/$hash.pdf") }.isFailure)
-        assertTrue(runCatching { order.copy(fileHash="bad") }.isFailure)
+        assertTrue(runCatching { order.copy(storagePath = "hosted/other/$hash.pdf") }.isFailure)
+        assertTrue(runCatching { order.copy(fileHash = "bad") }.isFailure)
     }
 }

@@ -33,3 +33,5 @@ The existing Site audience is public and must remain public on the next deployme
 ## Remaining device and operational checks
 
 After deployment and Firebase setup, test registration/sign-in, selecting a PDF from iPhone Files/iCloud, uploading and previewing it, and shop-admin access. Real Safari visual QA and the real Google account chooser have not been exercised by the emulator suite. Hosted PDF retention and orphan cleanup are not implemented; files stay private and retention is shown as Off.
+
+Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.
