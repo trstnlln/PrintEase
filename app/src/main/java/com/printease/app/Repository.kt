@@ -104,7 +104,8 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         mutable.value =
             ShopState(
                 session =
-                    if (admin) Session("demo-admin", "Nano Print Alangilan", "admin@demo.local", true)
+                    if (admin)
+                        Session("demo-admin", "Nano Print Alangilan", "admin@demo.local", true)
                     else Session("demo-student", "Alex Student", "student@demo.local", false)
             )
         publish()
@@ -273,15 +274,17 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                             mutable.value = ShopState(connecting = true)
                         try {
                             val token = withTimeout(20000) { user.getIdToken(true).await() }
-                            val consoleAdmin = runCatching {
-                                withTimeout(10000) {
-                                    db.collection("admins")
-                                        .document(user.uid)
-                                        .get(Source.SERVER)
-                                        .await()
-                                        .getBoolean("enabled") == true
-                                }
-                            }.getOrDefault(false)
+                            val consoleAdmin =
+                                runCatching {
+                                        withTimeout(10000) {
+                                            db.collection("admins")
+                                                .document(user.uid)
+                                                .get(Source.SERVER)
+                                                .await()
+                                                .getBoolean("enabled") == true
+                                        }
+                                    }
+                                    .getOrDefault(false)
                             val session =
                                 Session(
                                     user.uid,
@@ -289,14 +292,18 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                                         ?: user.email.orEmpty().substringBefore('@'),
                                     user.email.orEmpty(),
                                     token.claims["admin"] == true || consoleAdmin,
+                                    user.photoUrl?.toString(),
+                                    user.providerData.any { it.providerId == "google.com" },
                                 )
                             if (
                                 generation != currentGeneration || auth.currentUser?.uid != user.uid
                             )
                                 return@launch
                             mutable.value =
-                                if (previous.session?.uid == session.uid &&
-                                    previous.session.admin == session.admin)
+                                if (
+                                    previous.session?.uid == session.uid &&
+                                        previous.session.admin == session.admin
+                                )
                                     previous.copy(session = session, connecting = false)
                                 else ShopState(session = session)
                             if (PickupAlerts.enabled(context))
@@ -473,7 +480,10 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             check(prior.status !in listOf(OrderStatus.Cancelled, OrderStatus.Rejected)) {
                 "This request was closed. Check Orders, then discard this draft to start a new request."
             }
-            check(prior.options == options && (prior.documentStore != "hosted" || prior.fileHash == pdf.sha256)) {
+            check(
+                prior.options == options &&
+                    (prior.documentStore != "hosted" || prior.fileHash == pdf.sha256)
+            ) {
                 "This request was already submitted with earlier print options. Check Orders before creating a new request."
             }
             return
@@ -566,10 +576,13 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 "This PDF was removed under the shop’s retention policy. Your order history is still saved."
             }
             val session = requireNotNull(state.value.session) { "Sign in before opening a PDF." }
-            check(session.admin || session.uid == order.ownerId) { "You do not have access to this PDF." }
+            check(session.admin || session.uid == order.ownerId) {
+                "You do not have access to this PDF."
+            }
             val target = File(cache, "${order.id}.pdf")
             if (target.exists()) return@withContext target
-            if (order.documentStore == "hosted") return@withContext HostedDocuments.download(order, target)
+            if (order.documentStore == "hosted")
+                return@withContext HostedDocuments.download(order, target)
             val blob = storage.reference.child(order.storagePath)
             val metadata = withTimeout(15000) { blob.metadata.await() }
             require(metadata.sizeBytes in 5..MAX_PDF_BYTES.toLong()) {

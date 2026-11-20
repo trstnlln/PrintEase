@@ -66,8 +66,8 @@ data class PrintRates(val bw: Long = 2, val color: Long = 10, val legalExtra: Lo
 
 data class ShopSettings(
     val name: String = "Nano Print Alangilan",
-    val address: String = "Near BSU Alangilan campus",
-    val pickupHours: String = "Confirm pickup hours with the shop",
+    val address: String = "Neptune St., Golden Country Homes, Alangilan, Batangas City",
+    val pickupHours: String = "6:00 AM–10:00 PM",
     val acceptingOrders: Boolean = true,
     val rates: PrintRates = PrintRates(),
     val retentionDays: Int = 0,
@@ -146,7 +146,9 @@ fun parsePageRanges(text: String, pages: Int): List<PageRange> {
             merged[merged.lastIndex] = PageRange(previous.start, maxOf(r.end, previous.end))
         else merged += r
     }
-    require(merged.size <= 5) { "Choose up to 5 separate page ranges, or leave blank for all pages." }
+    require(merged.size <= 5) {
+        "Choose up to 5 separate page ranges, or leave blank for all pages."
+    }
     return if (merged == listOf(PageRange(1, pages))) emptyList() else merged
 }
 
@@ -208,7 +210,14 @@ data class PrintOptions(
         )
 }
 
-data class Session(val uid: String, val name: String, val email: String, val admin: Boolean)
+data class Session(
+    val uid: String,
+    val name: String,
+    val email: String,
+    val admin: Boolean,
+    val photoUrl: String? = null,
+    val googleAccount: Boolean = false,
+)
 
 data class PdfFile(
     val path: String,
@@ -244,6 +253,7 @@ data class PrintOrder(
             require(storagePath == "hosted/$ownerId/$fileHash.pdf")
         }
     }
+
     val total: Long
         get() = options.total(pricing)
 

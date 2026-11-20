@@ -2,7 +2,7 @@
 
 PrintEase displays **Nano Print Alangilan**, near BSU Alangilan and outside campus. The location button opens the owner-provided [Google Maps listing](https://maps.app.goo.gl/gBCZetYJyz46RoeQ9), verified on November 20, 2026. The link resolves to Nano Print Alangilan at marker coordinates **13.7853824, 121.0733167** (Google Maps feature `0x33bd0ff51a980455:0x1c73b020a3978e11`). These are the place marker coordinates, not the map viewport centre.
 
-The exact street address, pickup hours, prices and shop participation still need confirmation. Older saved settings named “Nano Alangilan” display the corrected name when loaded. Other administrator-configured shops retain a map search using their own name and address. No new Firebase fields or rules deployment are needed for this location update.
+The project owner provided the street address as **Neptune St., Golden Country Homes, Alangilan, Batangas City**, hours **6:00 AM–10:00 PM** (days unspecified), and business email **nanoprint.alangilan@gmail.com**. Printing prices and shop participation still need confirmation. The Facebook page URL is pending. Older saved settings named “Nano Alangilan” display the corrected name when loaded. Other administrator-configured shops retain a map search using their own name and address. No new Firebase fields or rules deployment are needed for this location update.
 
 ## Activate the update
 

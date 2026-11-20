@@ -110,6 +110,7 @@ class ModelTest {
         assertEquals(0, ShopSettings().retentionDays)
         assertTrue(runCatching { ShopSettings(retentionDays = 1) }.isFailure)
     }
+
     @Test
     fun hostedDocumentMetadataRoundTripsAndRejectsAnUnboundPath() {
         val hash = "a".repeat(64)
@@ -127,5 +128,19 @@ class ModelTest {
         assertEquals(order, PrintOrder.fromMap(order.id, order.toMap()))
         assertTrue(runCatching { order.copy(storagePath = "hosted/other/$hash.pdf") }.isFailure)
         assertTrue(runCatching { order.copy(fileHash = "bad") }.isFailure)
+    }
+
+    @Test
+    fun profilePhotosUseOnlyTrustedGoogleHttpsImages() {
+        val photo = "https://lh3.googleusercontent.com/a/profile=s96-c"
+        assertEquals(photo, googleProfilePhoto(photo))
+        listOf(
+                null,
+                "http://lh3.googleusercontent.com/photo",
+                "javascript:alert(1)",
+                "https://googleusercontent.com.evil.example/photo",
+                "https://user:password@lh3.googleusercontent.com/photo",
+            )
+            .forEach { assertNull(googleProfilePhoto(it)) }
     }
 }

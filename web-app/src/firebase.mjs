@@ -19,7 +19,7 @@ async bind(user){
    if(generation!==this.generation)return;
    const isAdmin=token.claims.admin===true||consoleAdmin;
    if(!same||previous.session.admin!==isAdmin)this.orders=[];
-   this.session={uid:user.uid,name:user.displayName||user.email?.split('@')[0]||'Student',email:user.email,admin:isAdmin};
+   this.session={uid:user.uid,name:user.displayName||user.email?.split('@')[0]||'Student',email:user.email,admin:isAdmin,photoUrl:user.photoURL||null,provider:user.providerData?.some(p=>p.providerId==='google.com')?'google':'email'};
    this.emit();
    this.unSettings=onSnapshot(doc(this.db,'shopSettings','current'),{includeMetadataChanges:true},snapshot=>{
     if(generation!==this.generation)return;

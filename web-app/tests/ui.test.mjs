@@ -58,3 +58,18 @@ test('a local storage failure keeps a valid PDF selected in memory',async t=>{
  database.transaction=function(stores,...rest){if(Array.isArray(stores)&&stores.includes('files'))throw new Error('Quota exceeded');return original.call(this,stores,...rest);};
  try{await app.pick(await selectedFile(2));assert.equal(app.s.draft.pdf.pages,2);assert.match(document.querySelector('.draft-warning').textContent,/Keep this tab open/);assert.equal(document.querySelector('[data-action="review"]').disabled,false);}finally{database.transaction=original;}
 });
+
+test('Google profile photos appear in the header and Account with a safe initials fallback',async t=>{
+ const app=await setup(t);await app.backend.login(false);
+ app.s.session={...app.s.session,photoUrl:'https://lh3.googleusercontent.com/profile-photo',provider:'google'};app.render();
+ assert.ok(document.querySelector('.top-actions .user-avatar img.profile-photo'));
+ app.go('account');assert.ok(document.querySelector('.profile-avatar img.profile-photo'));
+ const photo=document.querySelector('.profile-avatar img');photo.dispatchEvent(new window.Event('error'));
+ assert.equal(document.querySelector('.profile-avatar img'),null);assert.match(document.querySelector('.profile-avatar').textContent,/A/);
+});
+test('a profile photo cannot inject markup or use an untrusted URL',async t=>{
+ const app=await setup(t);await app.backend.login(false);
+ for(const photoUrl of ['javascript:alert(1)','https://googleusercontent.com.evil.example/picture','https://user:password@lh3.googleusercontent.com/picture']){
+  app.s.session={...app.s.session,photoUrl};app.go('account');assert.equal(document.querySelector('.profile-avatar img'),null);
+ }
+});

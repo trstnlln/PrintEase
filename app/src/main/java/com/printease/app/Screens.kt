@@ -17,7 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.*
@@ -102,8 +101,8 @@ fun PrintEase(model: PrintViewModel) {
                                 Icon(Icons.Default.Refresh, "Refresh orders")
                             }
                         if (mainRoute)
-                            IconButton(onClick = { signOut = true }, enabled = !busy) {
-                                Icon(Icons.AutoMirrored.Filled.Logout, "Sign out")
+                            IconButton(onClick = { model.navigate("account") }, enabled = !busy) {
+                                UserAvatar(session, size = 36.dp)
                             }
                     },
                     colors =
@@ -1422,17 +1421,7 @@ fun AccountContent(
         Eyebrow("YOUR WORKSPACE")
         Text("Account & print guide", style = MaterialTheme.typography.headlineLarge)
         Panel(Modifier.fillMaxWidth()) {
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(20.dp),
-            ) {
-                Icon(
-                    Icons.Default.PersonOutline,
-                    null,
-                    Modifier.padding(18.dp).size(30.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
+            UserAvatar(session, size = 88.dp)
             Text(session.name, style = MaterialTheme.typography.titleLarge)
             Text(session.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
@@ -1480,7 +1469,7 @@ fun AccountContent(
             Text("Sign out")
         }
         Text(
-            "PrintEase 2.1 · Native Android\nPDF only, up to 5 MB. Keep your queue number for pickup.",
+            "PrintEase ${BuildConfig.VERSION_NAME} · Native Android\nPDF only, up to 5 MB. Keep your queue number for pickup.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
