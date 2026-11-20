@@ -33,23 +33,29 @@ service cloud.firestore {
 function rangeValid(r, i, count, pages) {
       return count <= i || validRange(r[i], i == 0 ? 0 : r[i-1].end, pages);
     }
-    function validRange(entry, previousEnd, pages) {
+function rangeCount(entry, previousEnd) {
+      // An invalid span cannot be compensated by the other nine spans (at most 1,000 pages each).
       return entry is map && entry.size() == 2
         && entry.start is int && entry.end is int
-        && entry.start > previousEnd && entry.end >= entry.start && entry.end <= pages;
+        && entry.start > previousEnd && entry.end >= entry.start
+        ? entry.end - entry.start + 1 : -100000;
     }
-    function rangeCount(r, i, count) { return count <= i ? 0 : r[i].end - r[i].start + 1; }
     function validRanges(o) {
       let r = o.pageRanges;
       let n = r.size();
-      let p = o.pages;
-      return r is list && n >= 1 && n <= 10 && o.selectedPages is int
-        && rangeValid(r,0,n,p) && rangeValid(r,1,n,p) && rangeValid(r,2,n,p)
-        && rangeValid(r,3,n,p) && rangeValid(r,4,n,p) && rangeValid(r,5,n,p)
-        && rangeValid(r,6,n,p) && rangeValid(r,7,n,p) && rangeValid(r,8,n,p) && rangeValid(r,9,n,p)
-        && o.selectedPages == rangeCount(r,0,n) + rangeCount(r,1,n) + rangeCount(r,2,n)
-          + rangeCount(r,3,n) + rangeCount(r,4,n) + rangeCount(r,5,n)
-          + rangeCount(r,6,n) + rangeCount(r,7,n) + rangeCount(r,8,n) + rangeCount(r,9,n);
+      return r is list && n >= 1 && n <= 10
+        && o.selectedPages is int && o.selectedPages >= 1 && o.selectedPages <= o.pages
+        && r[n-1].end <= o.pages
+        && o.selectedPages == rangeCount(r[0],0)
+          + (n > 1 ? rangeCount(r[1],r[0].end) : 0)
+          + (n > 2 ? rangeCount(r[2],r[1].end) : 0)
+          + (n > 3 ? rangeCount(r[3],r[2].end) : 0)
+          + (n > 4 ? rangeCount(r[4],r[3].end) : 0)
+          + (n > 5 ? rangeCount(r[5],r[4].end) : 0)
+          + (n > 6 ? rangeCount(r[6],r[5].end) : 0)
+          + (n > 7 ? rangeCount(r[7],r[6].end) : 0)
+          + (n > 8 ? rangeCount(r[8],r[7].end) : 0)
+          + (n > 9 ? rangeCount(r[9],r[8].end) : 0);
     }
     function validOptions(o) {
       return o.keys().hasAll(['paper','pages','copies','color','duplex'])
