@@ -1,77 +1,90 @@
 # Connect PrintEase to Firebase
 
-## 1. Create the project
+PrintEase uses Firebase Authentication and Cloud Firestore for accounts, shop settings and orders. New PDF uploads use the private document service on the PrintEase website, backed by Sites managed object storage. You do not need to enable Firebase Storage or upgrade to Blaze for this setup. The hosted document service must be deployed before these clients can submit PDFs.
 
-Go to https://console.firebase.google.com/ and select **Create a new Firebase project**. Name it **PrintEase**, choose your project ID, and finish. Analytics and Gemini assistance are optional; neither is required by this prototype.
+Use the existing project **printease-ce44e**. Do not create another project or a second database to fix an existing-database message.
 
-## 2. Register Android
+## 1. Register Android
 
-From Project overview, click the **Android** icon (or Add app → Android):
-
-- Android package name: **`com.printease.printease`**
-- App nickname: **PrintEase**
-- SHA-1 and SHA-256: required for Google sign-in; follow `GOOGLE_SIGN_IN.md` to obtain them from your local signing report.
-
-Register the app and download **`google-services.json`**.
-
-On the Kotlin branch, put it here:
+In Project settings → General, register Android package **com.printease.printease** and download `google-services.json`. Put the file next to `app/build.gradle.kts`:
 
 ```
 PrintEase/
   app/
     build.gradle.kts
-    google-services.json    <-- here
+    google-services.json
     src/
   build.gradle.kts
   settings.gradle.kts
 ```
 
-If you are still on the old Flutter `main` branch, switch to `kotlin-native` before following this folder layout. The file is ignored by Git; keep it local. Never include a Firebase service-account private key in the app.
+The JSON is ignored by Git. This repository already configures the Google Services plugin and Firebase SDK dependencies; do not paste duplicate Gradle snippets. A service-account key is a different file and must never be included in the app, website or repository.
 
-The console's **Add Firebase SDK** page explains Gradle configuration. This repository already includes the Google Services plugin and the Auth, Firestore, Storage and Cloud Messaging SDKs, so you do not need to copy those snippets again. Click Next/Continue to console.
+For Google sign-in, follow [Google setup](GOOGLE_SIGN_IN.md) to add your local liveDebug SHA-1 and SHA-256 fingerprints, then download the updated JSON.
 
-## 3. Enable services
+## 2. Enable Authentication
 
-- **Build → Authentication → Get started → Sign-in method → Google**. Enable Google, choose a support email and Save. Then add your signing fingerprints and download a fresh JSON file as described in [Google sign-in setup](GOOGLE_SIGN_IN.md). Optionally enable **Email/Password** for the alternate sign-in form; email link sign-in is not required.
-- **Build → Firestore Database → Create database**. Choose production mode. Select an appropriate nearby region (for example Singapore if offered); choose carefully because a database location cannot simply be changed later.
-- **Build → Storage → Get started**. Provision the default bucket. Firebase may require Blaze billing. Review current pricing and configure budget alerts before confirming. Firestore stores metadata; Storage stores PDFs.
+Open Authentication → Sign-in method:
 
-## 4. Deploy rules
+1. Enable **Email/Password**, turn on its first switch and Save. The email-link switch is not required.
+2. Enable **Google**, select a project support email and Save.
+3. Under Authentication → Settings → Authorized domains, add `printease-campus.consideratefennel8.chatgpt.site`. Enter only the hostname.
 
-Use Node.js and the Firebase CLI on your computer. From the Kotlin project root:
+A Gmail address can be used with either method. A Google account uses Continue with Google; the email form uses a PrintEase password.
+
+## 3. Open or create the default Firestore database
+
+Open Firestore Database. If `(default)` is listed, open it. If Firebase says **Database already exists**, close the creation dialog, refresh and select the existing `(default)` database. Do not choose another database ID.
+
+If no database exists, create the **Standard** edition database in Production mode, ID `(default)`. Choose the region carefully, preferably one near your users; it cannot simply be changed later. This application does not need Enterprise edition.
+
+If the existing database is still inaccessible, check Google Cloud → APIs & Services → Enabled APIs for **Cloud Firestore API** in this same project. An existing database and a disabled API are different conditions.
+
+## 4. Publish rules and indexes
+
+From the Kotlin repository root, with Node.js installed:
 
 ```sh
 npm ci
 npx firebase login
-npx firebase deploy --only firestore:rules,firestore:indexes,storage --project YOUR_PROJECT_ID
+npx firebase deploy --only firestore:rules,firestore:indexes --project printease-ce44e
 ```
 
-Use the actual Project ID shown under Firebase Project settings → General, not the display name. The demo project ID used in tests is not your live project.
+Alternatively, open the existing database → Rules, replace the editor with the full contents of [`firebase/firestore.rules`](../firebase/firestore.rules), and click Publish. Use the current `kotlin-native` version. Do not use blanket `allow read, write: if true` rules.
 
-The included rules allow students to access only their own orders/documents, submit pending requests and cancel their own pending requests. Administrators can read requests, accept with an atomic queue counter, reject with a reason and advance processing. Students cannot grant themselves an admin role or modify prices/statuses. Only administrators can delete uploaded documents.
+The orders list needs this collection-scope composite index on `orders`:
 
-## 5. Run live
+| Field | Direction |
+| --- | --- |
+| ownerId | Ascending |
+| createdAt | Descending |
 
-In Android Studio, sync Gradle after adding the JSON file. Open **Build Variants** and choose **`liveDebug`** for the app module, then Run on an emulator or phone. No Flutter SDK is needed. The demo variant is deliberately separate and never uploads to Firebase.
+Deploying `firestore:indexes` creates the index from the repository. If using the console, add it under Indexes → Composite and wait until it finishes building.
 
-Choose Continue with Google, or register a student with email/password if that provider is enabled. Firebase Authentication → Users should show that account. Submitting a PDF creates an object under Storage → Files → `documents/<uid>/` and a record under Firestore → `orders`.
+Rules enforce student ownership, quote validation, document path/hash binding, immutable submitted details, allowed status transitions and atomic queue numbers. Clients cannot grant themselves an administrator role.
 
-If Gradle reports "No matching client found", the downloaded JSON package name does not match the chosen build variant. `com.printease.printease` is for the live app. The demo variant adds `.demo` and does not need Firebase configuration. When the JSON is present, the build filters Google Services tasks to live variants.
+## 5. Create the shop administrator
 
-## 6. Make the administrator
+Sign in with the shop account once, then copy its exact UID from Authentication → Users.
 
-For a Google administrator, sign in with that account once to create its Firebase user, then copy its UID under Authentication → Users. For email/password, create the shop account via Users → Add user. On a trusted computer, use a service account with Firebase Auth administration permission and set `GOOGLE_APPLICATION_CREDENTIALS` to the path of its JSON file using your OS environment settings. That service-account file is different from `google-services.json` and must remain private, outside this repository.
+In Firestore → Data, create collection `admins`, document ID equal to that UID, and field **enabled** of type **boolean**, value **true**. Only a trusted project owner in the Firebase console can create this grant; the app cannot write it. Sign out and back in, or use Refresh account & orders.
 
-```sh
-node tools/set-admin.cjs THE_ADMIN_UID
-```
+The existing custom-claim method in `tools/set-admin.cjs` is still supported for owners who already administer claims. No private service-account file is needed for the console method.
 
-Sign out and back in to the live app. It will read the trusted `admin` claim and show the shop workspace. There is no demo role switch in live mode.
+## 6. Deploy the PDF service and run live
 
-## Common issues
+The website's build produces a Worker at `web-app/dist/server/index.js`. Its Sites hosting manifest declares the private `BUCKET` binding. Deploy the complete web build through Sites; see [web setup](../web-app/README.md). Confirm `/api/status` returns `"ready": true` after deployment. The status endpoint does not expose files.
 
-- **Demo orders do not appear in Firebase:** expected. Choose `liveDebug` after configuration.
-- **Permission denied:** deploy these rules to the same project as the JSON file; sign in; refresh the admin claim by signing in again.
-- **PDF upload fails:** ensure Storage is provisioned, billing requirements are met, rules are deployed, and the PDF is valid and ≤5 MB.
-- **No admin interface:** verify the exact user's UID and claim, then sign in again.
-- **Google Services plugin missing:** ensure you are opening the Kotlin repository root; sync after placing the JSON file in `app/`.
+Then sync Gradle in Android Studio, select **liveDebug** in Build Variants and Run. The website and native app use the same Firebase accounts and orders. New private files have keys `hosted/<uid>/<sha256>.pdf`; Firestore stores the key, hash, options and order status, not the PDF itself.
+
+The separate **demoDebug** build never writes live orders. Demo mode works without Firebase setup.
+
+## Troubleshooting
+
+- **Account creation says provider disabled:** enable Email/Password in this exact project and Save.
+- **Database already exists:** open the existing `(default)` database.
+- **Orders cannot sync:** check database/API availability, current rules and the composite index.
+- **Storage is not ready:** the hosted Worker or BUCKET binding has not been deployed. Enabling Firebase Storage is not the fix for these new clients.
+- **No matching client found:** download Android JSON for `com.printease.printease`; the demo package has a separate `.demo` suffix.
+- **No shop workspace:** check the exact account UID and `admins/<uid>.enabled`, then refresh.
+- **iPhone file cannot be read:** download the PDF from iCloud to Files first, then select it again. Valid files must be unencrypted PDFs, at most 5 MB and 1,000 pages.

@@ -1,7 +1,6 @@
 package com.printease.app
 
 import android.content.Context
-import android.net.Uri
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
@@ -9,8 +8,6 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Source
 import com.google.firebase.storage.FirebaseStorage
-import com.google.firebase.storage.StorageException
-import com.google.firebase.storage.StorageMetadata
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.*
@@ -249,7 +246,7 @@ private fun jsonMap(obj: JSONObject): Map<String, Any?> =
 class FirebaseRepository(private val context: Context) : ShopRepository {
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
-    private val storage = FirebaseStorage.getInstance()
+    private val storage by lazy { FirebaseStorage.getInstance() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val cache = File(context.cacheDir, "previews").apply { mkdirs() }
     private val mutable = MutableStateFlow(ShopState(connecting = true))
@@ -276,19 +273,32 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                             mutable.value = ShopState(connecting = true)
                         try {
                             val token = withTimeout(20000) { user.getIdToken(true).await() }
+                            val consoleAdmin = runCatching {
+                                withTimeout(10000) {
+                                    db.collection("admins")
+                                        .document(user.uid)
+                                        .get(Source.SERVER)
+                                        .await()
+                                        .getBoolean("enabled") == true
+                                }
+                            }.getOrDefault(false)
                             val session =
                                 Session(
                                     user.uid,
                                     user.displayName?.takeIf { it.isNotBlank() }
                                         ?: user.email.orEmpty().substringBefore('@'),
                                     user.email.orEmpty(),
-                                    token.claims["admin"] == true,
+                                    token.claims["admin"] == true || consoleAdmin,
                                 )
                             if (
                                 generation != currentGeneration || auth.currentUser?.uid != user.uid
                             )
                                 return@launch
-                            mutable.value = ShopState(session = session)
+                            mutable.value =
+                                if (previous.session?.uid == session.uid &&
+                                    previous.session.admin == session.admin)
+                                    previous.copy(session = session, connecting = false)
+                                else ShopState(session = session)
                             if (PickupAlerts.enabled(context))
                                 scope.launch { runCatching { PickupAlerts.register(context) } }
                             settingsListener =
@@ -463,7 +473,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             check(prior.status !in listOf(OrderStatus.Cancelled, OrderStatus.Rejected)) {
                 "This request was closed. Check Orders, then discard this draft to start a new request."
             }
-            check(prior.options == options) {
+            check(prior.options == options && (prior.documentStore != "hosted" || prior.fileHash == pdf.sha256)) {
                 "This request was already submitted with earlier print options. Check Orders before creating a new request."
             }
             return
@@ -482,39 +492,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         check(currentSettings.rates == quoted.rates && currentSettings.version == quoted.version) {
             "Shop details or rates changed. Review the updated total and try again."
         }
-        val path = "documents/${session.uid}/$id.pdf"
-        val blob = storage.reference.child(path)
-        val metadata =
-            try {
-                withTimeout(15000) { blob.metadata.await() }
-            } catch (e: StorageException) {
-                if (e.errorCode == StorageException.ERROR_OBJECT_NOT_FOUND) null else throw e
-            }
-        if (metadata != null)
-            check(metadata.getCustomMetadata("sha256") == pdf.sha256) {
-                "This draft changed. Choose the document again before retrying."
-            }
-        else {
-            val task =
-                blob.putFile(
-                    Uri.fromFile(File(pdf.path)),
-                    StorageMetadata.Builder()
-                        .setContentType("application/pdf")
-                        .setCustomMetadata("sha256", pdf.sha256)
-                        .build(),
-                )
-            task.addOnProgressListener {
-                progress(
-                    if (it.totalByteCount > 0) it.bytesTransferred.toFloat() / it.totalByteCount
-                    else 0f
-                )
-            }
-            try {
-                withTimeout(90000) { task.await() }
-            } finally {
-                if (!task.isComplete) task.cancel()
-            }
-        }
+        val path = HostedDocuments.upload(pdf, progress, session.uid)
         val order =
             PrintOrder(
                 id,
@@ -524,8 +502,11 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 path,
                 options,
                 pricing = currentSettings.rates,
+                documentStore = "hosted",
+                fileHash = pdf.sha256,
             )
         withTimeout(25000) { ref.set(order.toMap()).await() }
+        progress(1f)
         // Never delete on uncertain writes: retrying uses this ID and resolves the result.
     }
 
@@ -584,8 +565,11 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             check(order.documentDeletedAt == null) {
                 "This PDF was removed under the shop’s retention policy. Your order history is still saved."
             }
+            val session = requireNotNull(state.value.session) { "Sign in before opening a PDF." }
+            check(session.admin || session.uid == order.ownerId) { "You do not have access to this PDF." }
             val target = File(cache, "${order.id}.pdf")
             if (target.exists()) return@withContext target
+            if (order.documentStore == "hosted") return@withContext HostedDocuments.download(order, target)
             val blob = storage.reference.child(order.storagePath)
             val metadata = withTimeout(15000) { blob.metadata.await() }
             require(metadata.sizeBytes in 5..MAX_PDF_BYTES.toLong()) {

@@ -1,98 +1,74 @@
 # PrintEase Web
 
-An iPhone-friendly web companion to the Kotlin PrintEase Android app. The website uses the **same `printease-ce44e` Firebase project**, accounts, private PDF objects, order metadata and trusted administrator claims.
+An iPhone-friendly web companion to the Kotlin Android app. Both clients share Firebase project **printease-ce44e**, accounts, orders and administrator grants. New PDFs use a private hosted document service backed by Sites managed R2 storage; Firebase Storage billing is not required.
 
-Published Site: https://printease-campus.consideratefennel8.chatgpt.site
+Website: https://printease-campus.consideratefennel8.chatgpt.site
 
-The Site starts **owner-private**. Open it using the ChatGPT account that owns the Site, then use PrintEase's separate Google/email sign-in. Publishing this source does not automatically grant other people access to the Site. Sharing/audience changes are separate from Firebase account roles.
+The Site is currently public. Visitors can reach the sign-in page, then must sign in to access their PrintEase orders and PDFs.
 
 ## Use on iPhone
 
-1. Open the published URL in **Safari**. Complete the private Site's ChatGPT sign-in if prompted.
-2. Choose **Continue with Google**, or use email/password if enabled in Firebase. Existing Android users use the same account. No new PrintEase password is needed for Google accounts.
-3. Tap Safari's **Share → Add to Home Screen → Add**. The website includes an opaque home-screen icon and standalone app manifest.
-4. Submit a PDF, review printing preferences and the estimated cost, then track the same order on Android or the website. Collect and pay at the physical shop.
+1. Open the website in Safari.
+2. Choose Continue with Google, or create/sign in to an email/password account.
+3. Optionally choose Share → Add to Home Screen.
+4. Select a PDF from Files, review print options and send the request. If the file is stored only in iCloud and fails to read, download it in Files first.
 
-For testing without changing real orders, choose **Explore the demo first**. Demo student/admin roles and PDFs live only in that browser and do not sync with Android or other devices.
+Explore the demo first is a separate local experience. Demo files and orders do not reach the shop or sync with Android.
 
-## Required Firebase setup
+## Firebase setup
 
-The public Firebase web client configuration supplied by the project owner is in `src/config.mjs`. It is not a service-account key. Database and document access are enforced by Firebase rules and trusted claims.
+Follow [Firebase setup](../docs/FIREBASE_SETUP.md). Enable the intended sign-in providers, open the existing `(default)` Firestore database, and publish the current rules and composite index. Do not create a second database when Firebase says one already exists.
 
-### Google sign-in domain
+Add `printease-campus.consideratefennel8.chatgpt.site` under Authentication → Settings → Authorized domains. The public web config lives in `src/config.mjs`; it is not a service-account secret. Keep Google enabled, add Android fingerprints for native Google login, and test the real account chooser on your device. Safari may need permission for the sign-in pop-up.
 
-Under **Firebase Console → PrintEase → Authentication → Settings → Authorized domains**, add:
+Administrators use a console-created `admins/<uid>` document with boolean `enabled: true`, or an existing trusted `admin: true` custom claim. There is no live role selector.
 
-```
-printease-campus.consideratefennel8.chatgpt.site
-```
+## Private PDFs without Firebase Storage billing
 
-Add only the hostname, without `https://` or a path. Keep the Google provider enabled. The app starts the account window directly from the button click. If Safari blocks it, allow pop-ups for this site or use the email/password alternative. No real Google account was used in automated checks; the owner must verify the live account chooser.
+`worker/index.mjs` implements the document API on the same Site:
 
-### Firestore, Storage and admin
+| Endpoint | Purpose |
+| --- | --- |
+| GET `/api/status` | Public readiness and size limit |
+| PUT `/api/uploads/<sha256>` | Upload up to 5 MB to the authenticated user's namespace |
+| GET `/api/uploads/<sha256>` | Read the signed-in user's own upload |
+| GET `/api/documents/<order-id>` | Read a saved order's PDF as its owner or shop administrator |
 
-Use the canonical rules and index from the PrintEase repository root (`firebase/`). They support the same schema as the Kotlin app, including cancelled pending requests, immutable order details and counter/order binding for queue uniqueness. Deploy them to **`printease-ce44e`**, not the demo emulator project:
+Each private request carries a Firebase ID token. The Worker verifies the original token through Firebase before using its UID/claims, then checks the order and administrator grant through Firestore. Decoding a token alone never grants access. PDFs have immutable, content-addressed keys under `hosted/<uid>/<sha256>.pdf`. There are no public bearer download links and no API deletion endpoint that could race an uncertain order write.
 
-```sh
-# From the Android/repository root, with Firebase CLI installed
-npx firebase deploy --only firestore:rules,firestore:indexes,storage --project printease-ce44e
-```
+The backend checks body size, PDF signature and SHA-256. Page counting and full PDF parsing run in the clients; the shop still reviews the document and final price.
 
-Enable Authentication, provision Firestore in the project's selected region, and provision the Storage bucket. Cloud Storage may require a Blaze billing account; check Firebase pricing before confirming an upgrade. The configured bucket name alone does not prove that a bucket has been provisioned.
+New orders include `documentStore: "hosted"` and `fileHash`. Older Firebase Storage orders remain readable through the legacy SDK if their original bucket is available. Firebase Storage/CORS setup is unnecessary for new hosted PDFs.
 
-The administrator must have the trusted Firebase `admin: true` custom claim assigned through the repository's `tools/set-admin.cjs` procedure. There is no live role selector. After assigning a claim, sign in again or use Account → Refresh account & orders.
+There is currently no automatic removal or orphan cleanup for hosted PDFs. The settings screen shows retention Off. Uploads whose order write fails remain private and reusable on retry; a deliberate authenticated retention/admin deletion workflow is future work. Managed storage has hosting quotas/terms; this avoids a Firebase Blaze requirement, not every possible hosting limit.
 
-### Browser PDF downloads and CORS
-
-Private PDF previews/downloads use the authenticated Storage SDK (`getBytes`), not public bearer download links. If a browser reports a CORS failure, a project owner with Google Cloud Storage permissions can apply the included `storage-cors.json`:
-
-```sh
-gcloud storage buckets update gs://printease-ce44e.firebasestorage.app --cors-file=storage-cors.json
-```
-
-This permits browser GET/HEAD requests from the exact deployed origin; it does not bypass Firebase Storage access rules. The Android app does not require a CORS change. If hosting the website on another origin, update the allowed origin before applying the file. Reapply an existing bucket policy thoughtfully if it also serves other websites.
-
-## Development and checks
+## Build and deploy
 
 ```sh
 npm ci
 npm test
 npm run build
+node scripts/verify-build.mjs
 ```
 
-`dist/` is the static deployment output. Firebase SDK code is bundled locally; PDF.js and its worker are copied locally with their license, so the UI/PDF renderer does not depend on a third-party JavaScript CDN. The service worker caches only public app assets. It never caches Firebase HTTP responses or private document bytes. The local demo/draft store is separate IndexedDB data.
+The build outputs public assets plus the self-contained Worker at `dist/server/index.js`. `.openai/hosting.json` declares the managed R2 binding named `BUCKET`; the runtime provisions it during Sites deployment. Publish the complete `dist/` and hosting manifest through the existing Sites project. A GitHub push alone does not update the live website.
 
-`tests/cloud.integration.mjs` runs against the repository's Auth/Firestore/Storage emulators using the real Firebase web SDK. From the repository root after installing both root and web dependencies:
+After deployment, confirm `/api/status` returns `"ready": true`, then verify sign-in, PDF upload, order creation and private download with a real account. A successful build is not evidence of a successful live deployment.
 
-```sh
-npx firebase emulators:exec --only auth,firestore,storage --project demo-printease "node --test web-app/tests/cloud.integration.mjs"
-```
-
-The test creates disposable **emulator** accounts, verifies private upload/download, stable-ID retries, trusted admin queue updates, student-visible tracking and other-student isolation. It never connects to the real Firebase project.
-
-## Features and limits
-
-- Google/email authentication and password reset; trusted administrator roles.
-- Student dashboard, searchable/filterable orders and an admin queue.
-- PDF picker, bounded 5 MB files, actual PDF page counting (up to 1,000 pages), paged canvas preview and download.
-- A4/Letter/Legal, 1–100 copies, color/B&W and duplex; review before submission.
-- Saved per-account drafts and stable request IDs for uncertain upload/write retries. The app checks an existing order before retrying and never deletes a PDF after an uncertain write.
-- Atomic queue acceptance using Philippine dates, rejection reasons and pending student cancellation.
-- Local demo persistence, cross-tab updates and offline app assets after the first successful visit.
-- Mobile safe-area spacing, keyboard-friendly forms, accessible labels, reduced-motion support and system dark mode.
-
-Live submissions and status updates need internet. Real Firebase documents are not deliberately persisted in an offline document cache; the PDF preview exists in memory while open. Local drafts/demo files remain in browser storage, which Safari may clear under storage pressure or when the user clears website data. Sign-out removes the current draft. The demo and native app are separate local demos; only **live Firebase** accounts/orders are shared.
-
-Default rates are PHP 2 B&W / PHP 10 color per side, with PHP 1 extra for Legal. Administrators can edit these rates; each order preserves its submitted quote. Selected PDF page ranges determine the printed-side count. Duplex saves sheets, not printed-side charges. The shop reviews page counts and final pricing; server-side PDF inspection is not implemented. There is no payment processing, direct printer integration, multi-shop support or background push notification feature. Up to 500 live orders are loaded; extend with pagination/archive policy for long-running use.
+PDF.js, its worker and their license are bundled locally. The service worker caches only public application assets; `/api/` requests and private document bytes are never cached. Local per-account drafts use IndexedDB with a memory fallback when Safari cannot save them.
 
 ## Verification
 
-24 unit/DOM/repository tests and one real-web-SDK Firebase emulator integration scenario pass. The static production build succeeds. Actual browser visual QA was unavailable in the managed environment because its required browser-control tool was not exposed. Physical iPhone Safari testing, Google account chooser sign-in, live Firebase permissions/billing, bucket CORS and Wi-Fi/cellular timing targets remain owner/device checks. DOM checks are not a claim of real Safari execution.
+The GitHub workflow runs Android unit/UI host tests, lint and builds; web unit/DOM tests, actual PDF parser tests, Worker authorization/storage tests, production build checks, cloud-function tests and a real Firebase Web SDK integration against Auth/Firestore/Storage emulators.
 
-## Shop experience 2.1
+The integration uses the actual hosted Worker with an in-memory R2 test binding and Firebase emulators. It checks stable request retries, private file access, owner/admin isolation, queue updates, console administrator grants and same-account refresh without a transient sign-out. It does not contact the production project.
 
-The partner shop is **near campus**. The default name is **Nearby print shop** until real details are confirmed. Android and web share `shopSettings/current`, page-range selections, quote snapshots and completion/removal timestamps. Administrators edit details and rates from Account. Students retain their drafts when new requests are paused. Existing orders keep their quoted price.
+Physical iPhone Safari testing and the real Google account chooser remain device checks. Browser visual QA was unavailable because the managed environment did not expose its required browser-control tool.
 
-Deploy the root Firebase rules before using the new clients. See [`docs/SHOP_OPERATIONS.md`](../docs/SHOP_OPERATIONS.md) for pickup notifications and opt-in retention setup. Android background alerts require the supplied cloud functions; web ready messages appear while the app observes status changes. The website does not provide iPhone background push.
+## Product limits
 
-The package override for `@grpc/grpc-js` selects patched version 1.13.6 for Firebase’s Node-only transport. It is exercised by the real Web SDK emulator test and is excluded from the browser bundle. Production dependency audit: zero advisories on November 17, 2026.
+The partner is a **Nearby print shop**, near campus. Details, pickup hours, rates and accepting-orders status are editable by the administrator. Selected pages determine the printed-side charge; duplex reduces sheets, not charged sides. Each order keeps its submitted quote.
+
+Live actions require internet over Wi-Fi or cellular data. Bluetooth is not used. Payment and pickup happen at the physical shop. There is no online payment, direct printer integration or iPhone background push. Android background notifications require the separately deployed optional functions. Up to 500 live orders load; extended use needs pagination/archive management.
+
+Local draft files can be cleared by Safari storage pressure or website-data removal. Sign-out clears the current draft. Demo data remains separate from live accounts.

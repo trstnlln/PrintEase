@@ -19,9 +19,9 @@ The [PrintEase logo](docs/branding/printease-logo.png) is included as a transpar
 
 ## Use on an iPhone
 
-Open **[PrintEase Web](https://printease-campus.consideratefennel8.chatgpt.site)** in Safari, then use **Share → Add to Home Screen**. The Site starts owner-private: use the owning ChatGPT account if prompted, then PrintEase’s Google/email sign-in. Live web and Android accounts/orders share the same Firebase project; their local demos remain separate.
+Open **[PrintEase Web](https://printease-campus.consideratefennel8.chatgpt.site)** in Safari, then use **Share → Add to Home Screen**. The Site is public; use PrintEase’s Google/email sign-in to access your own orders. Live web and Android accounts/orders share the same Firebase project; their local demos remain separate.
 
-The owner must add the deployed hostname under Firebase Authentication’s authorized domains. See **[web setup and checks](web-app/README.md)** for the exact domain, Storage/CORS setup and remaining iPhone checks. The web source is in `web-app/`; the native Android app remains in `app/`.
+The owner must add the deployed hostname under Firebase Authentication’s authorized domains. See **[web setup and checks](web-app/README.md)** for the exact domain, private hosted PDF storage and remaining iPhone checks. The web source is in `web-app/`; the native Android app remains in `app/`.
 
 ## Open and run
 
@@ -61,10 +61,10 @@ Quick version:
 
 1. Register an Android app in your Firebase project with package **`com.printease.printease`**.
 2. Save its downloaded configuration as **`app/google-services.json`**. This file is ignored by Git. Do not place it in the repository root or the legacy Flutter folder.
-3. Enable Google Authentication (and optionally Email/Password), create Firestore in production mode, and provision Storage. Storage may require Blaze billing; confirm current Firebase pricing before enabling it.
+3. Enable Google Authentication (and optionally Email/Password), open/create the default Firestore database in production mode, and deploy the website's private PDF service. New PDFs use Sites managed storage without Firebase Storage billing.
 4. Deploy the included Firebase rules to your project. The app enforces student ownership, admin-only management, valid pricing, correct transitions, immutable documents and unique queue assignments.
 5. Sync Gradle and select **`liveDebug`**. The demo and live apps have different application IDs, so they can coexist on a device.
-6. Sign in with Google or register student accounts in the live app. Create the admin account in Firebase Authentication or by signing in with its Google account first and assign its `admin` custom claim using `tools/set-admin.cjs` from a trusted machine. Sign in again afterward.
+6. Sign in with Google or register student accounts in the live app. Create the admin account in Firebase Authentication or by signing in with its Google account first and create `admins/<uid>` with boolean `enabled: true` in Firestore using the project-owner console. Existing `admin` custom claims remain supported. Sign in again afterward.
 
 A missing Firebase configuration produces a setup screen, not a crash or a silent switch to demo. Firebase SDKs are already included; do not paste duplicate Gradle plugins or dependencies from the console.
 
@@ -77,7 +77,7 @@ A missing Firebase configuration produces a setup screen, not a crash or a silen
 - Explicit review step before submission; a fixed action area keeps the submit button reachable; invalid copy counts cannot be submitted.
 - Retriable upload progress with a stable request ID. An uncertain write is checked on retry, avoiding duplicate orders and avoiding deletion of documents belonging to successful orders.
 - Demo persistence and real sample PDF previews. Explicit demo and live build variants.
-- Auth restoration, Google sign-in via Credential Manager, student registration, password reset and admin roles obtained from trusted Firebase custom claims.
+- Auth restoration, Google sign-in via Credential Manager, student registration, password reset and admin roles obtained from trusted Firebase custom claims or console-created administrator grants.
 - Daily Philippine-time queue counters assigned atomically on acceptance. Server rules prevent number reuse and bind each counter write to the accepted order.
 - Rejection reasons, student cancellation while pending, and protected status transitions. Both the client transaction and Firebase rules check the current state.
 - Connection/cached-data notices, readable errors, bounded network waits and disabled destructive actions during saves.
@@ -136,3 +136,7 @@ Do not use debug builds as a production release. Configure your own release sign
 Printing happens at a partner shop **near campus**. The temporary display name is **Nearby print shop**. Administrators can edit pickup details, whole-peso print rates, request availability and optional completed-PDF retention. Requests support selected page ranges and keep a price snapshot even after rates change. Android pickup alerts are opt-in; server functions must be deployed to deliver them.
 
 See [Shop operations and activation](docs/SHOP_OPERATIONS.md) for the setup steps and shared Android/web behavior. Automatic PDF cleanup is off by default.
+
+## Upload repair 2.2
+
+The current source fixes iPhone picker focus resets, Safari autofill submission, hidden form failures and local-draft storage failures. New private PDFs use the hosted Worker instead of an unprovisioned Firebase Storage bucket. Follow [Firebase setup](docs/FIREBASE_SETUP.md) and [web deployment](web-app/README.md); a GitHub commit is separate from publishing the live Site. See [repair status](docs/WEB_REPAIR_STATUS.md) for deployment limits.

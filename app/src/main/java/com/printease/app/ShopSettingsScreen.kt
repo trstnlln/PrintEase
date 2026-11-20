@@ -98,7 +98,7 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
     var bw by rememberSaveable { mutableStateOf(settings.rates.bw.toString()) }
     var color by rememberSaveable { mutableStateOf(settings.rates.color.toString()) }
     var legal by rememberSaveable { mutableStateOf(settings.rates.legalExtra.toString()) }
-    var retention by rememberSaveable { mutableIntStateOf(settings.retentionDays) }
+    val retention = 0
     val version = rememberSaveable { settings.version }
     val valid =
         name.trim().length in 2..100 &&
@@ -187,24 +187,9 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
             )
         }
         Panel(Modifier.fillMaxWidth()) {
-            Text("Completed PDF retention", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "Choose how long to keep PDFs after pickup is marked completed. Order history stays saved. Automatic removal is off by default.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                listOf(0, 7, 14, 30).forEach { days ->
-                    FilterChip(
-                        retention == days,
-                        { retention = days },
-                        label = { Text(if (days == 0) "Off" else "${days}d") },
-                        enabled = !busy,
-                    )
-                }
-            }
+Text("PDF retention", style = MaterialTheme.typography.titleLarge)
+            Text("Automatic PDF removal is off in this setup. Your PDFs and order history stay saved.", style = MaterialTheme.typography.bodySmall)
+            Text("Automatic cleanup off", style = MaterialTheme.typography.labelLarge)
         }
         if (!valid)
             Text(

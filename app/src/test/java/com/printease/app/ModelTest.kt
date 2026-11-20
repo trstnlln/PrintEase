@@ -104,4 +104,11 @@ class ModelTest {
         assertEquals(0, ShopSettings().retentionDays)
         assertTrue(runCatching { ShopSettings(retentionDays = 1) }.isFailure)
     }
+@Test fun hostedDocumentMetadataRoundTripsAndRejectsAnUnboundPath() {
+        val hash = "a".repeat(64)
+        val order = PrintOrder("id","student","Alex","Report.pdf","hosted/student/$hash.pdf",PrintOptions(pages=3),documentStore="hosted",fileHash=hash)
+        assertEquals(order, PrintOrder.fromMap(order.id, order.toMap()))
+        assertTrue(runCatching { order.copy(storagePath="hosted/other/$hash.pdf") }.isFailure)
+        assertTrue(runCatching { order.copy(fileHash="bad") }.isFailure)
+    }
 }

@@ -232,7 +232,16 @@ data class PrintOrder(
     val updatedAt: Long = createdAt,
     val completedAt: Long? = null,
     val documentDeletedAt: Long? = null,
+    val documentStore: String = "firebase",
+    val fileHash: String? = null,
 ) {
+    init {
+        require(documentStore in listOf("firebase", "hosted"))
+        if (documentStore == "hosted") {
+            require(fileHash != null && Regex("[a-f0-9]{64}").matches(fileHash))
+            require(storagePath == "hosted/$ownerId/$fileHash.pdf")
+        }
+    }
     val total: Long
         get() = options.total(pricing)
 
@@ -248,6 +257,8 @@ data class PrintOrder(
             "updatedAt" to updatedAt,
             "completedAt" to completedAt,
             "documentDeletedAt" to documentDeletedAt,
+            "documentStore" to documentStore,
+            "fileHash" to fileHash,
             "createdAt" to createdAt,
             "status" to status.label,
             "queue" to queue,
@@ -290,6 +301,8 @@ data class PrintOrder(
                 (d["updatedAt"] as? Number)?.toLong() ?: (d["createdAt"] as Number).toLong(),
                 (d["completedAt"] as? Number)?.toLong(),
                 (d["documentDeletedAt"] as? Number)?.toLong(),
+                d["documentStore"] as? String ?: "firebase",
+                d["fileHash"] as? String,
             )
         }
     }

@@ -73,25 +73,27 @@ function rangeValid(r, i, count, pages) {
         || (old == 'Printing' && next == 'Ready for Pickup')
         || (old == 'Ready for Pickup' && next == 'Completed');
     }
+    function validOrder(d,orderId) {
+      return d.keys().hasAll(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
+        && d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash'])
+        && accepting() && validUpdated(d)
+        && d.get('completedAt',null) == null && d.get('documentDeletedAt',null) == null
+        && d.ownerId == request.auth.uid
+        && d.studentName is string && d.studentName.size() > 0 && d.studentName.size() <= 200
+        && d.fileName is string && d.fileName.size() > 0 && d.fileName.size() <= 255
+        && validDocument(d, orderId)
+        && validOptions(d.options) && validPrice(d)
+        && d.createdAt is int
+        && d.createdAt >= request.time.toMillis() - 300000
+        && d.createdAt <= request.time.toMillis() + 300000
+        && d.status == 'Pending'
+        && d.queue == null && d.queueDay == null
+        && d.note == '';
+    }
     match /orders/{orderId} {
       allow get: if signedIn() && (!exists(/databases/$(database)/documents/orders/$(orderId)) || admin() || resource.data.ownerId == request.auth.uid);
       allow list: if admin() || (signedIn() && resource.data.ownerId == request.auth.uid);
-      allow create: if signedIn() && !admin()
-        && request.resource.data.keys().hasAll(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
-        && request.resource.data.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash'])
-        && accepting() && validUpdated(request.resource.data)
-        && request.resource.data.get('completedAt',null) == null && request.resource.data.get('documentDeletedAt',null) == null
-        && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.studentName is string && request.resource.data.studentName.size() > 0 && request.resource.data.studentName.size() <= 200
-        && request.resource.data.fileName is string && request.resource.data.fileName.size() > 0 && request.resource.data.fileName.size() <= 255
-        && validDocument(request.resource.data, orderId)
-        && validOptions(request.resource.data.options) && validPrice(request.resource.data)
-        && request.resource.data.createdAt is int
-        && request.resource.data.createdAt >= request.time.toMillis() - 300000
-        && request.resource.data.createdAt <= request.time.toMillis() + 300000
-        && request.resource.data.status == 'Pending'
-        && request.resource.data.queue == null && request.resource.data.queueDay == null
-        && request.resource.data.note == '';
+      allow create: if signedIn() && !admin() && validOrder(request.resource.data,orderId);
       allow update: if signedIn() && resource.data.ownerId == request.auth.uid
         && resource.data.status == 'Pending' && request.resource.data.status == 'Cancelled'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','note','updatedAt'])

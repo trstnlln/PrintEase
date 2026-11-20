@@ -55,5 +55,16 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high --prefix functions
       - run: npm test --prefix web-app
       - run: npm run build --prefix web-app
+      - run: node scripts/verify-build.mjs
+        working-directory: web-app
       - run: npm test --prefix functions
       - run: npx firebase emulators:exec --only auth,firestore,storage --project demo-printease 'node --test firebase/rules.test.cjs && node --test web-app/tests/cloud.integration.mjs'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-hosted-build
+          include-hidden-files: true
+          path: |
+            web-app/dist/
+            web-app/.openai/hosting.json
