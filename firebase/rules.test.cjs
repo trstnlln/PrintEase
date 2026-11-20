@@ -150,3 +150,36 @@ test('only the console can grant administrator documents; students cannot promot
  await env.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'admins/console-admin'),{enabled:true}));
  await assertSucceeds(getDoc(doc(env.authenticatedContext('console-admin').firestore(),'orders/private')));
 });
+
+test('pickup estimates belong to administrators and cannot modify immutable order details',async()=>{
+ const id='eta-request',sdb=student().firestore(),adb=admin().firestore();
+ const saved={...order(id),pricing:settings().rates,estimatedCost:24};
+ await assertSucceeds(setDoc(doc(sdb,'orders/'+id),saved));
+ const time=Date.now()+30*60000;
+ await assertFails(updateDoc(doc(sdb,'orders/'+id),{expectedReadyAt:time,updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:time,updatedAt:Date.now()}));
+ await assertFails(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:time,estimatedCost:1,updatedAt:Date.now()}));
+ await assertFails(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:Date.now()+8*86400000,updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:null,updatedAt:Date.now()}));
+ await assertFails(setDoc(doc(sdb,'orders/student-eta'),{...saved,storagePath:'documents/student/student-eta.pdf',expectedReadyAt:time}));
+});
+test('shop contacts reject unsafe links and price confirmation is explicit',async()=>{
+ const db=admin().firestore(),target=doc(db,'shopSettings/current');
+ const current=(await getDoc(target)).data();
+ const next={...current,version:current.version+1,contactEmail:'nanoprint.alangilan@gmail.com',facebookUrl:'https://www.facebook.com/nano.example',ratesConfirmed:true};
+ await assertFails(setDoc(target,{...next,facebookUrl:'javascript:alert(1)'}));
+ await assertFails(setDoc(target,{...next,facebookUrl:'https://facebook.com.evil.example/page'}));
+ await assertSucceeds(setDoc(target,next));
+});
+test('browser push subscriptions are private and other students cannot register devices for an owner',async()=>{
+ const id='c'.repeat(64),value={endpoint:'https://fcm.googleapis.com/fcm/send/example',keys:{p256dh:'a'.repeat(87),auth:'b'.repeat(22)},updatedAt:Date.now()};
+ const path='users/student/pushSubscriptions/'+id;
+ await assertSucceeds(setDoc(doc(student().firestore(),path),value));
+ await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),path)));
+ await assertSucceeds(getDoc(doc(admin().firestore(),path)));
+ await assertFails(setDoc(doc(env.authenticatedContext('other').firestore(),path),value));
+ await assertFails(setDoc(doc(student().firestore(),'users/student/pushSubscriptions/'+'d'.repeat(64)),{...value,keys:{p256dh:'bad',auth:'bad'}}));
+ const receipt='orders/private/pushDeliveries/'+id;
+ await assertFails(setDoc(doc(student().firestore(),receipt),{state:'sent',updatedAt:Date.now()}));
+ await assertSucceeds(setDoc(doc(admin().firestore(),receipt),{state:'sent',updatedAt:Date.now()}));
+});
