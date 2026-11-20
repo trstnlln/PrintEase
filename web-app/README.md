@@ -67,10 +67,22 @@ Physical iPhone Safari testing and the real Google account chooser remain device
 
 ## Product limits
 
-The default shop display name is **Nano Print Alangilan**, near BSU Alangilan. The exact address and pickup hours still need confirmation. Details, pickup hours, rates and accepting-orders status are editable by the administrator. Selected pages determine the printed-side charge; duplex reduces sheets, not charged sides. Each order keeps its submitted quote.
+The default shop display name is **Nano Print Alangilan**, near BSU Alangilan. The owner provided Neptune St., Golden Country Homes, Alangilan, Batangas City and hours 6:00 AM–10:00 PM; opening days and actual prices remain unconfirmed. Details, pickup hours, rates and accepting-orders status are editable by the administrator. Selected pages determine the printed-side charge; duplex reduces sheets, not charged sides. Each order keeps its submitted quote.
 
-Live actions require internet over Wi-Fi or cellular data. Bluetooth is not used. Payment and pickup happen at the physical shop. There is no online payment, direct printer integration or iPhone background push. Android background notifications require the separately deployed optional functions. Up to 500 live orders load; extended use needs pagination/archive management.
+Live actions require internet over Wi-Fi or cellular data. Bluetooth is not used. Payment and pickup happen at the physical shop. There is no online payment or direct printer integration. Opt-in web push supports compatible browsers, including iPhone Home Screen apps on iOS 16.4 or later. Android uses periodic WorkManager checks, which may be delayed by the OS; optional FCM functions are separate. Up to 500 live orders load; extended use needs pagination/archive management.
 
 Local draft files can be cleared by Safari storage pressure or website-data removal. Sign-out clears the current draft. Demo data remains separate from live accounts.
 
 Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.
+
+## Pickup experience and background alerts
+
+Administrators set a pickup estimate on a Pending, Accepted or Printing request. Students see the estimate separately from the queue number. The estimate is editable and never changes the saved quote. Staff must enter the student's six-character collection code before marking the request Completed. This is a handover check, not a replacement for administrator authorization.
+
+Students can use **Print this again** on a closed order with an available PDF. It downloads and validates a new draft, preserves the original, and requires a fresh review at current rates. It never automatically submits a repeat request.
+
+Web pickup alerts use standard encrypted Web Push through the existing Site Worker. Configure `PUSH_VAPID_PUBLIC_KEY` and secret `PUSH_VAPID_PRIVATE_KEY` in Sites runtime variables, then deploy a version to apply them. Never put the private key in source or a client bundle. Publish the matching Firestore rules for per-user `pushSubscriptions` and administrator `pushDeliveries`. The service verifies Firebase tokens and shop grants, permits only known push-provider hosts, and records accepted deliveries per order/device. A failed alert does not undo the Ready status; staff can retry **Send pickup alert**.
+
+On iPhone, install via Safari → Share → Add to Home Screen, open the installed app, then choose **Account → Enable pickup alerts**. Notification permission is requested only after this tap. Test delivery using the Account button. Sign-out/opt-out removes the local account marker; the service worker checks that marker before displaying a generic alert. No PDF name or collection code is included in push messages. Delivery can be delayed or unavailable; Orders remains the source of status updates. A crash between provider acceptance and receipt persistence can cause a retry to deliver again; the notification tag groups the same request.
+
+The production alert keys are configured on the existing Site. New pickup estimates, contact fields and subscriptions require the updated Firestore rules; those cannot be published by this workspace without the owner's Firebase access.

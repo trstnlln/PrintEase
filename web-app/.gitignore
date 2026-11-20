@@ -4,3 +4,6 @@ build-meta.json
 .env
 .env.*
 .openai/*.tar.gz
+
+# Rebuilt from source; packaged for Sites, not committed to GitHub.
+dist/server/

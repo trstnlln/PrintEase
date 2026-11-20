@@ -12,8 +12,8 @@ android {
         applicationId = "com.printease.printease"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.2.0"
+        versionCode = 5
+        versionName = "2.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "backend"
@@ -41,6 +41,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.9.0")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation(platform("com.google.firebase:firebase-bom:33.13.0"))

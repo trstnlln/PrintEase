@@ -10,6 +10,7 @@ import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.storage.StorageException
 import java.io.File
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -36,6 +37,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
             null
         }
     val shop = repository?.state ?: MutableStateFlow(ShopState())
+    val authError = MutableStateFlow<String?>(null)
     val busy = MutableStateFlow(false)
     val progress = MutableStateFlow(0f)
     val route = saved.getStateFlow("route", "home")
@@ -87,6 +89,8 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun signOut() = action {
+        authError.value = null
+        PickupAlerts.stop(getApplication())
         if (!BuildConfig.DEMO) runCatching { PickupAlerts.unregister() }
         PickupAlerts.clear(getApplication())
         repository?.signOut()
@@ -96,34 +100,39 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun signInWithGoogle(context: android.content.Context) =
-        action("Google sign-in timed out. Check your connection and try again.") {
+        action(
+            "Google sign-in timed out. Check your connection and try again.",
+            authentication = true,
+        ) {
             check(!BuildConfig.DEMO) { "Select the liveDebug build to sign in with Google." }
             val token = GoogleSignIn.requestIdToken(context)
             repository!!.signInWithGoogle(token)
         }
 
-    fun authenticate(email: String, password: String, name: String?) = action {
-        require(android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
-            "Enter a valid email address."
+    fun authenticate(email: String, password: String, name: String?) =
+        action(authentication = true) {
+            require(android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
+                "Enter a valid email address."
+            }
+            require(password.length >= 8 || name == null) {
+                "Choose a password with at least 8 characters."
+            }
+            require(password.isNotBlank()) { "Enter your password." }
+            if (name != null)
+                require(name.trim().length in 2..200) { "Enter your full name (2–200 characters)." }
+            repository!!.signIn(email.trim(), password, name)
         }
-        require(password.length >= 8 || name == null) {
-            "Choose a password with at least 8 characters."
-        }
-        require(password.isNotBlank()) { "Enter your password." }
-        if (name != null)
-            require(name.trim().length in 2..200) { "Enter your full name (2–200 characters)." }
-        repository!!.signIn(email.trim(), password, name)
-    }
 
-    fun resetPassword(email: String) = action {
-        require(android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
-            "Enter your email above, then tap Reset password."
+    fun resetPassword(email: String) =
+        action(authentication = true) {
+            require(android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
+                "Enter your email above, then tap Reset password."
+            }
+            repository!!.resetPassword(email)
+            events.send(
+                "If an account exists for this address, a password reset email will arrive shortly."
+            )
         }
-        repository!!.resetPassword(email)
-        events.send(
-            "If an account exists for this address, a password reset email will arrive shortly."
-        )
-    }
 
     fun pick(uri: Uri) = action {
         val imported = documents.import(uri)
@@ -171,6 +180,50 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["pageRanges"] = ""
     }
 
+    fun clearAuthError() {
+        authError.value = null
+    }
+
+    fun setPickupTime(id: String, time: Long?) = action {
+        repository!!.setPickupTime(id, time)
+        events.send(
+            if (time == null) "Pickup estimate cleared."
+            else "Pickup estimate saved. The student can see it."
+        )
+    }
+
+    fun reorder(order: PrintOrder) = action {
+        val session = requireNotNull(shop.value.session)
+        check(!session.admin && session.uid == order.ownerId && !order.status.active) {
+            "Only your finished or closed requests can be repeated."
+        }
+        check(order.documentDeletedAt == null) {
+            "This PDF is no longer available. Choose it again from your device."
+        }
+        val source = repository!!.document(order)
+        val imported = documents.copyDraft(source, order.fileName)
+        if (shop.value.session?.uid != session.uid) {
+            File(imported.path).delete()
+            error("Your account changed. Sign in again.")
+        }
+        val restoredOptions =
+            try {
+                order.options.copy(pages = imported.pages)
+            } catch (error: Exception) {
+                File(imported.path).delete()
+                throw error
+            }
+        val previous = pdf.value
+        pdf.value = imported
+        saved["pdfPath"] = imported.path
+        saved["pdfName"] = imported.name
+        draftId = UUID.randomUUID().toString()
+        setOptions(restoredOptions)
+        previous?.let { if (it.path != imported.path) File(it.path).delete() }
+        saved["route"] = "request"
+        events.send("Repeat draft ready. Review current prices before sending.")
+    }
+
     fun saveSettings(settings: ShopSettings) = action {
         repository!!.saveSettings(settings)
         events.send("Shop details saved. Existing orders keep their quoted price.")
@@ -178,7 +231,32 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun transition(id: String, status: OrderStatus, note: String = "") = action {
-        repository!!.transition(id, status, note)
+        if (status == OrderStatus.Completed) {
+            require(
+                note.replace(Regex("[^A-Za-z0-9]"), "").uppercase(Locale.ROOT) == collectionCode(id)
+            ) {
+                "Ask the student for the matching collection code."
+            }
+        }
+        repository!!.transition(id, status, if (status == OrderStatus.Completed) "" else note)
+        if (!BuildConfig.DEMO && status == OrderStatus.Ready) {
+            try {
+                val failed = HostedDocuments.notifyReady(id)
+                if (failed) {
+                    events.send(
+                        "Marked ready. Some background alerts could not send; the student can still check Orders."
+                    )
+                    return@action
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                events.send(
+                    "Marked ready. Background alerts could not send; the student can still check Orders."
+                )
+                return@action
+            }
+        }
         events.send(
             when (status) {
                 OrderStatus.Accepted -> "Accepted. A unique queue number has been assigned."
@@ -193,22 +271,26 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     private fun action(
         timeoutMessage: String =
             "The connection timed out. Check Orders before retrying; this draft will keep the same request ID.",
+        authentication: Boolean = false,
         block: suspend () -> Unit,
     ) {
         if (busy.value) return
         busy.value = true
+        if (authentication) authError.value = null
         progress.value = 0f
         viewModelScope.launch {
             try {
                 block()
             } catch (e: TimeoutCancellationException) {
-                events.send(timeoutMessage)
+                if (authentication) authError.value = timeoutMessage
+                else events.send(timeoutMessage)
             } catch (_: androidx.credentials.exceptions.GetCredentialCancellationException) {
                 // Closing the account chooser is not a failed login.
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                events.send(friendlyError(e))
+                if (authentication) authError.value = friendlyError(e)
+                else events.send(friendlyError(e))
             } finally {
                 busy.value = false
                 progress.value = 0f

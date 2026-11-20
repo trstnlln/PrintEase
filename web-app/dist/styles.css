@@ -145,3 +145,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline-color: var(--green); }
 @media (prefers-color-scheme: dark) { .availability.paused { color: #ffcb94; } }
+.pickup-overview { display: grid; gap: 14px; }
+.pickup-overview .queue-large { margin: 0; }
+.pickup-estimate { display: flex; align-items: flex-start; gap: 12px; padding: 16px; background: var(--soft); border-radius: 16px; }
+.estimate-symbol { display: grid; place-items: center; padding: 10px; border-radius: 12px; background: var(--paper); color: var(--green); }
+.pickup-estimate b { display: block; line-height: 1.5; }
+.collection-pass { display: grid; gap: 16px; padding: 20px; border: 1px dashed var(--green); background: var(--bg); border-radius: 16px; }
+.collection-code { font: 750 clamp(1.6rem,6vw,2.1rem)/1.2 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing: .2em; color: var(--ink); }
+.shop-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.shop-actions .button { white-space: nowrap; }
+.timeline-item > .badge { margin-left: auto; }
+#collection-code { font-family: ui-monospace,monospace; letter-spacing: .15em; text-transform: uppercase; }
+@media(max-width:800px){ .shop-actions { grid-column: 1 / -1; width: 100%; } .shop-actions > .button.outline { width: 100%; } }
+
+.review-sheet{display:grid;gap:1.1rem;margin:1.25rem 0}.review-file{display:flex;align-items:center;gap:.85rem;padding:1rem;background:var(--bg);border-radius:1rem}.review-file>div{min-width:0;overflow-wrap:anywhere}.review-file>.icon{flex-shrink:0;width:2rem;height:2rem;color:var(--green)}.review-options{margin:0;display:grid;gap:.75rem}.review-options>div{display:flex;justify-content:space-between;gap:1.25rem}.review-options dt{color:var(--muted)}.review-options dd{margin:0;text-align:right;font-weight:600;overflow-wrap:anywhere;max-width:65%}.review-total{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:1rem 0;border-top:1px solid var(--line)}.review-total strong{font-size:1.75rem;color:var(--green)}

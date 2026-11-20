@@ -130,4 +130,24 @@ class RepositoryTest {
                 .isFailure
         )
     }
+
+    @Test
+    fun pickupEstimateIsAdminOnlyAndDoesNotChangePrice() = runBlocking {
+        val repo = DemoRepository(context, documents)
+        repo.demoSignIn(false)
+        val order = repo.state.value.orders.first { it.status == OrderStatus.Printing }
+        assertTrue(
+            runCatching { repo.setPickupTime(order.id, System.currentTimeMillis() + 60000) }
+                .isFailure
+        )
+        repo.demoSignIn(true)
+        val readyAt = System.currentTimeMillis() + 30 * 60000
+        repo.setPickupTime(order.id, readyAt)
+        val restored =
+            DemoRepository(context, documents).state.value.orders.first { it.id == order.id }
+        assertEquals(readyAt, restored.expectedReadyAt)
+        assertEquals(order.total, restored.total)
+        repo.transition(order.id, OrderStatus.Ready)
+        assertTrue(runCatching { repo.setPickupTime(order.id, readyAt) }.isFailure)
+    }
 }

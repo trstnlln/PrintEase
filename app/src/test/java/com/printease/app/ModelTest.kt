@@ -143,4 +143,51 @@ class ModelTest {
             )
             .forEach { assertNull(googleProfilePhoto(it)) }
     }
+
+    @Test
+    fun collectionCodesAndPickupTimesAreBounded() {
+        assertEquals("LE1042", collectionCode("sample-1042"))
+        assertEquals("000ABC", collectionCode("a-b-c"))
+        val now = 1000000000L
+        assertTrue(validPickupTime(null, now))
+        assertTrue(validPickupTime(now + 30 * 60000, now))
+        assertFalse(validPickupTime(now - 60001, now))
+        assertFalse(validPickupTime(now + 7L * 86400000 + 1, now))
+        val original =
+            PrintOrder(
+                "id",
+                "a",
+                "Alex",
+                "Report.pdf",
+                "documents/a/id.pdf",
+                PrintOptions(),
+                expectedReadyAt = now,
+            )
+        assertEquals(original, PrintOrder.fromMap("id", original.toMap()))
+    }
+
+    @Test
+    fun shopContactsRejectUnsafeLinksAndMigrateOldNanoDetails() {
+        assertTrue(validFacebookUrl("https://www.facebook.com/NanoPrint"))
+        listOf(
+                "javascript:alert(1)",
+                "https://facebook.com.evil.example/page",
+                "https://user@facebook.com/page",
+                "https://facebook.com:8080/page",
+            )
+            .forEach { assertFalse(validFacebookUrl(it)) }
+        val legacy =
+            ShopSettings().toMap().toMutableMap().apply {
+                this["name"] = "Nano Alangilan"
+                this["address"] = "Near BSU Alangilan campus"
+                this["pickupHours"] = "Confirm pickup hours with the shop"
+                remove("contactEmail")
+                remove("facebookUrl")
+                remove("ratesConfirmed")
+            }
+        val shop = ShopSettings.fromMap(legacy)
+        assertEquals("Nano Print Alangilan", shop.name)
+        assertEquals("6:00 AM–10:00 PM", shop.pickupHours)
+        assertFalse(shop.ratesConfirmed)
+    }
 }

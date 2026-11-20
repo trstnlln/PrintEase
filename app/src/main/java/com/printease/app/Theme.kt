@@ -69,7 +69,10 @@ fun PrintEaseTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable (
                 titleLarge =
                     TextStyle(fontWeight = FontWeight.Bold, fontSize = 21.sp, lineHeight = 27.sp),
                 bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
-                bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
+                bodyMedium = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+                bodySmall = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
+                labelMedium =
+                    TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 20.sp),
                 labelLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
             ),
         content = content,

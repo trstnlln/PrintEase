@@ -72,6 +72,10 @@ data class ShopSettings(
     val rates: PrintRates = PrintRates(),
     val retentionDays: Int = 0,
     val version: Long = 0,
+    val contactEmail: String =
+        if (name == "Nano Print Alangilan") "nanoprint.alangilan@gmail.com" else "",
+    val facebookUrl: String = "",
+    val ratesConfirmed: Boolean = false,
 ) {
     init {
         require(
@@ -80,6 +84,12 @@ data class ShopSettings(
                 pickupHours.trim().length in 2..200
         )
         require(retentionDays in listOf(0, 7, 14, 30) && version >= 0)
+        require(
+            contactEmail.isBlank() ||
+                (contactEmail.length <= 254 &&
+                    Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(contactEmail.trim()))
+        )
+        require(validFacebookUrl(facebookUrl))
     }
 
     fun toMap(): Map<String, Any> =
@@ -91,6 +101,9 @@ data class ShopSettings(
             "rates" to rates.toMap(),
             "retentionDays" to retentionDays,
             "version" to version,
+            "contactEmail" to contactEmail.trim(),
+            "facebookUrl" to facebookUrl.trim(),
+            "ratesConfirmed" to ratesConfirmed,
         )
 
     companion object {
@@ -101,15 +114,57 @@ data class ShopSettings(
                     (m["name"] as String).let {
                         if (it == "Nano Alangilan") "Nano Print Alangilan" else it
                     },
-                    m["address"] as String,
-                    m["pickupHours"] as String,
+                    if (
+                        m["name"] in listOf("Nano Alangilan", "Nano Print Alangilan") &&
+                            m["address"] == "Near BSU Alangilan campus"
+                    )
+                        "Neptune St., Golden Country Homes, Alangilan, Batangas City"
+                    else m["address"] as String,
+                    if (
+                        m["name"] in listOf("Nano Alangilan", "Nano Print Alangilan") &&
+                            m["pickupHours"] == "Confirm pickup hours with the shop"
+                    )
+                        "6:00 AM–10:00 PM"
+                    else m["pickupHours"] as String,
                     m["acceptingOrders"] as Boolean,
                     PrintRates.fromMap(m["rates"] as? Map<*, *>),
                     (m["retentionDays"] as Number).toInt(),
                     (m["version"] as Number).toLong(),
+                    m["contactEmail"] as? String
+                        ?: if (m["name"] in listOf("Nano Alangilan", "Nano Print Alangilan"))
+                            "nanoprint.alangilan@gmail.com"
+                        else "",
+                    m["facebookUrl"] as? String ?: "",
+                    m["ratesConfirmed"] as? Boolean ?: false,
                 )
     }
 }
+
+fun validFacebookUrl(value: String): Boolean {
+    if (value.isBlank()) return true
+    if (value.length > 2048) return false
+    return runCatching {
+            val url = java.net.URI(value.trim())
+            url.scheme == "https" &&
+                url.userInfo == null &&
+                url.port in listOf(-1, 443) &&
+                url.host?.lowercase(Locale.ROOT) in
+                    listOf(
+                        "facebook.com",
+                        "www.facebook.com",
+                        "m.facebook.com",
+                        "fb.com",
+                        "www.fb.com",
+                    )
+        }
+        .getOrDefault(false)
+}
+
+fun collectionCode(orderId: String): String =
+    orderId.replace(Regex("[^A-Za-z0-9]"), "").takeLast(6).uppercase(Locale.ROOT).padStart(6, '0')
+
+fun validPickupTime(value: Long?, now: Long = System.currentTimeMillis()): Boolean =
+    value == null || value in (now - 60000)..(now + 7L * 86400000)
 
 data class PageRange(val start: Int, val end: Int) {
     val count
@@ -245,6 +300,7 @@ data class PrintOrder(
     val documentDeletedAt: Long? = null,
     val documentStore: String = "firebase",
     val fileHash: String? = null,
+    val expectedReadyAt: Long? = null,
 ) {
     init {
         require(documentStore in listOf("firebase", "hosted"))
@@ -276,7 +332,7 @@ data class PrintOrder(
             "queue" to queue,
             "queueDay" to queueDay,
             "note" to note,
-        )
+        ) + (expectedReadyAt?.let { mapOf("expectedReadyAt" to it) } ?: emptyMap())
 
     companion object {
         fun fromMap(id: String, d: Map<String, Any?>): PrintOrder {
@@ -315,6 +371,7 @@ data class PrintOrder(
                 (d["documentDeletedAt"] as? Number)?.toLong(),
                 d["documentStore"] as? String ?: "firebase",
                 d["fileHash"] as? String,
+                (d["expectedReadyAt"] as? Number)?.toLong(),
             )
         }
     }

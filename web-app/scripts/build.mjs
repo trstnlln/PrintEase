@@ -16,7 +16,8 @@ async function walk(directory){
  }return files;
 }
 let files=(await walk('dist')).filter(file=>!file.endsWith('/sw.js'));
-const hash=createHash('sha256');for(const file of files.sort())hash.update(await readFile(file));
+const pushWorker=await readFile('src/push-worker.js','utf8');
+const hash=createHash('sha256');hash.update(pushWorker);for(const file of files.sort())hash.update(await readFile(file));
 const version=hash.digest('hex').slice(0,16),urls=files.map(file=>'/'+file.slice(5));
 await writeFile('dist/sw.js',`// Only public application assets are cached. Private API requests are never cached.
 const CACHE='printease-${version}',ASSETS=${JSON.stringify(urls)};
@@ -28,6 +29,7 @@ self.addEventListener('fetch',event=>{
  event.respondWith(fetch(event.request).then(response=>{if(response.ok){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(path,copy)));}return response;}).catch(()=>caches.match(path)));
 });
 `);
+await writeFile('dist/sw.js',(await readFile('dist/sw.js','utf8'))+'\n'+pushWorker);
 files=await walk('dist');
 const types={html:'text/html; charset=utf-8',css:'text/css; charset=utf-8',js:'text/javascript; charset=utf-8',mjs:'text/javascript; charset=utf-8',json:'application/json',webmanifest:'application/manifest+json',png:'image/png',txt:'text/plain; charset=utf-8'};
 const assets={};for(const file of files){const extension=file.split('.').at(-1);assets['/'+file.slice(5)]={type:types[extension]||'application/octet-stream',data:(await readFile(file)).toString('base64')};}

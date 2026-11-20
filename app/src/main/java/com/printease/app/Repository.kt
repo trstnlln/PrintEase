@@ -38,6 +38,10 @@ interface ShopRepository {
 
     suspend fun transition(id: String, next: OrderStatus, note: String = "")
 
+    suspend fun setPickupTime(id: String, time: Long?) {
+        error("Pickup estimates are unavailable.")
+    }
+
     suspend fun saveSettings(settings: ShopSettings)
 
     suspend fun document(order: PrintOrder): File
@@ -204,6 +208,22 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                     if (next == OrderStatus.Completed) System.currentTimeMillis()
                     else old.completedAt,
             )
+        save()
+        publish()
+    }
+
+    override suspend fun setPickupTime(id: String, time: Long?) {
+        check(state.value.session?.admin == true) { "Only the shop can set a pickup estimate." }
+        require(validPickupTime(time)) { "Choose a pickup time within the next seven days." }
+        val index = all.indexOfFirst { it.id == id }
+        check(
+            index >= 0 &&
+                all[index].status in
+                    listOf(OrderStatus.Pending, OrderStatus.Accepted, OrderStatus.Printing)
+        ) {
+            "This request no longer needs a pickup estimate."
+        }
+        all[index] = all[index].copy(expectedReadyAt = time, updatedAt = System.currentTimeMillis())
         save()
         publish()
     }
@@ -550,6 +570,32 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                     if (next == OrderStatus.Completed)
                         updates["completedAt"] = System.currentTimeMillis()
                     tx.update(ref, updates)
+                }
+                .await()
+        }
+    }
+
+    override suspend fun setPickupTime(id: String, time: Long?) {
+        check(state.value.session?.admin == true) { "Only the shop can set a pickup estimate." }
+        require(validPickupTime(time)) { "Choose a pickup time within the next seven days." }
+        withTimeout(25000) {
+            db.runTransaction { tx ->
+                    val target = db.collection("orders").document(id)
+                    val order =
+                        PrintOrder.fromMap(
+                            id,
+                            tx.get(target).data ?: error("Order no longer exists."),
+                        )
+                    check(
+                        order.status in
+                            listOf(OrderStatus.Pending, OrderStatus.Accepted, OrderStatus.Printing)
+                    ) {
+                        "This request no longer needs a pickup estimate."
+                    }
+                    tx.update(
+                        target,
+                        mapOf("expectedReadyAt" to time, "updatedAt" to System.currentTimeMillis()),
+                    )
                 }
                 .await()
         }

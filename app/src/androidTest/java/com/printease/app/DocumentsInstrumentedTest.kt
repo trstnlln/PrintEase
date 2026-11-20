@@ -36,4 +36,17 @@ class DocumentsInstrumentedTest {
         assertArrayEquals(pdf.readBytes(), java.io.File(imported.path).readBytes())
         java.io.File(imported.path).delete()
     }
+
+    @Test
+    fun repeatDraftCopiesPdfWithoutChangingTheOriginal() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val docs = Documents(context)
+        val source = docs.sample("native-repeat-source", 2)
+        val bytes = source.readBytes()
+        val copy = docs.copyDraft(source, "Repeat.pdf")
+        assertNotEquals(source.absolutePath, copy.path)
+        assertEquals(2, copy.pages)
+        java.io.File(copy.path).delete()
+        assertArrayEquals(bytes, source.readBytes())
+    }
 }

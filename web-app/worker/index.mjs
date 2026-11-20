@@ -1,3 +1,4 @@
+import {createPushApi} from './push.mjs';
 import {firebaseConfig} from '../src/config.mjs';
 const LIMIT=5*1024*1024, SITE='https://printease-campus.consideratefennel8.chatgpt.site';
 class HttpError extends Error{constructor(status,code,message){super(message);this.status=status;this.code=code;}}
@@ -13,7 +14,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
  }
  async function authorize(request){
   const header=request.headers.get('Authorization')||'';
-  if(!/^Bearer [^\s]+$/.test(header)||header.length>8192)fail(401,'auth/sign-in-required','Sign in before accessing a PDF.');
+  if(!/^Bearer [^\s]+$/.test(header)||header.length>8192)fail(401,'auth/sign-in-required','Sign in to continue.');
   const token=header.slice(7),payload=decodeClaims(token);
   if(payload.aud!==projectId||payload.iss!==`https://securetoken.google.com/${projectId}`||typeof payload.sub!=='string'||!payload.sub||payload.sub.length>128||/[\/\\]/.test(payload.sub)||!Number.isFinite(payload.exp)||payload.exp*1000<=now())fail(401,'auth/invalid-session','Your session expired. Sign in again.');
   // Decoding is not authorization: Firebase verifies the original token, including its signature and account.
@@ -33,6 +34,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   if(user.admin)return true;
   const {response,data}=await firestore(user,'admins/'+encodeURIComponent(user.uid));return response.ok&&value(data,'enabled')?.booleanValue===true;
  }
+ const pushApi=createPushApi({authorize,administrator,firestore,json,fail,origin,now,fetchImpl});
  async function boundedPdf(request){
   if(request.headers.get('Content-Length')&&Number(request.headers.get('Content-Length'))>LIMIT)fail(413,'document/too-large','Choose a PDF no larger than 5 MB.');
   if((request.headers.get('Content-Type')||'').split(';')[0]!=='application/pdf')fail(415,'document/not-pdf','Choose a PDF document.');
@@ -49,6 +51,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   return new Response(object.body,{headers:{'Content-Type':'application/pdf','Content-Disposition':'inline; filename="PrintEase-document.pdf"','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
  }
  async function api(request,env,path){
+  if(path.startsWith('/api/push/'))return pushApi(request,env,path);
   if(path==='/api/status'&&request.method==='GET')return json({ready:!!env.BUCKET,documentStore:'hosted',maxBytes:LIMIT});
   if(!env.BUCKET)fail(503,'document/storage-not-ready','PDF storage is not ready yet. Keep your draft and try again later.');
   const user=await authorize(request);
@@ -81,7 +84,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   if(path.startsWith('/api/')){
    const incoming=request.headers.get('Origin');
    if(incoming&&incoming!==origin)return json({error:{code:'document/origin-denied',message:'This website cannot access PrintEase documents.'}},403);
-   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, PUT, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Vary':'Origin'}});
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, PUT, POST, DELETE, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Vary':'Origin'}});
    let response;try{response=await api(request,env,path);}catch(error){response=json({error:{code:error instanceof HttpError?error.code:'document/service-unavailable',message:error instanceof HttpError?error.message:'The document service could not finish. Keep your draft and try again.'}},error instanceof HttpError?error.status:503);}
    response.headers.set('Access-Control-Allow-Origin',origin);response.headers.set('Vary','Origin');return response;
   }

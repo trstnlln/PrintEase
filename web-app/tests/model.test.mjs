@@ -28,3 +28,12 @@ test('page range limit is checked before submission',()=>{
  assert.throws(()=>parsePageRanges('1,3,5,7,9,11',20),/up to 5/);
  assert.throws(()=>serializeOptions({...defaults(),pages:20,pageRanges:Array.from({length:6},(_,i)=>({start:i*2+1,end:i*2+1}))}),/up to 5/);
 });
+
+test('shop contacts reject deceptive links and sample rates remain unconfirmed by default',async()=>{
+ const {defaultShop,validateShop,validFacebookUrl,collectionCode,validPickupTime}=await import('../src/model.mjs');
+ assert.equal(defaultShop().ratesConfirmed,false);assert.equal(collectionCode('sample-1042'),'LE1042');
+ for(const url of ['http://facebook.com/page','https://user@facebook.com/page','https://facebook.com.evil.example/page','https://facebook.com:8080/page'])assert.equal(validFacebookUrl(url),false);
+ assert.equal(validFacebookUrl('https://www.facebook.com/NanoPrint'),true);
+ const {contactEmail,facebookUrl,ratesConfirmed,...legacy}=defaultShop();const migrated=validateShop({...legacy,name:'Nano Alangilan',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop'});assert.equal(migrated.pickupHours,'6:00 AM–10:00 PM');assert.equal(migrated.ratesConfirmed,false);
+ assert.equal(validPickupTime(Date.now()+8*86400000),false);
+});

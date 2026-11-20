@@ -61,7 +61,7 @@ The orders list needs this collection-scope composite index on `orders`:
 
 Deploying `firestore:indexes` creates the index from the repository. If using the console, add it under Indexes → Composite and wait until it finishes building.
 
-Rules enforce student ownership, quote validation, document path/hash binding, immutable submitted details, allowed status transitions and atomic queue numbers. Clients cannot grant themselves an administrator role.
+Rules enforce student ownership, quote validation, document path/hash binding, immutable submitted details, allowed status transitions and atomic queue numbers. Clients cannot grant themselves an administrator role. The current rules also enable administrator pickup estimates and contact settings, private per-user web push subscriptions and administrator delivery receipts. Republish them when updating to the pickup experience version.
 
 ## 5. Create the shop administrator
 

@@ -48,6 +48,7 @@ fun PrintEase(model: PrintViewModel) {
     val authContext = LocalContext.current
     val state by model.shop.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
+    val authError by model.authError.collectAsStateWithLifecycle()
     val progress by model.progress.collectAsStateWithLifecycle()
     val route by model.route.collectAsStateWithLifecycle()
     val selected by model.selectedId.collectAsStateWithLifecycle()
@@ -165,7 +166,7 @@ fun PrintEase(model: PrintViewModel) {
                     AuthContent(
                         BuildConfig.DEMO,
                         busy,
-                        state.syncError,
+                        authError ?: state.syncError,
                         model::demoLogin,
                         model::authenticate,
                         model::resetPassword,
@@ -199,6 +200,9 @@ fun PrintEase(model: PrintViewModel) {
                             model::transition,
                             { preview = order },
                             settings = state.settings,
+                            onEstimate = model::setPickupTime,
+                            onReorder = model::reorder,
+                            hasDraft = pdf != null,
                         )
                     else
                         EmptyPanel(
@@ -1038,7 +1042,10 @@ fun RequestContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     Text(
-                        "Current shop rates. Duplex saves sheets; the per-side rate stays the same. The shop reviews your PDF before accepting.",
+                        if (settings.ratesConfirmed)
+                            "Shop-confirmed rates. Duplex saves sheets; the per-side rate stays the same."
+                        else
+                            "Sample prices. Confirm the actual printing price with the shop before pickup.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1099,7 +1106,7 @@ fun RequestContent(
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        "The shop will review your request and assign a queue number. Pay when you collect."
+                        "Pickup at ${settings.name}. The shop will review your request and assign a queue number. Pay when you collect."
                     )
                 }
             },
@@ -1169,9 +1176,15 @@ fun OrderDetail(
     onTransition: (String, OrderStatus, String) -> Unit,
     onPreview: () -> Unit,
     settings: ShopSettings = ShopSettings(),
+    onEstimate: (String, Long?) -> Unit = { _, _ -> },
+    onReorder: (PrintOrder) -> Unit = {},
+    hasDraft: Boolean = false,
 ) {
     var action by remember { mutableStateOf<OrderStatus?>(null) }
     var reason by rememberSaveable { mutableStateOf("") }
+    var code by rememberSaveable(order.id) { mutableStateOf("") }
+    var estimateDialog by rememberSaveable(order.id) { mutableStateOf(false) }
+    var repeatDialog by rememberSaveable(order.id) { mutableStateOf(false) }
     Column(
         Modifier.widthIn(max = 700.dp)
             .fillMaxHeight()
@@ -1205,6 +1218,7 @@ fun OrderDetail(
             if (order.note.isNotBlank())
                 Text("Shop note: ${order.note}", color = MaterialTheme.colorScheme.error)
         }
+        PickupSummary(order, admin, busy || cached) { estimateDialog = true }
         if (order.status !in listOf(OrderStatus.Rejected, OrderStatus.Cancelled))
             Panel(Modifier.fillMaxWidth()) {
                 Text("From upload to pickup", style = MaterialTheme.typography.titleLarge)
@@ -1252,7 +1266,7 @@ fun OrderDetail(
             DetailLine("Sides", if (order.options.duplex) "Double-sided" else "Single-sided")
             DetailLine("Sheets", "${order.options.sheets}")
             HorizontalDivider()
-            DetailLine("Quoted total", pesos(order.total))
+            DetailLine("Estimated total", pesos(order.total))
             DetailLine("Pages selected", order.options.pageLabel)
             DetailLine("Updated", formatDate(order.updatedAt))
             if (order.documentDeletedAt != null)
@@ -1269,6 +1283,14 @@ fun OrderDetail(
                 Spacer(Modifier.width(8.dp))
                 Text("View PDF")
             }
+            if (!admin && !order.status.active && order.documentDeletedAt == null) {
+                PrimaryButton(
+                    "Print this again",
+                    { if (hasDraft) repeatDialog = true else onReorder(order) },
+                    Modifier.fillMaxWidth(),
+                    !busy && !cached,
+                )
+            }
             Text(
                 "Request ID: ${order.id}",
                 style = MaterialTheme.typography.bodySmall,
@@ -1282,7 +1304,45 @@ fun OrderDetail(
                 style = MaterialTheme.typography.bodySmall,
             )
         if (admin) {
-            if (action == OrderStatus.Rejected)
+            if (action == OrderStatus.Completed)
+                Panel(Modifier.fillMaxWidth()) {
+                    Text("Verify collection", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Ask the student for the six-character code shown on their request before handing over the prints."
+                    )
+                    OutlinedTextField(
+                        code,
+                        { code = it.take(12) },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Collection code") },
+                        singleLine = true,
+                        enabled = !busy,
+                    )
+                    PrimaryButton(
+                        "Confirm collection",
+                        {
+                            action = null
+                            onTransition(order.id, OrderStatus.Completed, code)
+                            code = ""
+                        },
+                        Modifier.fillMaxWidth(),
+                        !busy &&
+                            !cached &&
+                            code
+                                .replace(Regex("[^A-Za-z0-9]"), "")
+                                .uppercase(java.util.Locale.ROOT) == collectionCode(order.id),
+                    )
+                    TextButton(
+                        {
+                            action = null
+                            code = ""
+                        },
+                        enabled = !busy,
+                    ) {
+                        Text("Keep ready for pickup")
+                    }
+                }
+            else if (action == OrderStatus.Rejected)
                 Panel(Modifier.fillMaxWidth()) {
                     Text("Why reject this request?", style = MaterialTheme.typography.titleLarge)
                     Text("Tell the student what to change before submitting again.")
@@ -1329,6 +1389,7 @@ fun OrderDetail(
                             when (next) {
                                 OrderStatus.Accepted -> "Accept & assign queue number"
                                 OrderStatus.Rejected -> "Reject request"
+                                OrderStatus.Completed -> "Verify collection"
                                 else -> "Mark as ${next.label}"
                             },
                             { action = next },
@@ -1352,7 +1413,7 @@ fun OrderDetail(
         )
     }
     action
-        ?.takeIf { it != OrderStatus.Rejected }
+        ?.takeIf { it != OrderStatus.Rejected && it != OrderStatus.Completed }
         ?.let { next ->
             AlertDialog(
                 onDismissRequest = { action = null },
@@ -1379,11 +1440,22 @@ fun OrderDetail(
                             onTransition(
                                 order.id,
                                 next,
-                                if (next == OrderStatus.Rejected) reason.trim() else "",
+                                when (next) {
+                                    OrderStatus.Rejected -> reason.trim()
+                                    OrderStatus.Completed -> code
+                                    else -> ""
+                                },
                             )
                             reason = ""
                         },
-                        enabled = next != OrderStatus.Rejected || reason.isNotBlank(),
+                        enabled =
+                            !busy &&
+                                (next != OrderStatus.Rejected || reason.isNotBlank()) &&
+                                (next != OrderStatus.Completed ||
+                                    code
+                                        .replace(Regex("[^A-Za-z0-9]"), "")
+                                        .uppercase(java.util.Locale.ROOT) ==
+                                        collectionCode(order.id)),
                     ) {
                         Text("Confirm")
                     }
@@ -1391,6 +1463,34 @@ fun OrderDetail(
                 dismissButton = { TextButton({ action = null }) { Text("Go back") } },
             )
         }
+    if (estimateDialog)
+        PickupTimeDialog(
+            order,
+            { time ->
+                estimateDialog = false
+                onEstimate(order.id, time)
+            },
+            { estimateDialog = false },
+        )
+    if (repeatDialog)
+        AlertDialog(
+            onDismissRequest = { repeatDialog = false },
+            title = { Text("Replace the unfinished draft?") },
+            text = {
+                Text(
+                    "The repeat draft uses this previous PDF and print options. You will review current prices before sending."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    repeatDialog = false
+                    onReorder(order)
+                }) {
+                    Text("Prepare repeat order")
+                }
+            },
+            dismissButton = { TextButton({ repeatDialog = false }) { Text("Keep draft") } },
+        )
 }
 
 @Composable
@@ -1431,7 +1531,15 @@ fun AccountContent(
         }
         ShopCard(settings, Modifier.fillMaxWidth(), if (session.admin) onSettings else null)
         Panel(Modifier.fillMaxWidth()) {
-            Text("Current print rates", style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (settings.ratesConfirmed) "Shop-confirmed rates" else "Print estimates",
+                style = MaterialTheme.typography.titleLarge,
+            )
+            if (!settings.ratesConfirmed)
+                Text(
+                    "Sample estimates. Confirm the actual printing price with the shop.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             DetailLine("A4 / Letter · B&W", "${pesos(settings.rates.bw)} / side")
             DetailLine("A4 / Letter · Color", "${pesos(settings.rates.color)} / side")
             DetailLine("Legal paper", "+${pesos(settings.rates.legalExtra)} / side")

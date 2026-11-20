@@ -70,12 +70,7 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                         "https://maps.app.goo.gl/gBCZetYJyz46RoeQ9"
                     else "https://www.google.com/maps/search/?api=1&query=${Uri.encode(query)}"
                 runCatching {
-                    context.startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse(mapsUrl),
-                        )
-                    )
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(mapsUrl)))
                 }
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -87,6 +82,55 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                 else "View location"
             )
         }
+        if (settings.contactEmail.isNotBlank() || settings.facebookUrl.isNotBlank()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (settings.contactEmail.isNotBlank())
+                    OutlinedButton(
+                        {
+                            runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_SENDTO,
+                                            Uri.fromParts("mailto", settings.contactEmail, null),
+                                        )
+                                    )
+                                }
+                                .onFailure {
+                                    android.widget.Toast.makeText(
+                                            context,
+                                            "No email app found. Email ${settings.contactEmail}",
+                                            android.widget.Toast.LENGTH_LONG,
+                                        )
+                                        .show()
+                                }
+                        },
+                        Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) {
+                        Text("Email shop")
+                    }
+                if (settings.facebookUrl.isNotBlank())
+                    OutlinedButton(
+                        {
+                            runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(settings.facebookUrl))
+                                    )
+                                }
+                                .onFailure {
+                                    android.widget.Toast.makeText(
+                                            context,
+                                            "No browser app is available.",
+                                            android.widget.Toast.LENGTH_LONG,
+                                        )
+                                        .show()
+                                }
+                        },
+                        Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) {
+                        Text("Facebook")
+                    }
+            }
+        }
     }
 }
 
@@ -96,6 +140,9 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
     var name by rememberSaveable { mutableStateOf(settings.name) }
     var address by rememberSaveable { mutableStateOf(settings.address) }
     var hours by rememberSaveable { mutableStateOf(settings.pickupHours) }
+    var email by rememberSaveable { mutableStateOf(settings.contactEmail) }
+    var facebook by rememberSaveable { mutableStateOf(settings.facebookUrl) }
+    var ratesConfirmed by rememberSaveable { mutableStateOf(settings.ratesConfirmed) }
     var accepting by rememberSaveable { mutableStateOf(settings.acceptingOrders) }
     var bw by rememberSaveable { mutableStateOf(settings.rates.bw.toString()) }
     var color by rememberSaveable { mutableStateOf(settings.rates.color.toString()) }
@@ -108,7 +155,11 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
             hours.trim().length in 2..200 &&
             bw.toLongOrNull() in 1L..1000L &&
             color.toLongOrNull() in 1L..1000L &&
-            legal.toLongOrNull() in 0L..1000L
+            legal.toLongOrNull() in 0L..1000L &&
+            (email.isBlank() ||
+                (email.length <= 254 &&
+                    android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches())) &&
+            validFacebookUrl(facebook.trim())
     Column(
         Modifier.widthIn(max = 700.dp)
             .fillMaxSize()
@@ -151,6 +202,25 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
                 minLines = 2,
                 maxLines = 3,
             )
+            OutlinedTextField(
+                email,
+                { email = it.take(254) },
+                Modifier.fillMaxWidth(),
+                label = { Text("Email contact") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                enabled = !busy,
+                singleLine = true,
+            )
+            OutlinedTextField(
+                facebook,
+                { facebook = it.take(2048) },
+                Modifier.fillMaxWidth(),
+                label = { Text("Facebook page") },
+                placeholder = { Text("https://www.facebook.com/…") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                enabled = !busy,
+                singleLine = true,
+            )
             PreferenceSwitch(
                 "Accept new requests",
                 "Pause submissions while your shop is unavailable.",
@@ -162,6 +232,14 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
         }
         Panel(Modifier.fillMaxWidth()) {
             Text("Print rates", style = MaterialTheme.typography.titleLarge)
+            PreferenceSwitch(
+                "Rates confirmed with the shop",
+                "Leave off until the shop verifies the prices below.",
+                ratesConfirmed,
+                !busy,
+            ) {
+                ratesConfirmed = it
+            }
             Text(
                 "Whole Philippine pesos per printed side. New rates apply to new requests; existing quotes stay the same.",
                 style = MaterialTheme.typography.bodySmall,
@@ -189,8 +267,11 @@ fun ShopSettingsContent(settings: ShopSettings, busy: Boolean, onSave: (ShopSett
             )
         }
         Panel(Modifier.fillMaxWidth()) {
-Text("PDF retention", style = MaterialTheme.typography.titleLarge)
-            Text("Automatic PDF removal is off in this setup. Your PDFs and order history stay saved.", style = MaterialTheme.typography.bodySmall)
+            Text("PDF retention", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Automatic PDF removal is off in this setup. Your PDFs and order history stay saved.",
+                style = MaterialTheme.typography.bodySmall,
+            )
             Text("Automatic cleanup off", style = MaterialTheme.typography.labelLarge)
         }
         if (!valid)
@@ -210,6 +291,9 @@ Text("PDF retention", style = MaterialTheme.typography.titleLarge)
                         PrintRates(bw.toLong(), color.toLong(), legal.toLong()),
                         retention,
                         version,
+                        email.trim(),
+                        facebook.trim(),
+                        ratesConfirmed,
                     )
                 )
             },
@@ -255,7 +339,7 @@ fun PickupAlertsCard() {
     Panel(Modifier.fillMaxWidth()) {
         Text("A heads-up when it’s ready", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Get a pickup notification on this device. Your document name stays private on the lock screen.",
+            "Receive private pickup reminders. Android checks periodically (about every 15 minutes) and may delay checks to save battery. Open Orders for the latest status.",
             style = MaterialTheme.typography.bodySmall,
         )
         PreferenceSwitch(

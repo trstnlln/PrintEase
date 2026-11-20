@@ -73,3 +73,24 @@ test('a profile photo cannot inject markup or use an untrusted URL',async t=>{
   app.s.session={...app.s.session,photoUrl};app.go('account');assert.equal(document.querySelector('.profile-avatar img'),null);
  }
 });
+
+test('pickup estimates are admin-only, survive refresh, and preserve quoted costs',async t=>{
+ const app=await setup(t);await app.backend.login(false);await assert.rejects(()=>app.backend.setPickupTime('sample-1042',Date.now()+60000),/Only the shop/);
+ await app.backend.login(true);const total=app.s.orders.find(o=>o.id==='sample-1042').estimatedCost;await app.backend.setPickupTime('sample-1042',Date.now()+1800000);
+ await app.backend.login(false);app.go('detail','sample-1042');assert.match(document.body.textContent,/Estimated ready/);assert.equal(app.s.orders.find(o=>o.id==='sample-1042').estimatedCost,total);
+});
+test('staff handover requires a matching collection code before completing the request',async t=>{
+ const app=await setup(t);await app.backend.login(true);await app.backend.transition('sample-1042','Ready for Pickup');app.go('detail','sample-1042');app.status('Completed');
+ const input=document.getElementById('collection-code');input.value='wrong';app.onInput({target:input});assert.equal(document.querySelector('[data-action="collect-confirm"]').disabled,true);
+ input.value='LE1042';app.onInput({target:input});assert.equal(document.querySelector('[data-action="collect-confirm"]').disabled,false);
+ await app.onClick({target:document.querySelector('[data-action="collect-confirm"]'),preventDefault(){}});assert.equal(app.s.orders.find(o=>o.id==='sample-1042').status,'Completed');
+});
+test('repeat printing prepares a fresh draft using current prices without submitting it',async t=>{
+ const app=await setup(t);await app.backend.login(false);await app.backend.transition('sample-1043','Cancelled');const order=app.s.orders.find(o=>o.id==='sample-1043'),before=app.s.orders.length;
+ await app.backend.login(true);await app.backend.saveSettings({...app.s.settings,rates:{bw:5,color:15,legalExtra:2}});await app.backend.login(false);
+ await app.prepareReorder(order);app.render();assert.equal(app.s.route,'request');assert.notEqual(app.s.draft.id,order.id);assert.equal(app.s.orders.length,before);assert.equal(app.s.draft.pdf.pages,4);assert.equal(document.getElementById('summary-total').textContent,'₱60.00');
+});
+test('a failed repeat download preserves the unfinished draft',async t=>{
+ const app=await setup(t);await app.backend.login(false);await app.pick(await selectedFile(2));const id=app.s.draft.id;app.backend.bytes=async()=>{throw new Error('Offline');};
+ await assert.rejects(()=>app.prepareReorder(app.s.orders[0]),/Offline/);assert.equal(app.s.draft.id,id);assert.equal(app.s.draft.pdf.pages,2);
+});

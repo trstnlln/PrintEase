@@ -123,9 +123,9 @@ Those device tests require a running Android device; compiling their test APK is
 
 ## Pricing and limits
 
-Default rates: A4/Letter = PHP 2 B&W or PHP 10 color per printed side; Legal adds PHP 1 per side. Administrators can change whole-peso rates in Account → Manage shop details & rates. Each order keeps its saved rate snapshot. The estimate is `selected pages × copies × saved rate`; duplex saves sheets (`ceil(selected pages/2) × copies`) without reducing printed-side charges.
+Sample rates (not yet confirmed by the shop): A4/Letter = PHP 2 B&W or PHP 10 color per printed side; Legal adds PHP 1 per side. Administrators can change whole-peso rates in Account → Manage shop details & rates. Each order keeps its saved rate snapshot. The estimate is `selected pages × copies × saved rate`; duplex saves sheets (`ceil(selected pages/2) × copies`) without reducing printed-side charges.
 
-The administrator verifies the document and page count before acceptance. Firebase rules validate the formula, but PDF page count is client-provided; strict server-side PDF inspection would need a trusted backend. Payment and printing are manual. Direct printing and payment happen at the nearby shop; there is no direct printer integration, online payment or multi-shop marketplace. Statuses update through Firestore while the app is active. Optional Android background pickup alerts require the supplied server function to be deployed; the web companion provides in-app updates.
+The administrator verifies the document and page count before acceptance. Firebase rules validate the formula, but PDF page count is client-provided; strict server-side PDF inspection would need a trusted backend. Payment and printing are manual. Direct printing and payment happen at the nearby shop; there is no direct printer integration, online payment or multi-shop marketplace. Statuses update through Firestore while the app is active. Android pickup reminders use opt-in periodic WorkManager checks, which Android may delay. The web companion supports opt-in encrypted Web Push on compatible browsers, including iPhone Home Screen apps. Optional FCM functions remain separate.
 
 Live orders currently load up to 500 records per account/shop and warn at that limit. Plan pagination/archive policy for longer deployments. Live uploads need connectivity. Interrupted uploads may leave orphaned objects that require administrator maintenance. The optional retention function removes only expired completed PDFs; it does not remove unreferenced uploads. Sensitive local PDFs are private to the app and backups are disabled. Sign-out discards the current draft; demo order files remain until app data is cleared.
 
@@ -133,10 +133,16 @@ Do not use debug builds as a production release. Configure your own release sign
 
 ## Shop experience update (2.1)
 
-Printing happens at a partner shop **near campus**. The default display name is **Nano Print Alangilan**; the exact address and pickup hours still need confirmation. Administrators can edit pickup details, whole-peso print rates, request availability and optional completed-PDF retention. Requests support selected page ranges and keep a price snapshot even after rates change. Android pickup alerts are opt-in; server functions must be deployed to deliver them.
+Printing happens at a shop **near campus**. The default display name is **Nano Print Alangilan**; the owner provided Neptune St., Golden Country Homes, Alangilan, Batangas City and hours 6:00 AM–10:00 PM (days unspecified). Administrators can edit pickup details, whole-peso print rates, request availability and optional completed-PDF retention. Requests support selected page ranges and keep a price snapshot even after rates change. Pickup alerts are opt-in; see the current setup and timing limits below.
 
 See [Shop operations and activation](docs/SHOP_OPERATIONS.md) for the setup steps and shared Android/web behavior. Automatic PDF cleanup is off by default.
 
 ## Upload repair 2.2
 
 The current source fixes iPhone picker focus resets, Safari autofill submission, hidden form failures and local-draft storage failures. New private PDFs use the hosted Worker instead of an unprovisioned Firebase Storage bucket. Follow [Firebase setup](docs/FIREBASE_SETUP.md) and [web deployment](web-app/README.md); a GitHub commit is separate from publishing the live Site. See [repair status](docs/WEB_REPAIR_STATUS.md) for deployment limits.
+
+## Pickup experience 2.3
+
+Android and web show the Google account photo, name and email after Google sign-in, with safe initials if the photo is unavailable. Coherent light/dark colors and larger text improve readability. The shop details include the verified map pin, owner-provided address, hours and email; the Facebook URL is editable and left blank until provided. Prices remain clearly marked as sample estimates until staff confirms them.
+
+Staff can set pickup estimates, verify a student's six-character collection code at handover, and retry a web pickup alert after a delivery failure. Students can prepare a new draft from a closed order and review current rates before submission. Updated Firestore rules are required for estimates, contacts and web alert subscriptions. Native background checks do not require Firebase Blaze or deploying Functions. See [shop operations](docs/SHOP_OPERATIONS.md) and [web setup](web-app/README.md).

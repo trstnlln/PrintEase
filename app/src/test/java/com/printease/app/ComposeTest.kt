@@ -229,4 +229,50 @@ class ComposeTest {
         assertEquals(0, result!!.retentionDays)
         assertEquals("Nano Print Alangilan", result!!.name)
     }
+
+    @Test
+    fun collectionHandoverRequiresTheStudentCode() {
+        val ready = orders.first().copy(status = OrderStatus.Ready)
+        var received = ""
+        compose.setContent {
+            PrintEaseTheme(dark = true) {
+                OrderDetail(ready, true, false, false, { _, _, note -> received = note }, {})
+            }
+        }
+        compose.onNodeWithText("Verify collection").performScrollTo().performClick()
+        compose.onNodeWithText("Confirm collection").performScrollTo().assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextInput("wrong")
+        compose.onNodeWithText("Confirm collection").performScrollTo().assertIsNotEnabled()
+        compose
+            .onNode(hasSetTextAction())
+            .performScrollTo()
+            .performTextReplacement(collectionCode(ready.id))
+        compose
+            .onNodeWithText("Confirm collection")
+            .performScrollTo()
+            .assertIsEnabled()
+            .performClick()
+        assertEquals(collectionCode(ready.id), received)
+    }
+
+    @Test
+    fun pickupSummaryShowsStudentCodeAndEstimateAtLargeFont() {
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalDensity provides Density(LocalDensity.current.density, fontScale = 1.5f)
+            ) {
+                PrintEaseTheme(dark = true) {
+                    PickupSummary(
+                        orders.first().copy(expectedReadyAt = System.currentTimeMillis() + 600000),
+                        false,
+                        false,
+                        {},
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Your collection code").assertIsDisplayed()
+        compose.onNodeWithText(collectionCode(orders.first().id)).assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/screenshots/pickup-summary-dark.png")
+    }
 }

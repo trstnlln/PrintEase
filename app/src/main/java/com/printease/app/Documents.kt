@@ -21,6 +21,30 @@ class Documents(private val context: Context) {
 
     fun file(id: String) = File(directory, "$id.pdf")
 
+    suspend fun copyDraft(source: File, name: String): PdfFile =
+        withContext(Dispatchers.IO) {
+            val target = file("draft-${UUID.randomUUID()}")
+            try {
+                source.inputStream().use { input ->
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(8192)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= MAX_PDF_BYTES) { "Choose a PDF no larger than 5 MB." }
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+                inspect(target, name)
+            } catch (error: Exception) {
+                target.delete()
+                throw error
+            }
+        }
+
     suspend fun import(uri: Uri): PdfFile =
         withContext(Dispatchers.IO) {
             val name =

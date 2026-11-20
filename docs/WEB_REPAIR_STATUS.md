@@ -39,10 +39,22 @@ Live checks confirmed:
 
 **The orders composite index is now usable:** `orders`, collection scope, `ownerId` Ascending and `createdAt` Descending. After the owner created the index, a live signed-in account queried its own orders successfully with HTTP 200. The verification created no production order. [Firebase setup](FIREBASE_SETUP.md) records the index configuration.
 
-The default shop display name is **Nano Print Alangilan**, near BSU Alangilan. The exact address, hours and shop participation still need confirmation. The shop name, pickup details and rates remain editable by its trusted administrator.
+The default shop display name is **Nano Print Alangilan**, near BSU Alangilan. The owner supplied the address, hours and business email; actual printing prices, opening days and shop participation still need confirmation. The shop name, pickup details and rates remain editable by its trusted administrator.
 
 ## Remaining device and operational checks
 
 Test the full student request and shop-admin workflow on the actual iPhone now that the index is usable. API checks do not exercise Safari’s picker, pop-up or visual layout. Real Safari visual QA and the real Google account chooser have not been exercised by the emulator suite. Hosted PDF retention and orphan cleanup are not implemented; files stay private and retention is shown as Off.
 
 Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.
+
+## Pickup experience pass
+
+The next source version adds staff pickup estimates, student collection codes with staff verification, closed-order repeat drafts at current prices, verified shop contacts and opt-in background reminders. The new Firestore rules cover estimate-only updates, safe contact fields, private push subscriptions and administrator delivery receipts. Production activation of those new fields requires publishing the matching rules. A successful emulator test does not prove the owner has published them.
+
+## Published pickup experience — November 21, 2026
+
+Site version **9** was successfully published at the same public URL. Its separate Site source commit is `07a2151ea7fb038e8e20eb78cb6babbd839c6d52`, deployment `appgdep_6b0070540e4c8191a2ff53d77ac5a8e5`, runtime environment revision 1. Live HTTP checks confirm PDF storage ready, public push configuration enabled, and unauthenticated push requests rejected with 401. Server alert keys are configured; no private key is committed or sent in public configuration.
+
+The matching Firestore rules were pushed as GitHub commit `2bacf7545b89d7d8b3afd5742696ff05f79e16bb`. The owner has been given their exact source link and console publishing steps. Publishing those rules and saving the intended `admins/<uid>.enabled: true` grant are owner setup actions; completion has not yet been confirmed. Physical iPhone/Android delivery and the real Google account chooser remain device checks.
+
+Validation for this pass: 52 web model/DOM/PDF/Worker/push tests passed; 17 rule tests and one real Firebase SDK emulator integration passed. Android's 42 host tests, demo lint, demo APK build, device-test APK compilation and live Kotlin compilation passed. The PDF repeat-copy test belongs to the device suite because Robolectric does not implement Android's PDF engine; its APK was compiled, not executed on a phone. Production web dependency audit reports zero vulnerabilities. Browser visual testing was unavailable in this environment; native screenshots were inspected for readability.
