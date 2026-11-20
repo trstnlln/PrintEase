@@ -58,8 +58,7 @@ function rangeCount(entry, previousEnd) {
           + (n > 9 ? rangeCount(r[9],r[8].end) : 0);
     }
     function validOptions(o) {
-      return o.keys().hasAll(['paper','pages','copies','color','duplex'])
-        && o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages'])
+      return o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages'])
         && o.paper in ['A4','Letter','Legal']
         && o.pages is int && o.pages >= 1 && o.pages <= 1000
         && o.copies is int && o.copies >= 1 && o.copies <= 100
@@ -68,7 +67,8 @@ function rangeCount(entry, previousEnd) {
     }
     function validPrice(d) {
       let r = d.get('pricing', {'bw':2,'color':10,'legalExtra':1});
-      return validRates(r) && r == rates() && d.estimatedCost == d.options.get('selectedPages',d.options.pages) * d.options.copies *
+      // Rates come from the settings document, whose writes already require validRates.
+      return r == rates() && d.estimatedCost == d.options.get('selectedPages',d.options.pages) * d.options.copies *
         ((d.options.color ? r.color : r.bw) + (d.options.paper == 'Legal' ? r.legalExtra : 0));
     }
     function recent(t) { return t is int && t >= request.time.toMillis() - 300000 && t <= request.time.toMillis() + 300000; }
@@ -80,8 +80,8 @@ function rangeCount(entry, previousEnd) {
         || (old == 'Ready for Pickup' && next == 'Completed');
     }
     function validOrder(d,orderId) {
-      return d.keys().hasAll(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
-        && d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash'])
+      // All required fields are accessed below; a missing field rejects the write.
+      return d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash'])
         && accepting() && validUpdated(d)
         && d.get('completedAt',null) == null && d.get('documentDeletedAt',null) == null
         && d.ownerId == request.auth.uid
@@ -89,9 +89,7 @@ function rangeCount(entry, previousEnd) {
         && d.fileName is string && d.fileName.size() > 0 && d.fileName.size() <= 255
         && validDocument(d, orderId)
         && validOptions(d.options) && validPrice(d)
-        && d.createdAt is int
-        && d.createdAt >= request.time.toMillis() - 300000
-        && d.createdAt <= request.time.toMillis() + 300000
+        && recent(d.createdAt)
         && d.status == 'Pending'
         && d.queue == null && d.queueDay == null
         && d.note == '';
