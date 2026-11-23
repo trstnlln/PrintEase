@@ -119,3 +119,47 @@ test("a quoted request shows the confirmed amount and approval action", async t 
   await app.onClick({ target:document.querySelector('[data-action=confirm]'), preventDefault() {} });
   assert.equal(app.s.orders.find(o=>o.id==="sample-1043").review.stage, "approved");
 });
+
+test("custom sizes and additional files use a shop quote and keep separate print choices", async t => {
+ const app = await setup(t);
+ await app.backend.login(false);
+ app.go("request");
+ await app.pick(await selectedFile(2));
+ const input = (id,value) => {
+  const target = document.getElementById(id);
+  assert.ok(target, id);
+  target.value = value;
+  app.onInput({target});
+ };
+ input("paper-size","Custom");
+ assert.equal(document.querySelector('[data-action="review"]').disabled,true);
+ input("paper-width","203");
+ input("paper-height","330");
+ assert.equal(document.getElementById("summary-paper").textContent,"203 × 330 mm (custom)");
+ assert.equal(document.getElementById("summary-total").textContent,"Shop quote");
+ const file = await selectedFile(1);
+ file.name = "Cover.pdf";
+ await app.addAttachment(file);
+ input("file-0-paper","A3");
+ input("file-0-copies","0");
+ assert.equal(document.querySelector('[data-action="review"]').disabled,true);
+ input("file-0-copies","2");
+ const id = app.s.draft.id;
+ app.review();
+ assert.match(document.querySelector("#modal-root").textContent,/Cover\.pdf/);
+ await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});
+ const saved = app.s.orders.find(order=>order.id===id);
+ assert.equal(saved.options.paper,"Custom 203x330 mm");
+ assert.equal(saved.attachments[0].options.paper,"A3");
+ assert.equal(saved.attachments[0].options.copies,2);
+ assert.equal(saved.review.stage,"submitted");
+});
+
+test("shop queue separates orders waiting on the student from work staff can act on", async t => {
+ const app = await setup(t);
+ await app.backend.login(true);
+ await app.backend.reviewOrder("sample-1043","quote",-1,{quote:42});
+ app.go("orders");
+ assert.ok(document.querySelector('[aria-label="Waiting for student"] [data-id="sample-1043"]'));
+ assert.ok(document.querySelector('[aria-label="Printing"] [data-id="sample-1042"]'));
+});

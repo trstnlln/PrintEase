@@ -8,11 +8,18 @@ async function pushOwner(){
 }
 self.addEventListener('push',event=>event.waitUntil((async()=>{
  let message;try{message=event.data.json();}catch{return;}
- if(!['ready','test'].includes(message.type)||typeof message.ownerId!=='string'||await pushOwner()!==message.ownerId)return;
- if(message.type==='ready'&&!/^[A-Za-z0-9_-]{1,128}$/.test(message.orderId||''))return;
- await self.registration.showNotification(message.type==='test'?'PrintEase alerts are on':'Your prints are ready',{
-  body:message.type==='test'?'You can receive pickup updates on this device.':'Open PrintEase for pickup details.',
-  icon:'/assets/touch-icon.png',badge:'/assets/touch-icon.png',tag:message.type==='test'?'printease-test':'printease-ready-'+message.orderId,
+ const content = {
+  ready: ['Your prints are ready', 'Open PrintEase for pickup details.'],
+  quote: ['Approve your print quote', 'Open PrintEase to review the shop’s price.'],
+  correction: ['The shop requested a correction', 'Open PrintEase to see what needs to change.'],
+  test: ['PrintEase alerts are on', 'You can receive order updates on this device.']
+ };
+ if(!Object.hasOwn(content,message.type)||typeof message.ownerId!=='string'||await pushOwner()!==message.ownerId)return;
+ if(message.type!=='test'&&!/^[A-Za-z0-9_-]{1,128}$/.test(message.orderId||''))return;
+ const [title, body] = content[message.type];
+ await self.registration.showNotification(title,{
+  body,
+  icon:'/assets/touch-icon.png',badge:'/assets/touch-icon.png',tag:message.type==='test'?'printease-test':'printease-'+message.type+'-'+message.orderId,
   data:{path:message.type==='test'?'/#account':'/#detail/'+encodeURIComponent(message.orderId)}
  });
 })()));

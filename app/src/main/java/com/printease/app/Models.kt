@@ -76,6 +76,7 @@ data class ShopSettings(
         if (name == "Nano Print Alangilan") "nanoprint.alangilan@gmail.com" else "",
     val facebookUrl: String = "",
     val ratesConfirmed: Boolean = false,
+    val pickupSchedule: PickupSchedule? = null,
 ) {
     init {
         require(
@@ -104,7 +105,7 @@ data class ShopSettings(
             "contactEmail" to contactEmail.trim(),
             "facebookUrl" to facebookUrl.trim(),
             "ratesConfirmed" to ratesConfirmed,
-        )
+        ) + (pickupSchedule?.let { mapOf("pickupSchedule" to it.toMap()) } ?: emptyMap())
 
     companion object {
         fun fromMap(m: Map<String, Any?>?) =
@@ -136,6 +137,7 @@ data class ShopSettings(
                         else "",
                     m["facebookUrl"] as? String ?: "",
                     m["ratesConfirmed"] as? Boolean ?: false,
+                    (m["pickupSchedule"] as? Map<*, *>)?.let(PickupSchedule::fromMap),
                 )
     }
 }
@@ -219,7 +221,7 @@ data class PrintOptions(
     val pageRanges: List<PageRange> = emptyList(),
 ) {
     init {
-        require(paper in listOf("A4", "Letter", "Legal"))
+        require(validPaper(paper))
         require(pages in 1..1000)
         require(copies in 1..100)
         require(pageRanges.size <= 5)
@@ -302,9 +304,11 @@ data class PrintOrder(
     val fileHash: String? = null,
     val expectedReadyAt: Long? = null,
     val review: OrderReview? = null,
+    val attachments: List<OrderAttachment> = emptyList(),
 ) {
     init {
         require(documentStore in listOf("firebase", "hosted"))
+        require(attachments.size <= MAX_ATTACHMENTS)
         if (documentStore == "hosted") {
             require(fileHash != null && Regex("[a-f0-9]{64}").matches(fileHash))
             require(
@@ -324,7 +328,8 @@ data class PrintOrder(
             "fileName" to fileName,
             "storagePath" to storagePath,
             "options" to options.toMap(),
-            "estimatedCost" to total,
+            "estimatedCost" to
+                if (needsPaperQuote(options.paper) || attachments.isNotEmpty()) 0L else total,
             "pricing" to pricing.toMap(),
             "updatedAt" to updatedAt,
             "completedAt" to completedAt,
@@ -338,7 +343,9 @@ data class PrintOrder(
             "note" to note,
         ) +
             (expectedReadyAt?.let { mapOf("expectedReadyAt" to it) } ?: emptyMap()) +
-            (review?.let { mapOf("review" to it.toMap()) } ?: emptyMap())
+            (review?.let { mapOf("review" to it.toMap()) } ?: emptyMap()) +
+            (if (attachments.isEmpty()) emptyMap()
+            else mapOf("attachments" to attachments.map { it.toMap() }))
 
     companion object {
         fun fromMap(id: String, d: Map<String, Any?>): PrintOrder {
@@ -379,6 +386,9 @@ data class PrintOrder(
                 d["fileHash"] as? String,
                 (d["expectedReadyAt"] as? Number)?.toLong(),
                 (d["review"] as? Map<*, *>)?.let(OrderReview::fromMap),
+                (d["attachments"] as? List<*>)
+                    ?.map { OrderAttachment.fromMap(it as Map<*, *>) }
+                    .orEmpty(),
             )
         }
     }
@@ -394,6 +404,7 @@ data class ShopState(
     val settingsError: String? = null,
     val settingsCached: Boolean = false,
     val reviewAvailable: Boolean = false,
+    val paperSizesAvailable: Boolean = false,
 )
 
 fun sortedQueue(orders: List<PrintOrder>): List<PrintOrder> =

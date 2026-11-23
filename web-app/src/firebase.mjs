@@ -1,3 +1,5 @@
+import { attachmentEntries, sameAttachments, requireBatchRanges, uploadRequestFiles } from "./attachment.mjs";
+import { requiresPaperQuote } from "./paper.mjs";
 import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import { HostedDocuments } from "./documents.mjs";
 import { initializeApp } from "firebase/app";
@@ -22,6 +24,7 @@ class FirebaseBackend {
     this.settings = defaultShop();
     this.settingsError = null;
     this.reviewAvailable = false;
+    this.paperSizesAvailable = false;
   }
   async init() {
     try {
@@ -46,6 +49,7 @@ class FirebaseBackend {
       this.error = null;
       this.cache = false;
       this.reviewAvailable = false;
+      this.paperSizesAvailable = false;
       this.emit();
       return;
     }
@@ -58,6 +62,7 @@ class FirebaseBackend {
       this.error = null;
       this.cache = false;
       this.reviewAvailable = false;
+      this.paperSizesAvailable = false;
       this.change({ session: null, orders: [], ready: false, syncError: null });
     }
     try {
@@ -76,6 +81,12 @@ class FirebaseBackend {
       timeout(getDocFromServer(doc(this.db, "capabilities", "print-review-v1")), 10000).then(() => {
         if (generation === this.generation) {
           this.reviewAvailable = true;
+          this.emit();
+        }
+      }).catch(() => {});
+      timeout(getDocFromServer(doc(this.db, "capabilities", "paper-sizes-v1")), 10000).then(() => {
+        if (generation === this.generation) {
+          this.paperSizesAvailable = true;
           this.emit();
         }
       }).catch(() => {});
@@ -126,7 +137,7 @@ class FirebaseBackend {
     }
   }
   emit() {
-    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, reviewAvailable: this.reviewAvailable, syncError: this.error || this.persistenceWarning || null });
+    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, reviewAvailable: this.reviewAvailable, paperSizesAvailable: this.paperSizesAvailable, syncError: this.error || this.persistenceWarning || null });
   }
   google() {
     online();
@@ -165,7 +176,11 @@ class FirebaseBackend {
     online();
     const session = this.session;
     if (!session) throw new Error("Sign in first.");
-    const review = draft.addons != null && this.reviewAvailable ? newReview(draft.addons) : null;
+    requireBatchRanges(draft);
+    const attachments = attachmentEntries(draft.attachments);
+    const specialPaper = requiresPaperQuote(draft.options.paper) || attachments.length > 0;
+    if (specialPaper && !this.paperSizesAvailable) throw new Error("Expanded paper sizes and multi-PDF requests are unavailable. Refresh before submitting.");
+    const review = (draft.addons != null && this.reviewAvailable) || specialPaper ? newReview(draft.addons ?? []) : null;
     if (draft.addons?.length && !review) throw new Error("Add-ons are unavailable. Refresh before submitting.");
     let order = makeOrder(draft.id, session, draft.pdf, draft.options, this.settings.rates);
     const orderRef = doc(this.db, "orders", order.id);
@@ -173,7 +188,7 @@ class FirebaseBackend {
     if (prior.exists()) {
       const saved = prior.data();
       if (["Cancelled", "Rejected"].includes(saved.status)) throw new Error("This request was closed. Check Orders, then discard the draft to start a new request.");
-      if (saved.documentStore === "hosted" && saved.fileHash !== draft.pdf.sha256 || !sameOptions(saved.options, draft.options) || JSON.stringify(saved.review?.addons || []) !== JSON.stringify(review?.addons || [])) throw new Error("This request was already submitted with an earlier document or options. Check Orders before starting a new request.");
+      if (saved.documentStore === "hosted" && saved.fileHash !== draft.pdf.sha256 || !sameOptions(saved.options, draft.options) || JSON.stringify(saved.review?.addons || []) !== JSON.stringify(review?.addons || []) || !sameAttachments(saved.attachments, attachments)) throw new Error("This request was already submitted with an earlier document or options. Check Orders before starting a new request.");
       return order.id;
     }
     const shop = await timeout(getDocFromServer(doc(this.db, "shopSettings", "current")));
@@ -184,7 +199,9 @@ class FirebaseBackend {
     const user = this.auth.currentUser;
     if (!user || user.uid !== session.uid || this.session?.uid !== session.uid) throw new Error("Sign in again before sending your PDF.");
     if (review) order.review = review;
-    Object.assign(order, await this.documents.upload(user, draft, onProgress, review ? order.id : null));
+    if (attachments.length) order.attachments = attachments;
+    if (specialPaper) order.estimatedCost = 0;
+    Object.assign(order, await uploadRequestFiles(this.documents,user,draft,onProgress,review ? order.id : null));
     const { id, ...metadata } = order;
     await timeout(setDoc(orderRef, metadata));
     onProgress(1);
@@ -223,16 +240,21 @@ class FirebaseBackend {
     if (action === "revise") {
       const prior = (await timeout(getDocFromServer(target))).data();
       const draft = input.draft;
+      requireBatchRanges(draft);
+      const attachments = attachmentEntries(draft.attachments);
+      if ((requiresPaperQuote(draft.options.paper) || attachments.length) && !this.paperSizesAvailable) throw new Error("Expanded paper sizes and multi-PDF requests are unavailable. Refresh before submitting.");
       // The transaction may have committed before the network acknowledged it.
       if (prior?.ownerId === session.uid && prior.review?.stage === "revised" &&
           prior.review.version === version + 1 && prior.fileHash === draft.pdf.sha256 &&
-          prior.fileName === draft.pdf.name.slice(0, 255) && sameOptions(prior.options, draft.options)) return;
+          prior.fileName === draft.pdf.name.slice(0, 255) && sameOptions(prior.options, draft.options) &&
+          sameAttachments(prior.attachments, attachments)) return;
       reviewUpdate(prior, session, action, version);
       const settings = await timeout(getDocFromServer(doc(this.db, "shopSettings", "current")));
       const shop = validateShop(settings.exists() ? settings.data() : defaultShop());
       if (shop.version !== this.settings.version) throw new Error("Shop rates changed. Review the new estimate.");
       const { fileName, options, pricing, estimatedCost } = makeOrder(id, session, draft.pdf, draft.options, shop.rates);
-      changes = { fileName, options, pricing, estimatedCost, ...await this.documents.upload(user, draft, input.onProgress ?? (() => {}), id) };
+      changes = { fileName, options, pricing, estimatedCost: requiresPaperQuote(options.paper) || attachments.length ? 0 : estimatedCost, attachments,
+        ...await uploadRequestFiles(this.documents,user,draft,input.onProgress ?? (() => {}),id) };
     }
     await timeout(runTransaction(this.db, async tx => {
       if (this.auth.currentUser?.uid !== session.uid) throw new Error("Your account changed. Sign in again.");
@@ -265,10 +287,11 @@ class FirebaseBackend {
       tx.set(target, { ...settings, version: old.version + 1 });
     }));
   }
-  async bytes(order) {
+  async bytes(order, index = 0) {
     online();
     if (order.documentDeletedAt) throw new Error("This PDF was removed under the shop\u2019s retention policy. Your order history is saved.");
-    if (order.documentStore === "hosted") return this.documents.bytes(this.auth.currentUser, order);
+    if (order.documentStore === "hosted") return this.documents.bytes(this.auth.currentUser, order, index);
+    if (index) throw new Error("This PDF is unavailable.");
     try {
       return new Uint8Array(await timeout(getBytes(ref(this.storage, order.storagePath), MAX_BYTES), 6e4));
     } catch (e) {

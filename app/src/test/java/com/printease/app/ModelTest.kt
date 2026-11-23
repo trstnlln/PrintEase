@@ -221,4 +221,35 @@ class ModelTest {
         assertEquals(listOf("lamination"), returned.review?.addons)
         assertEquals(returned, PrintOrder.fromMap(returned.id, returned.toMap()))
     }
+
+    @Test
+    fun customSizesAndAttachmentsRoundTripWithoutChangingPrintSettings() {
+        val custom = requireNotNull(customPaper("203", "330"))
+        assertEquals("203 × 330 mm (custom)", paperLabel(custom))
+        assertNull(customPaper("49", "330"))
+        assertNull(customPaper("210", "1001"))
+        val item = OrderAttachment("Cover.pdf", "a".repeat(64), PrintOptions("A3", 1, 2, true))
+        val order =
+            PrintOrder(
+                "paper",
+                "owner",
+                "Alex",
+                "Report.pdf",
+                "",
+                PrintOptions(paper = custom),
+                review = OrderReview(),
+                attachments = listOf(item),
+            )
+        assertEquals(order, PrintOrder.fromMap(order.id, order.toMap()))
+    }
+
+    @Test
+    fun pickupWindowSkipsClosureDatesAfterTheCutoff() {
+        val schedule = PickupSchedule(listOf(1, 2, 3, 4, 5), 360, 1320, 960, "2026-11-24")
+        val early = java.time.ZonedDateTime.parse("2026-11-23T07:59:00Z")
+        assertTrue(nextPickupWindow(schedule, early)!!.range.startsWith("Today"))
+        assertTrue(
+            nextPickupWindow(schedule, early.plusMinutes(1))!!.range.startsWith("Wed, Nov 25")
+        )
+    }
 }

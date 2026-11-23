@@ -1,3 +1,5 @@
+import { attachmentEntries, sameAttachments, requireBatchRanges } from "./attachment.mjs";
+import { requiresPaperQuote } from "./paper.mjs";
 import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import * as db from "./db.mjs";
 import { canTransition, dayKey, makeOrder, defaultShop, validateShop, sameOptions, validPickupTime } from "./model.mjs";
@@ -31,7 +33,7 @@ class DemoBackend {
   async refresh() {
     const orders = await db.all("orders");
     this.settings = validateShop((await db.get("settings", "shop-details"))?.value || defaultShop());
-    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, ready: true });
+    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, paperSizesAvailable: true, ready: true });
   }
   async signOut() {
     this.session = null;
@@ -40,19 +42,23 @@ class DemoBackend {
   }
   async submit(draft, onProgress) {
     if (!this.session) throw new Error("Sign in first.");
+    requireBatchRanges(draft);
+    const attachments = attachmentEntries(draft.attachments);
     await db.transact(["settings", "orders", "files"], async (tx) => {
       const store = tx.objectStore("orders"), prior = await db.request(store.get(draft.id));
       if (prior) {
-        if (["Cancelled", "Rejected"].includes(prior.status) || !sameOptions(prior.options, draft.options)) throw new Error("This request was already submitted or closed. Check Orders before creating a new request.");
+        if (["Cancelled", "Rejected"].includes(prior.status) || !sameOptions(prior.options, draft.options) || !sameAttachments(prior.attachments, attachments)) throw new Error("This request was already submitted or closed. Check Orders before creating a new request.");
         return;
       }
       const shop = (await db.request(tx.objectStore("settings").get("shop-details")))?.value || defaultShop();
       if (!shop.acceptingOrders) throw new Error("The shop has paused new requests. Your draft is saved.");
       if (shop.version !== this.settings.version) throw new Error("Shop details changed. Review your updated total and try again.");
       const order = makeOrder(draft.id, this.session, draft.pdf, draft.options, shop.rates);
-      if (draft.addons != null) order.review = newReview(draft.addons);
+      if (draft.addons != null || requiresPaperQuote(draft.options.paper) || attachments.length) order.review = newReview(draft.addons ?? []);
+      if (attachments.length) order.attachments = attachments;
+      if (requiresPaperQuote(draft.options.paper) || attachments.length) order.estimatedCost = 0;
       store.put(order);
-      tx.objectStore("files").put({ id: order.id, blob: draft.file });
+      tx.objectStore("files").put({ id: order.id, blob: draft.file, attachments: draft.attachments?.map(item=>item.file) ?? [] });
     });
     onProgress(1);
     await this.refresh();
@@ -89,8 +95,11 @@ class DemoBackend {
         const shop = (await db.request(tx.objectStore("settings").get("shop-details")))?.value || defaultShop();
         if (shop.version !== this.settings.version) throw new Error("Shop rates changed. Review the new estimate.");
         const { fileName, options, pricing, estimatedCost } = makeOrder(id, this.session, draft.pdf, draft.options, shop.rates);
-        Object.assign(order, { fileName, options, pricing, estimatedCost });
-        tx.objectStore("files").put({ id, blob: draft.file });
+        requireBatchRanges(draft);
+        const attachments = attachmentEntries(draft.attachments);
+        Object.assign(order, { fileName, options, pricing, attachments,
+          estimatedCost: requiresPaperQuote(options.paper) || attachments.length ? 0 : estimatedCost });
+        tx.objectStore("files").put({ id, blob: draft.file, attachments: draft.attachments?.map(item=>item.file) ?? [] });
       }
       orders.put({ ...order, review, updatedAt: Date.now() });
     });
@@ -119,8 +128,13 @@ class DemoBackend {
     await this.refresh();
     this.channel?.postMessage("update");
   }
-  async bytes(order) {
+  async bytes(order, index=0) {
     const saved = await db.get("files", order.id);
+    if (index) {
+      const file = saved?.attachments?.[index-1];
+      if (!file) throw new Error("This PDF is unavailable.");
+      return new Uint8Array(await file.arrayBuffer());
+    }
     if (saved?.blob) return new Uint8Array(await saved.blob.arrayBuffer());
     if (order.id.startsWith("sample-")) return samplePDF(order.options.pages);
     throw new Error("This demo document is no longer available. Submit a new PDF.");

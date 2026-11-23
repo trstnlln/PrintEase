@@ -2,6 +2,7 @@ package com.printease.app
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -178,6 +179,7 @@ fun ShopSettingsContent(
     settings: ShopSettings,
     busy: Boolean,
     retentionAvailable: Boolean = false,
+    scheduleAvailable: Boolean = false,
     onSave: (ShopSettings) -> Unit,
 ) {
     // Keep an editing snapshot. A concurrent save is rejected by the repository version check.
@@ -192,6 +194,29 @@ fun ShopSettingsContent(
     var color by rememberSaveable { mutableStateOf(settings.rates.color.toString()) }
     var legal by rememberSaveable { mutableStateOf(settings.rates.legalExtra.toString()) }
     var retention by rememberSaveable { mutableIntStateOf(settings.retentionDays) }
+    val existing = settings.pickupSchedule
+    var scheduleOn by rememberSaveable { mutableStateOf(existing != null) }
+    var openingDays by rememberSaveable {
+        mutableIntStateOf(existing?.days?.sumOf { 1 shl it } ?: 0)
+    }
+    var opens by rememberSaveable { mutableStateOf(inputTime(existing?.open ?: 360)) }
+    var closes by rememberSaveable { mutableStateOf(inputTime(existing?.close ?: 1320)) }
+    var cutoff by rememberSaveable { mutableStateOf(inputTime(existing?.cutoff)) }
+    var closures by rememberSaveable { mutableStateOf(existing?.closed.orEmpty()) }
+    val schedule =
+        if (!scheduleAvailable) existing
+        else if (!scheduleOn) null
+        else
+            runCatching {
+                    PickupSchedule(
+                        (1..7).filter { day -> openingDays and (1 shl day) != 0 },
+                        requireNotNull(clockMinutes(opens)),
+                        requireNotNull(clockMinutes(closes)),
+                        if (cutoff.isBlank()) null else requireNotNull(clockMinutes(cutoff)),
+                        closures.split(',').joinToString(",") { it.trim() },
+                    )
+                }
+                .getOrNull()
     val version = rememberSaveable { settings.version }
     val valid =
         name.trim().length in 2..100 &&
@@ -203,7 +228,8 @@ fun ShopSettingsContent(
             (email.isBlank() ||
                 (email.length <= 254 &&
                     android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches())) &&
-            validFacebookUrl(facebook.trim())
+            validFacebookUrl(facebook.trim()) &&
+            (!scheduleAvailable || !scheduleOn || schedule != null)
     Column(
         Modifier.widthIn(max = 700.dp)
             .fillMaxSize()
@@ -310,6 +336,76 @@ fun ShopSettingsContent(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        if (scheduleAvailable)
+            Panel(Modifier.fillMaxWidth()) {
+                Text("Pickup schedule", style = MaterialTheme.typography.titleLarge)
+                PreferenceSwitch(
+                    "Show pickup windows",
+                    "Times use Philippine time",
+                    scheduleOn,
+                    !busy,
+                ) {
+                    scheduleOn = it
+                }
+                if (scheduleOn) {
+                    Text("Opening days", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun").forEachIndexed {
+                            index,
+                            label ->
+                            val bit = 1 shl (index + 1)
+                            FilterChip(
+                                openingDays and bit != 0,
+                                { openingDays = openingDays xor bit },
+                                { Text(label) },
+                                enabled = !busy,
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        opens,
+                        { opens = it.take(5) },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Opens (HH:mm)") },
+                        enabled = !busy,
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        closes,
+                        { closes = it.take(5) },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Closes (HH:mm)") },
+                        enabled = !busy,
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        cutoff,
+                        { cutoff = it.take(5) },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Same-day cutoff (optional)") },
+                        supportingText = { Text("Use 24-hour time, such as 16:30.") },
+                        enabled = !busy,
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        closures,
+                        { closures = it.take(180) },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Closure dates") },
+                        supportingText = { Text("Separate dates with commas. Use YYYY-MM-DD.") },
+                        enabled = !busy,
+                        maxLines = 3,
+                    )
+                    if (schedule == null)
+                        Text(
+                            "Choose opening days and check the hours and dates.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                }
+            }
         Panel(Modifier.fillMaxWidth()) {
             Text("PDF retention", style = MaterialTheme.typography.titleLarge)
             if (retentionAvailable) {
@@ -357,6 +453,7 @@ fun ShopSettingsContent(
                         email.trim(),
                         facebook.trim(),
                         ratesConfirmed,
+                        schedule,
                     )
                 )
             },

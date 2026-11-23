@@ -31,39 +31,69 @@ service cloud.firestore {
         && r.color is int && r.color >= 1 && r.color <= 1000
         && r.legalExtra is int && r.legalExtra >= 0 && r.legalExtra <= 1000;
     }
-    function rangeCount(entry, previousEnd) {
-      // An invalid span cannot be compensated by the other four spans (at most 1,000 pages each).
-      return entry is map && entry.size() == 2
-        && entry.start is int && entry.end is int
-        && entry.start >= 1 && entry.end <= 1000
-        && entry.start > previousEnd && entry.end >= entry.start
-        ? entry.end - entry.start + 1 : -100000;
+    function rangeCount(entry, previousEnd, pages) {
+      let start = entry.start;
+      let end = entry.end;
+      // One rejected span cannot be offset by the other bounded spans.
+      return entry.size() == 2 && start is int && end is int
+        && start > previousEnd && end >= start && end <= pages
+        ? end - start + 1 : -100000;
     }
     function validRanges(o) {
       let r = o.pageRanges;
       let n = r.size();
+      let pages = o.pages;
+      let selected = o.selectedPages;
       return r is list && n >= 1 && n <= 5
-        && o.selectedPages is int && o.selectedPages >= 1 && o.selectedPages <= o.pages
-        && r[n-1].end <= o.pages
-        && o.selectedPages == rangeCount(r[0],0)
-          + (n > 1 ? rangeCount(r[1],r[0].end) : 0)
-          + (n > 2 ? rangeCount(r[2],r[1].end) : 0)
-          + (n > 3 ? rangeCount(r[3],r[2].end) : 0)
-          + (n > 4 ? rangeCount(r[4],r[3].end) : 0);
+        && selected is int && selected >= 1 && selected <= pages
+        && selected == rangeCount(r[0],0,pages)
+          + (n > 1 ? rangeCount(r[1],r[0].end,pages) : 0)
+          + (n > 2 ? rangeCount(r[2],r[1].end,pages) : 0)
+          + (n > 3 ? rangeCount(r[3],r[2].end,pages) : 0)
+          + (n > 4 ? rangeCount(r[4],r[3].end,pages) : 0);
     }
-    function validOptions(o) {
+    function standardPaper(paper) { return paper in ['A4','Letter','Legal']; }
+    function validPaper(paper) {
+      return paper is string && (standardPaper(paper)
+        || paper in ['A3','A5','B5','Folio','Tabloid']
+        || paper.matches('^Custom ([5-9][0-9]|[1-9][0-9]{2}|1000)x([5-9][0-9]|[1-9][0-9]{2}|1000) mm$'));
+    }
+    function validCoreOptions(o) {
       return o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages'])
-        && o.paper in ['A4','Letter','Legal']
+        && validPaper(o.paper)
         && o.pages is int && o.pages >= 1 && o.pages <= 1000
         && o.copies is int && o.copies >= 1 && o.copies <= 100
-        && o.color is bool && o.duplex is bool
-        && ((!o.keys().hasAny(['pageRanges','selectedPages'])) || validRanges(o));
+        && o.color is bool && o.duplex is bool;
+    }
+    function hasPageSelection(o) { return o.keys().hasAny(['pageRanges','selectedPages']); }
+    function validOrderOptions(d) {
+      let o = d.options;
+      return validCoreOptions(o) && (!hasPageSelection(o)
+        || (d.get('attachments',[]).size() == 0 ? validRanges(o)
+          : o.pageRanges == [{'start':1,'end':o.pages}] && o.selectedPages == o.pages));
+    }
+    function validAttachment(file) {
+      return file is map && file.keys().hasOnly(['fileName','fileHash','options'])
+        && file.fileName is string && file.fileName.size() > 0 && file.fileName.size() <= 255
+        && file.fileHash is string && file.fileHash.matches('^[a-f0-9]{64}$')
+        && !hasPageSelection(file.options) && validCoreOptions(file.options);
+    }
+    function validAttachments(d) {
+      let files = d.get('attachments',[]);
+      let count = files.size();
+      return files is list && count <= 2
+        && (count == 0 || (d.documentStore == 'hosted' && d.get('review',null) != null
+          && validAttachment(files[0]) && (count == 1 || validAttachment(files[1]))));
+    }
+    function validEstimate(d) {
+      let r = d.get('pricing', {'bw':2,'color':10,'legalExtra':1});
+      let o = d.options;
+      return r == rates() && d.estimatedCost == o.get('selectedPages',o.pages) * o.copies *
+        ((o.color ? r.color : r.bw) + (o.paper == 'Legal' ? r.legalExtra : 0));
     }
     function validPrice(d) {
-      let r = d.get('pricing', {'bw':2,'color':10,'legalExtra':1});
-      // Rates come from the settings document, whose writes already require validRates.
-      return r == rates() && d.estimatedCost == d.options.get('selectedPages',d.options.pages) * d.options.copies *
-        ((d.options.color ? r.color : r.bw) + (d.options.paper == 'Legal' ? r.legalExtra : 0));
+      return standardPaper(d.options.paper) && d.get('attachments',[]).size() == 0
+        ? validEstimate(d) : d.estimatedCost == 0 && d.pricing == rates();
     }
     function recent(t) { return t is int && t >= request.time.toMillis() - 300000 && t <= request.time.toMillis() + 300000; }
     function validUpdated(d) { return !d.keys().hasAny(['updatedAt']) || recent(d.updatedAt); }
@@ -105,28 +135,30 @@ service cloud.firestore {
             || next.review.stage == 'declined' && next.review.quote == null && next.review.note == '')
         || stage == 'correction' && next.review.stage == 'revised'
           && next.review.quote == null && next.review.note == ''
-          && next.diff(old).affectedKeys().hasOnly(['review','updatedAt','fileName','storagePath','fileHash','documentStore','options','pricing','estimatedCost'])
+          && next.diff(old).affectedKeys().hasOnly(['review','updatedAt','fileName','storagePath','fileHash','documentStore','options','pricing','estimatedCost','attachments'])
           && next.documentStore == 'hosted'
           && next.fileName is string && next.fileName.size() > 0 && next.fileName.size() <= 255
-          && validDocument(next, orderId) && validOptions(next.options) && validPrice(next);
+          && validDocument(next, orderId) && validOrderOptions(next)
+          && (next.get('attachments',[]) == old.get('attachments',[]) || validAttachments(next)) && validPrice(next);
     }
     // A permitted read of this fixed path lets clients detect the published rule version.
-    match /capabilities/print-review-v1 {
-      allow get: if signedIn();
+    match /capabilities/{capability} {
+      allow get: if signedIn() && capability in ['print-review-v1','paper-sizes-v1'];
     }
     function validOrder(d,orderId) {
       // All required fields are accessed below; a missing field rejects the write.
-      return d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash','expectedReadyAt','review'])
+      return d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash','expectedReadyAt','review','attachments'])
         && accepting() && validUpdated(d)
         && d.get('completedAt',null) == null && d.get('documentDeletedAt',null) == null
         && d.get('expectedReadyAt',null) == null
-        && (d.get('review',null) == null || (validReview(d.review) && d.review.stage == 'submitted'
+        && (d.get('review',null) == null ? standardPaper(d.options.paper)
+          : (validReview(d.review) && d.review.stage == 'submitted'
           && d.review.version == 0 && d.review.quote == null && d.review.note == ''))
         && d.ownerId == request.auth.uid
         && d.studentName is string && d.studentName.size() > 0 && d.studentName.size() <= 200
         && d.fileName is string && d.fileName.size() > 0 && d.fileName.size() <= 255
         && validDocument(d, orderId)
-        && validOptions(d.options) && validPrice(d)
+        && validAttachments(d) && validOrderOptions(d) && validPrice(d)
         && recent(d.createdAt)
         && d.status == 'Pending'
         && d.queue == null && d.queueDay == null
@@ -141,7 +173,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','note','updatedAt'])
         && validUpdated(request.resource.data)
         && request.resource.data.note == '';
-      allow update: if admin()
+      allow update: if request.resource.data.status != resource.data.status && admin()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','queue','queueDay','note','updatedAt','completedAt'])
         && validUpdated(request.resource.data)
         && (request.resource.data.status == 'Completed'
@@ -160,7 +192,7 @@ service cloud.firestore {
           || (request.resource.data.status != 'Accepted'
             && request.resource.data.queue == resource.data.queue
             && request.resource.data.queueDay == resource.data.queueDay));
-      allow update: if signedIn()
+      allow update: if signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['review'])
         && canReview(resource.data,request.resource.data)
         && (admin() && staffReview(resource.data,request.resource.data)
           || request.auth.uid == resource.data.ownerId && studentReview(resource.data,request.resource.data,orderId));
@@ -191,9 +223,18 @@ service cloud.firestore {
     }
     match /shopSettings/{id} {
       allow read: if signedIn() && id == 'current';
+      function validSchedule(s) {
+        return s is map && s.keys().hasAll(['days','open','close','cutoff','closed'])
+          && s.keys().hasOnly(['days','open','close','cutoff','closed'])
+          && s.days is list && s.days.size() >= 1 && s.days.size() <= 7
+          && s.days.hasOnly([1,2,3,4,5,6,7]) && s.days.size() == s.days.toSet().size()
+          && s.open is int && s.close is int && s.open >= 0 && s.close <= 1439 && s.open < s.close
+          && (s.cutoff == null || (s.cutoff is int && s.cutoff >= s.open && s.cutoff <= s.close))
+          && s.closed is string && (s.closed == '' || s.closed.matches('^([0-9]{4}-[0-9]{2}-[0-9]{2})(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,13}$'));
+      }
       function validSettings(d) {
         return d.keys().hasAll(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version'])
-          && d.keys().hasOnly(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version','contactEmail','facebookUrl','ratesConfirmed'])
+          && d.keys().hasOnly(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version','contactEmail','facebookUrl','ratesConfirmed','pickupSchedule'])
           && d.name is string && d.name.size() >= 2 && d.name.size() <= 100
           && d.address is string && d.address.size() >= 2 && d.address.size() <= 300
           && d.pickupHours is string && d.pickupHours.size() >= 2 && d.pickupHours.size() <= 200
@@ -202,6 +243,7 @@ service cloud.firestore {
           && d.get('facebookUrl','') is string && d.get('facebookUrl','').size() <= 2048
           && (d.get('facebookUrl','') == '' || d.facebookUrl.matches('^https://(www[.]|m[.])?(facebook[.]com|fb[.]com)(/[^ ]*)?$'))
           && d.get('ratesConfirmed',false) is bool
+          && (d.get('pickupSchedule',null) == null || validSchedule(d.pickupSchedule))
           && d.acceptingOrders is bool && validRates(d.rates)
           && d.retentionDays in [0,7,14,30] && d.version is int;
       }
@@ -247,7 +289,7 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.queueDay == day;
       }
       allow create: if admin() && validCounter() && request.resource.data.last == 1;
-      allow update: if admin() && validCounter() && request.resource.data.last == resource.data.last + 1;
+      allow update: if request.resource.data.last == resource.data.last + 1 && admin() && validCounter();
       allow delete: if false;
     }
   }

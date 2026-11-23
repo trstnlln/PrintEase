@@ -238,3 +238,41 @@ test('staff can mark only completed, expired per-order PDFs as removed', async (
  await assertFails(updateDoc(doc(adb,'orders/expired'), {documentDeletedAt:Date.now(),fileName:'new'}));
  await assertSucceeds(updateDoc(doc(adb,'orders/expired'), {documentDeletedAt:Date.now()}));
 });
+
+test('expanded sizes and per-file choices require a scoped request that the shop must quote', async () => {
+ const studentDb = student().firestore(), adminDb = admin().firestore();
+ const id = 'size-and-files', hash = '7'.repeat(64), pricing = settings().rates;
+ const document = {
+   ...order(id), documentStore:'hosted', fileHash:hash, storagePath:`hosted/student/${id}/${hash}.pdf`,
+   pricing, estimatedCost:0, options:{...order(id).options,paper:'Custom 203x330 mm',pages:1000,
+     pageRanges:[{start:1,end:1000}],selectedPages:1000},
+   review:{stage:'submitted',version:0,addons:[],note:'',quote:null}
+ };
+ const first = {fileName:'Cover.pdf', fileHash:'8'.repeat(64), options:{...order(id).options,paper:'A3',color:true,duplex:false}};
+ const second = {fileName:'Appendix.pdf', fileHash:'9'.repeat(64), options:{...order(id).options,paper:'B5',copies:1}};
+ const target = doc(studentDb,'orders/'+id);
+ await assertSucceeds(getDoc(doc(studentDb,'capabilities/paper-sizes-v1')));
+ await assertFails(setDoc(target,{...document,options:{...document.options,paper:'Custom 20x3000 mm'}}));
+ await assertFails(setDoc(target,{...document,attachments:[first,second,first]}));
+ await assertFails(setDoc(target,{...document,attachments:[{...first,fileHash:'../another-student'}]}));
+ await assertFails(setDoc(target,{...document,review:null,storagePath:`hosted/student/${hash}.pdf`}));
+ await assertFails(setDoc(target,{...document,attachments:[first],options:{...document.options,pageRanges:[{start:2,end:999}],selectedPages:998}}));
+ await assertSucceeds(setDoc(target,{...document,attachments:[first,second]}));
+ const correction={...document.review,stage:'correction',version:1,note:'Check your cover'};
+ await assertSucceeds(updateDoc(doc(adminDb,'orders/'+id),{review:correction}));
+ await assertSucceeds(updateDoc(target,{review:{...document.review,stage:'revised',version:2},attachments:[second,first]}));
+ await assertFails(updateDoc(target,{estimatedCost:1}));
+ await assertFails(updateDoc(doc(adminDb,'orders/'+id),{attachments:[]}));
+ await assertFails(updateDoc(target,{attachments:[]}));
+});
+
+test('pickup schedules accept bounded shop settings and reject invalid hours or student changes', async () => {
+ const a = doc(admin().firestore(),'shopSettings/current'), s = doc(student().firestore(),'shopSettings/current');
+ const settings = { ...((await getDoc(a)).data()) };
+ const pickupSchedule = {days:[1,2,3,4,5,6],open:360,close:1320,cutoff:960,closed:'2026-12-25'};
+ const updated = {...settings,version:settings.version+1,pickupSchedule};
+ await assertFails(setDoc(s,updated));
+ await assertFails(setDoc(a,{...updated,pickupSchedule:{...pickupSchedule,days:[0]}}));
+ await assertFails(setDoc(a,{...updated,pickupSchedule:{...pickupSchedule,cutoff:1440}}));
+ await assertSucceeds(setDoc(a,updated));
+});

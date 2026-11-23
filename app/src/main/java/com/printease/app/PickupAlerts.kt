@@ -134,7 +134,13 @@ object PickupAlerts {
     }
 
     @android.annotation.SuppressLint("MissingPermission")
-    fun show(context: Context, ownerId: String, orderId: String) {
+    fun show(
+        context: Context,
+        ownerId: String,
+        orderId: String,
+        stage: ReviewStage? = null,
+        version: Long? = null,
+    ) {
         if (
             BuildConfig.DEMO ||
                 !enabled(context) ||
@@ -143,7 +149,18 @@ object PickupAlerts {
                 owner(context) != ownerId
         )
             return
-        val delivered = "seen:$ownerId:$orderId"
+        val delivered =
+            if (stage == null) "seen:$ownerId:$orderId"
+            else "seen:$ownerId:$orderId:${stage.key}:$version"
+        val (title, message) =
+            when (stage) {
+                ReviewStage.Quoted ->
+                    "Approve your print quote" to "Open PrintEase to review the shop’s price."
+                ReviewStage.Correction ->
+                    "The shop requested a correction" to
+                        "Open PrintEase to see what needs to change."
+                else -> "Your prints are ready" to "Open PrintEase for pickup details."
+            }
         synchronized(this) {
             if (prefs(context).getBoolean(delivered, false)) return
             prefs(context).edit().putBoolean(delivered, true).apply()
@@ -166,8 +183,8 @@ object PickupAlerts {
         val notification =
             NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_pickup_notification)
-                .setContentTitle("Your prints are ready")
-                .setContentText("Open PrintEase for pickup details.")
+                .setContentTitle(title)
+                .setContentText(message)
                 .setContentIntent(pending)
                 .setAutoCancel(true)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -216,9 +233,22 @@ class PickupWorker(context: Context, parameters: WorkerParameters) :
                         .get(com.google.firebase.firestore.Source.SERVER)
                         .await()
                 }
-            snapshot.documents
-                .filter { it.getString("status") == OrderStatus.Ready.label }
-                .forEach { PickupAlerts.show(context, uid, it.id) }
+            snapshot.documents.forEach { document ->
+                val status = document.getString("status")
+                if (status == OrderStatus.Ready.label) {
+                    PickupAlerts.show(context, uid, document.id)
+                } else if (status == OrderStatus.Pending.label) {
+                    val stage =
+                        when (document.getString("review.stage")) {
+                            ReviewStage.Quoted.key -> ReviewStage.Quoted
+                            ReviewStage.Correction.key -> ReviewStage.Correction
+                            else -> null
+                        }
+                    val version = document.getLong("review.version")
+                    if (stage != null && version != null)
+                        PickupAlerts.show(context, uid, document.id, stage, version)
+                }
+            }
             Result.success()
         } catch (e: CancellationException) {
             throw e

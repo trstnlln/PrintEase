@@ -28,8 +28,8 @@ export class HostedDocuments {
   }),30000));
   return (await response.json()).removed === true;
  }
- async bytes(user,order){
-  const response=await this.response(await timeout(this.request(this.baseUrl+'/api/documents/'+encodeURIComponent(order.id),{headers:await this.headers(user),cache:'no-store'}),60000));
+ async bytes(user,order,index=0){
+  const response=await this.response(await timeout(this.request(this.baseUrl+'/api/documents/'+encodeURIComponent(order.id)+(index ? '?file='+index : ''),{headers:await this.headers(user),cache:'no-store'}),60000));
   const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>MAX_BYTES)throw new Error('The document exceeds 5 MB.');return bytes;
  }
 }

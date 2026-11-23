@@ -62,3 +62,16 @@ export function reviewLabel(order) {
     declined: "Quote declined"
   }[order.review?.stage] ?? "Pending";
 }
+
+export const shopQueueGroups = ["Needs review", "Waiting for student", "Ready to print", "Printing", "Ready for pickup", "History"];
+
+export function shopQueueGroup(order) {
+  switch (order.status) {
+    case "Pending":
+      return ["quoted", "correction"].includes(order.review?.stage) ? "Waiting for student" : "Needs review";
+    case "Accepted": return "Ready to print";
+    case "Printing": return "Printing";
+    case "Ready for Pickup": return "Ready for pickup";
+    default: return "History";
+  }
+}

@@ -40,6 +40,7 @@ interface ShopRepository {
         pdf: PdfFile,
         options: PrintOptions,
         addons: List<String>? = null,
+        attachments: List<AttachmentDraft> = emptyList(),
         progress: (Float) -> Unit,
     )
 
@@ -65,7 +66,7 @@ interface ShopRepository {
 
     suspend fun saveSettings(settings: ShopSettings)
 
-    suspend fun document(order: PrintOrder): File
+    suspend fun document(order: PrintOrder, index: Int = 0): File
 
     fun close() {}
 }
@@ -133,6 +134,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                         Session("demo-admin", "Nano Print Alangilan", "admin@demo.local", true)
                     else Session("demo-student", "Alex Student", "student@demo.local", false),
                 reviewAvailable = true,
+                paperSizesAvailable = true,
             )
         publish()
     }
@@ -174,14 +176,18 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         pdf: PdfFile,
         options: PrintOptions,
         addons: List<String>?,
+        attachments: List<AttachmentDraft>,
         progress: (Float) -> Unit,
     ) {
+        options.requireBatchRanges(attachments)
+        val extra = attachments.orderAttachments()
         val session = requireNotNull(state.value.session)
         check(!session.admin)
         all.firstOrNull { it.id == id }
             ?.let { prior ->
                 check(
                     prior.options == options &&
+                        prior.attachments == extra &&
                         prior.review?.addons.orEmpty() == addons.orEmpty() &&
                         prior.status !in listOf(OrderStatus.Cancelled, OrderStatus.Rejected)
                 ) {
@@ -194,6 +200,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
             "The shop has paused new requests. Please try again later."
         }
         withContext(Dispatchers.IO) { File(pdf.path).copyTo(documents.file(id), overwrite = true) }
+        copyAttachments(id, attachments)
         progress(1f)
         all +=
             PrintOrder(
@@ -204,7 +211,11 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 documents.file(id).path,
                 options,
                 pricing = settings.rates,
-                review = addons?.let { OrderReview(addons = it) },
+                review =
+                    if (addons != null || needsPaperQuote(options.paper) || extra.isNotEmpty())
+                        OrderReview(addons = addons.orEmpty())
+                    else null,
+                attachments = extra,
             )
         save()
         publish()
@@ -257,11 +268,14 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         val revised =
             if (action == ReviewAction.Revise) {
                 val correction = requireNotNull(draft)
+                correction.options.requireBatchRanges(correction.attachments)
                 val pdf = correction.pdf
                 require(pdf.pages == correction.options.pages)
                 val target = documents.file("$id-revision-${review.version}")
                 withContext(Dispatchers.IO) { File(pdf.path).copyTo(target, overwrite = true) }
+                copyAttachments(id, correction.attachments)
                 order.copy(
+                    attachments = correction.attachments.orderAttachments(),
                     fileName = pdf.name.take(255),
                     storagePath = target.path,
                     options = correction.options,
@@ -300,8 +314,26 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         publish()
     }
 
-    override suspend fun document(order: PrintOrder): File =
+    private fun attachmentFile(id: String, item: OrderAttachment, index: Int): File =
+        documents.file("$id-attachment-$index-${item.fileHash}")
+
+    private suspend fun copyAttachments(id: String, attachments: List<AttachmentDraft>) =
         withContext(Dispatchers.IO) {
+            attachments.forEachIndexed { index, item ->
+                File(item.pdf.path)
+                    .copyTo(attachmentFile(id, item.metadata(), index + 1), overwrite = true)
+            }
+        }
+
+    override suspend fun document(order: PrintOrder, index: Int): File =
+        withContext(Dispatchers.IO) {
+            if (index > 0) {
+                val item =
+                    order.attachments.getOrNull(index - 1) ?: error("This PDF is unavailable.")
+                return@withContext attachmentFile(order.id, item, index).also {
+                    check(it.exists()) { "This PDF is unavailable." }
+                }
+            }
             if (order.storagePath.isBlank() && order.id.startsWith("sample-"))
                 documents.sample(order.id, order.options.pages)
             else
@@ -409,6 +441,28 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                                         auth.currentUser?.uid == user.uid
                                 )
                                     mutable.value = mutable.value.copy(reviewAvailable = available)
+                            }
+                            scope.launch {
+                                val available =
+                                    try {
+                                        withTimeout(10000) {
+                                            db.collection("capabilities")
+                                                .document("paper-sizes-v1")
+                                                .get(Source.SERVER)
+                                                .await()
+                                        }
+                                        true
+                                    } catch (_: FirebaseFirestoreException) {
+                                        false
+                                    } catch (_: TimeoutCancellationException) {
+                                        false
+                                    }
+                                if (
+                                    generation == currentGeneration &&
+                                        auth.currentUser?.uid == user.uid
+                                )
+                                    mutable.value =
+                                        mutable.value.copy(paperSizesAvailable = available)
                             }
                             if (PickupAlerts.enabled(context))
                                 scope.launch { runCatching { PickupAlerts.register(context) } }
@@ -572,8 +626,11 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         pdf: PdfFile,
         options: PrintOptions,
         addons: List<String>?,
+        attachments: List<AttachmentDraft>,
         progress: (Float) -> Unit,
     ) {
+        options.requireBatchRanges(attachments)
+        val extra = attachments.orderAttachments()
         val session = requireNotNull(state.value.session)
         check(!session.admin)
         require(pdf.pages == options.pages)
@@ -587,6 +644,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             }
             check(
                 prior.options == options &&
+                    prior.attachments == extra &&
                     prior.review?.addons.orEmpty() == addons.orEmpty() &&
                     (prior.documentStore != "hosted" || prior.fileHash == pdf.sha256)
             ) {
@@ -602,14 +660,19 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         check(currentSettings.rates == quoted.rates && currentSettings.version == quoted.version) {
             "Shop details or rates changed. Review the updated total and try again."
         }
+        val specialPaper = needsPaperQuote(options.paper) || extra.isNotEmpty()
+        check(!specialPaper || state.value.paperSizesAvailable) {
+            "This paper size is unavailable. Refresh and try again."
+        }
         val review =
-            addons?.let {
-                check(state.value.reviewAvailable) {
+            if (addons != null || specialPaper) {
+                check(state.value.reviewAvailable || specialPaper) {
                     "Order review is unavailable. Refresh and try again."
                 }
-                OrderReview(addons = it)
-            }
-        val path = HostedDocuments.upload(pdf, progress, session.uid, id.takeIf { review != null })
+                OrderReview(addons = addons.orEmpty())
+            } else null
+        val path =
+            uploadFiles(pdf, attachments, progress, session.uid, id.takeIf { review != null })
         val order =
             PrintOrder(
                 id,
@@ -622,6 +685,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 documentStore = "hosted",
                 fileHash = pdf.sha256,
                 review = review,
+                attachments = extra,
             )
         withTimeout(25000) { ref.set(order.toMap()).await() }
         progress(1f)
@@ -666,6 +730,26 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         }
     }
 
+    private suspend fun uploadFiles(
+        pdf: PdfFile,
+        attachments: List<AttachmentDraft>,
+        progress: (Float) -> Unit,
+        owner: String,
+        orderId: String?,
+    ): String {
+        val total = attachments.size + 1
+        val primary = HostedDocuments.upload(pdf, { progress(it / total) }, owner, orderId)
+        attachments.forEachIndexed { index, item ->
+            HostedDocuments.upload(
+                item.pdf,
+                { progress((index + 1 + it) / total) },
+                owner,
+                requireNotNull(orderId),
+            )
+        }
+        return primary
+    }
+
     private suspend fun currentShopSettings(): ShopSettings =
         ShopSettings.fromMap(
             withTimeout(15000) {
@@ -689,8 +773,16 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         val revisionChanges =
             if (action == ReviewAction.Revise) {
                 val correction = requireNotNull(draft)
+                correction.options.requireBatchRanges(correction.attachments)
                 val pdf = correction.pdf
+                val extra = correction.attachments.orderAttachments()
                 require(pdf.pages == correction.options.pages)
+                check(
+                    (!needsPaperQuote(correction.options.paper) && extra.isEmpty()) ||
+                        state.value.paperSizesAvailable
+                ) {
+                    "This paper size is unavailable. Refresh and try again."
+                }
                 val prior = withTimeout(15000) { ref.get(Source.SERVER).await() }
                 val order =
                     PrintOrder.fromMap(id, prior.data ?: error("This request is unavailable."))
@@ -700,7 +792,8 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                         order.review.version == version + 1 &&
                         order.fileHash == pdf.sha256 &&
                         order.fileName == pdf.name.take(255) &&
-                        order.options == correction.options
+                        order.options == correction.options &&
+                        order.attachments == extra
                 )
                     return
                 order.updateReview(session, action, version)
@@ -708,15 +801,18 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 check(shop.version == state.value.settings.version) {
                     "Shop rates changed. Review the new estimate."
                 }
-                val path = HostedDocuments.upload(pdf, progress, session.uid, id)
+                val path = uploadFiles(pdf, correction.attachments, progress, session.uid, id)
                 mapOf(
                     "fileName" to pdf.name.take(255),
+                    "attachments" to extra.map { it.toMap() },
                     "storagePath" to path,
                     "documentStore" to "hosted",
                     "fileHash" to pdf.sha256,
                     "options" to correction.options.toMap(),
                     "pricing" to shop.rates.toMap(),
-                    "estimatedCost" to correction.options.total(shop.rates),
+                    "estimatedCost" to
+                        if (needsPaperQuote(correction.options.paper) || extra.isNotEmpty()) 0L
+                        else correction.options.total(shop.rates),
                 )
             } else emptyMap()
         withTimeout(25000) {
@@ -796,7 +892,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         }
     }
 
-    override suspend fun document(order: PrintOrder): File =
+    override suspend fun document(order: PrintOrder, index: Int): File =
         withContext(Dispatchers.IO) {
             check(order.documentDeletedAt == null) {
                 "This PDF was removed under the shop’s retention policy. Your order history is still saved."
@@ -805,10 +901,15 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             check(session.admin || session.uid == order.ownerId) {
                 "You do not have access to this PDF."
             }
-            val target = File(cache, "${order.id}-${order.fileHash ?: "original"}.pdf")
+            val fileHash =
+                if (index == 0) order.fileHash ?: "original"
+                else
+                    order.attachments.getOrNull(index - 1)?.fileHash
+                        ?: error("This PDF is unavailable.")
+            val target = File(cache, "${order.id}-$fileHash.pdf")
             if (target.exists()) return@withContext target
             if (order.documentStore == "hosted")
-                return@withContext HostedDocuments.download(order, target)
+                return@withContext HostedDocuments.download(order, target, index)
             val blob = storage.reference.child(order.storagePath)
             val metadata = withTimeout(15000) { blob.metadata.await() }
             require(metadata.sizeBytes in 5..MAX_PDF_BYTES.toLong()) {

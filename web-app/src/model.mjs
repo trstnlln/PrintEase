@@ -1,9 +1,12 @@
+import { validateSchedule } from "./pickup-schedule.mjs";
+import { validPaper } from "./paper.mjs";
 const MAX_BYTES = 5 * 1024 * 1024;
 const statuses = ["Pending", "Accepted", "Printing", "Ready for Pickup", "Completed", "Rejected", "Cancelled"];
 const terminal = ["Completed", "Rejected", "Cancelled"];
 const defaultRates = () => ({ bw: 2, color: 10, legalExtra: 1 });
 const defaultShop = () => ({ name: "Nano Print Alangilan", address: "Neptune St., Golden Country Homes, Alangilan, Batangas City", pickupHours: "6:00 AM\u201310:00 PM", acceptingOrders: true, rates: defaultRates(), retentionDays: 0, version: 0, contactEmail: "nanoprint.alangilan@gmail.com", facebookUrl: "", ratesConfirmed: false });
 function validateShop(s) {
+  validateSchedule(s.pickupSchedule);
   s = { ...s, contactEmail: s.contactEmail ?? (["Nano Alangilan", "Nano Print Alangilan"].includes(s.name) ? "nanoprint.alangilan@gmail.com" : ""), facebookUrl: s.facebookUrl ?? "", ratesConfirmed: s.ratesConfirmed ?? false };
   if (typeof s.contactEmail !== "string" || s.contactEmail.length > 254 || s.contactEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.contactEmail.trim())) throw new Error("Enter a valid shop email address.");
   if (!validFacebookUrl(s.facebookUrl) || typeof s.ratesConfirmed !== "boolean") throw new Error("Use the shop\u2019s HTTPS Facebook page link.");
@@ -41,7 +44,7 @@ function serializeOptions(o) {
 const sameOptions = (a, b) => JSON.stringify(serializeOptions(a)) === JSON.stringify(serializeOptions(b));
 const orderTotal = (order) => estimate(order.options, order.pricing || defaultRates()).total;
 function validateOptions(o) {
-  if (!["A4", "Letter", "Legal"].includes(o.paper) || !Number.isInteger(o.pages) || o.pages < 1 || o.pages > 1e3 || !Number.isInteger(o.copies) || o.copies < 1 || o.copies > 100 || typeof o.color !== "boolean" || typeof o.duplex !== "boolean") throw new Error("Check your printing preferences. Copies must be between 1 and 100.");
+  if (!validPaper(o.paper) || !Number.isInteger(o.pages) || o.pages < 1 || o.pages > 1e3 || !Number.isInteger(o.copies) || o.copies < 1 || o.copies > 100 || typeof o.color !== "boolean" || typeof o.duplex !== "boolean") throw new Error("Check your printing preferences. Copies must be between 1 and 100.");
   if (o.pageRanges !== void 0) {
     if (!Array.isArray(o.pageRanges) || o.pageRanges.length > 5) throw new Error("Choose up to 5 separate page ranges, or leave blank for all pages.");
     let end = 0;

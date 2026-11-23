@@ -61,7 +61,11 @@ data class OrderReview(
 
 data class RequestRevision(val id: String, val version: Long, val note: String)
 
-data class CorrectionDraft(val pdf: PdfFile, val options: PrintOptions)
+data class CorrectionDraft(
+    val pdf: PdfFile,
+    val options: PrintOptions,
+    val attachments: List<AttachmentDraft> = emptyList(),
+)
 
 val PrintOrder.canAccept: Boolean
     get() = review == null || review.stage == ReviewStage.Approved
@@ -148,3 +152,25 @@ fun canRemovePdf(
             true &&
         order.documentStore == "hosted" &&
         order.storagePath == "hosted/${order.ownerId}/${order.id}/${order.fileHash}.pdf"
+
+enum class ShopQueueGroup(val title: String) {
+    Review("Needs review"),
+    Waiting("Waiting for student"),
+    Ready("Ready to print"),
+    Printing("Printing"),
+    Pickup("Ready for pickup"),
+    History("History"),
+}
+
+val PrintOrder.queueGroup: ShopQueueGroup
+    get() =
+        when (status) {
+            OrderStatus.Pending ->
+                if (review?.stage in listOf(ReviewStage.Quoted, ReviewStage.Correction))
+                    ShopQueueGroup.Waiting
+                else ShopQueueGroup.Review
+            OrderStatus.Accepted -> ShopQueueGroup.Ready
+            OrderStatus.Printing -> ShopQueueGroup.Printing
+            OrderStatus.Ready -> ShopQueueGroup.Pickup
+            else -> ShopQueueGroup.History
+        }

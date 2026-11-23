@@ -1,3 +1,6 @@
+import { MAX_ATTACHMENTS, batchRangesValid } from "./attachment.mjs";
+import { clockMinutes } from "./pickup-schedule.mjs";
+import { customPaper, requiresPaperQuote, paperLabel } from "./paper.mjs";
 import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
 import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, selectedPages, pageLabel, collectionCode, terminal } from "./model.mjs";
@@ -8,7 +11,7 @@ const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, opti
 class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
     this.root = root;
-    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
+    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
     this.modal = null;
     this.preview = null;
     this.generation = 0;
@@ -48,7 +51,7 @@ class PrintEase {
     this.backend?.close();
     const generation = ++this.generation;
     this.closeModal();
-    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
+    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
     try {
       localStorage.setItem("pe_mode", mode);
     } catch {
@@ -290,6 +293,19 @@ class PrintEase {
           this.toast(removed ? "PDF removed. The order history is still saved." : "More PDF versions remain. Run cleanup again.");
         });
       }
+      case "remove-attachment": {
+        const index = Number(node.dataset.index);
+        this.s.draft.attachments = (this.s.draft.attachments ?? []).filter((_,i) => i !== index);
+        await this.saveDraft();
+        return this.render();
+      }
+      case "attachment-preview": {
+        const order = this.s.orders.find(item => item.id === this.s.selected);
+        const position = Number(node.dataset.index);
+        const attachment = order?.attachments?.[position-1];
+        if (!attachment) return;
+        return this.previewPdf(attachment.fileName, () => this.backend.bytes(order, position));
+      }
       case "estimate": return this.pickupEstimateDialog();
       case "estimate-save": {
         const minutes=Number(document.getElementById('pickup-minutes')?.value),id=node.dataset.id;
@@ -351,6 +367,11 @@ class PrintEase {
       });
       return;
     }
+    if (id === "attachment-input" && event.type === "change") {
+      const file = target.files?.[0];
+      if (file) this.addAttachment(file);
+      return;
+    }
     if (id === "pdf-input" && event.type === "change") {
       const file = target.files?.[0];
       if (file) this.pick(file);
@@ -371,6 +392,21 @@ class PrintEase {
       if (confirm) confirm.disabled = !target.value.trim();
       return;
     }
+    if (this.s.route === "settings" && target.dataset.calendar) {
+      const edit = this.s.shopEdit ??= structuredClone(this.s.settings);
+      const key = target.dataset.calendar;
+      if (key === "enabled") {
+        edit.pickupSchedule = target.checked ? { days: [], open: 360, close: 1320, cutoff: null, closed: "" } : null;
+        this.render();
+      } else if (key === "day") {
+        const day = Number(target.value);
+        edit.pickupSchedule.days = target.checked
+          ? [...new Set([...edit.pickupSchedule.days, day])].sort()
+          : edit.pickupSchedule.days.filter(value => value !== day);
+      } else if (key === "closed") edit.pickupSchedule.closed = target.value;
+      else edit.pickupSchedule[key] = clockMinutes(target.value);
+      return;
+    }
     if (this.s.route === "settings" && (target.dataset.setting || target.dataset.rate)) {
       this.s.shopEdit ??= structuredClone(this.s.settings);
       const edit = this.s.shopEdit;
@@ -381,6 +417,20 @@ class PrintEase {
     }
     if (this.s.route !== "request") return;
     const d = this.s.draft;
+    if (target.dataset.attachmentField) {
+      const item = d.attachments?.[Number(target.dataset.attachmentIndex)];
+      if (!item) return;
+      const field = target.dataset.attachmentField;
+      if (field === "copies") {
+        item.rawCopies = target.value;
+        const copies = Number(target.value);
+        if (Number.isInteger(copies) && copies >= 1 && copies <= 100) item.options.copies = copies;
+      } else if (field === "paper") item.options.paper = target.value;
+      else if (field === "color" || field === "duplex") item.options[field] = target.checked;
+      this.updateEstimate();
+      this.saveDraft().catch(() => {});
+      return;
+    }
     if (id === "copies") {
       d.rawCopies = target.value;
       const number = Number(target.value);
@@ -401,8 +451,22 @@ class PrintEase {
       d.addons = addons.filter(addon => chosen.has(addon.id)).map(addon => addon.id);
     } else if (id === "color") d.options.color = target.checked;
     else if (id === "duplex") d.options.duplex = target.checked;
-    else if (target.name === "paper") d.options.paper = target.value;
-    else return;
+    else if (target.name === "paper") {
+      d.paperError = null;
+      if (target.value === "Custom") {
+        d.paperWidth = "";
+        d.paperHeight = "";
+        d.paperError = "Enter the width and height in millimeters.";
+        d.options.paper = "Custom 210x297 mm";
+      } else d.options.paper = target.value;
+      this.render();
+    } else if (id === "paper-width" || id === "paper-height") {
+      const key = id === "paper-width" ? "paperWidth" : "paperHeight";
+      d[key] = target.value;
+      const value = customPaper(document.getElementById("paper-width")?.value, document.getElementById("paper-height")?.value);
+      d.paperError = value ? null : "Enter whole millimeters from 50 to 1,000.";
+      if (value) d.options.paper = value;
+    } else return;
     this.updateEstimate();
     this.saveDraft().catch((e2) => this.toast(errorMessage(e2)));
   }
@@ -425,7 +489,14 @@ class PrintEase {
         try {
           await this.backend.reviewOrder(order.id, reviewAction, order.review?.version ?? -1, { quote, note });
           this.closeModal();
-          this.toast(reviewAction === "quote" ? "Final price sent for student approval." : "Correction requested.");
+          const savedMessage = reviewAction === "quote" ? "Final price sent for student approval." : "Correction requested.";
+          if (this.s.mode === "live") {
+            try {
+              const version = (order.review?.version ?? -1) + 1;
+              await pushRequest(this.backend.auth?.currentUser, "review/" + encodeURIComponent(order.id) + "/" + version);
+            } catch { /* The saved update stays visible in Orders if push is unavailable. */ }
+          }
+          this.toast(savedMessage);
         } catch (error) {
           form.querySelector("[role=alert]").textContent = errorMessage(error);
         }
@@ -441,6 +512,7 @@ class PrintEase {
           if (String(edit.rates[key]).trim() === "") throw new Error("Enter all three print rates.");
           edit.rates[key] = Number(edit.rates[key]);
         }
+        if (edit.pickupSchedule) edit.pickupSchedule.closed = edit.pickupSchedule.closed.split(",").map(date => date.trim()).join(",");
         validateShop(edit);
         await this.backend.saveSettings(edit);
         this.s.route = "account";
@@ -530,8 +602,23 @@ class PrintEase {
       }
     }, "request");
   }
+  addAttachment(file) {
+    if (!this.s.draft.pdf || !this.s.paperSizesAvailable || (this.s.draft.attachments?.length ?? 0) >= MAX_ATTACHMENTS) return;
+    const uid = this.s.session?.uid;
+    return this.action(async () => {
+      const { inspectPdf } = await import("./pdf.mjs");
+      const pdf = await inspectPdf(file);
+      if (uid !== this.s.session?.uid) return;
+      this.s.draft.attachments = [...(this.s.draft.attachments ?? []), { pdf, file, options: { ...defaults(), pages: pdf.pages }, rawCopies: "1" }];
+      await this.saveDraft();
+    }, "request");
+  }
+  validAttachmentCopies() {
+    return (this.s.draft.attachments ?? []).every(({rawCopies, options}) =>
+      rawCopies === undefined || (rawCopies !== "" && Number(rawCopies) === options.copies));
+  }
   updateEstimate() {
-    const d = this.s.draft, o = d.options, cost = estimate(o, this.s.settings.rates), valid = !!d.rawCopies.trim() && Number.isInteger(Number(d.rawCopies)) && Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 && !d.rangeError;
+    const d = this.s.draft, o = d.options, cost = estimate(o, this.s.settings.rates), valid = !!d.rawCopies.trim() && Number.isInteger(Number(d.rawCopies)) && Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 && !d.rangeError && !d.paperError && this.validAttachmentCopies() && batchRangesValid(d);
     const set = (id, value) => {
       const node = document.getElementById(id);
       if (node) node.textContent = value;
@@ -539,13 +626,18 @@ class PrintEase {
     set("summary-copies", valid ? o.copies : "\u2014");
     set("summary-mode", o.color ? "Color" : "Black & white");
     set("summary-sides", o.duplex ? "Double-sided" : "Single-sided");
-    set("summary-paper", o.paper);
-    set("summary-total", d.pdf && valid ? pesos(cost.total) : "\u2014");
-    set("mobile-total", d.pdf && valid ? pesos(cost.total) : "\u2014");
-    set("summary-formula", d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side. ${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate.");
-    set("range-help", d.rangeError || "Leave blank for all pages, or enter 1-3, 5, 8-10.");
-    document.getElementById("range-help")?.classList.toggle("danger-text", !!d.rangeError);
-    document.getElementById("page-ranges")?.setAttribute("aria-invalid", String(!!d.rangeError));
+    set("summary-paper", paperLabel(o.paper));
+    set("paper-dimension-help", d.paperError || "Enter whole millimeters from 50 to 1,000.");
+    document.getElementById("paper-dimension-help")?.classList.toggle("danger-text", !!d.paperError);
+    const quoteOnly = requiresPaperQuote(o.paper) || !!d.attachments?.length;
+    set("summary-price-label", quoteOnly ? "Pricing" : "Estimated total");
+    set("summary-total", d.pdf && valid ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
+    set("mobile-total", d.pdf && valid ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
+    set("summary-formula", quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side. ${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate.");
+    const rangeProblem = d.rangeError || (!batchRangesValid(d) ? "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately." : null);
+    set("range-help", rangeProblem || "Leave blank for all pages, or enter 1-3, 5, 8-10.");
+    document.getElementById("range-help")?.classList.toggle("danger-text", !!rangeProblem);
+    document.getElementById("page-ranges")?.setAttribute("aria-invalid", String(!!rangeProblem));
     set("copy-help", Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 ? "Choose 1\u2013100 copies." : "Enter a whole number from 1 to 100.");
     document.getElementById("copy-help")?.classList.toggle("danger-text", !valid);
     document.getElementById("copies")?.setAttribute("aria-invalid", String(!valid));
@@ -553,19 +645,26 @@ class PrintEase {
   }
   review() {
     const d = this.s.draft;
+    if (d.paperError) return this.toast(d.paperError);
+    if (!batchRangesValid(d)) return this.toast("Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately.");
+    if (!this.validAttachmentCopies()) return this.toast("Enter 1–100 copies for each PDF.");
     if (!d.pdf || !d.rawCopies.trim() || Number(d.rawCopies) !== d.options.copies || d.rangeError) return this.toast("Choose a PDF and a valid number of copies.");
     if ((!this.s.settings.acceptingOrders && !d.revision) || this.s.settingsError) return this.toast(this.s.settingsError || "The shop has paused new requests. Your draft is saved.");
     const quotedVersion = this.s.settings.version;
     const cost = estimate(d.options, this.s.settings.rates);
-    const summary=`<div class="review-sheet"><div class="review-file">${icon('pdf')}<div><b>${e(d.pdf.name)}</b><p class="small">${d.pdf.pages} pages in PDF · ${Math.ceil(d.pdf.bytes/1024)} KB</p></div></div><dl class="review-options">${[['Pages to print',pageLabel(d.options)],['Copies',d.options.copies],['Paper',d.options.paper],['Print mode',d.options.color?'Color':'Black & white'],['Sides',d.options.duplex?'Double-sided':'Single-sided'],['Pickup at',this.s.settings.name]].map(([label,value])=>`<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join('')}</dl><div class="review-total"><span>Estimated total</span><strong>${pesos(cost.total)}</strong></div><p class="small">${this.s.settings.ratesConfirmed?'Pay at pickup.':'Sample prices. Confirm the actual price with the shop.'} The shop reviews your PDF before assigning a queue number.</p></div>`;
+    const displayTotal = requiresPaperQuote(d.options.paper) || d.attachments?.length ? "Shop quote" : pesos(cost.total);
+    const summary=`<div class="review-sheet"><div class="review-file">${icon('pdf')}<div><b>${e(d.pdf.name)}</b><p class="small">${d.pdf.pages} pages in PDF · ${Math.ceil(d.pdf.bytes/1024)} KB</p></div></div><dl class="review-options">${[['Pages to print',pageLabel(d.options)],['Copies',d.options.copies],['Paper',paperLabel(d.options.paper)],['Print mode',d.options.color?'Color':'Black & white'],['Sides',d.options.duplex?'Double-sided':'Single-sided'],['Pickup at',this.s.settings.name]].map(([label,value])=>`<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join('')}</dl><div class="review-total"><span>Estimated total</span><strong>${displayTotal}</strong></div><p class="small">${displayTotal === "Shop quote" ? "The shop will send one price for approval." :
+      this.s.settings.ratesConfirmed ? "Pay at pickup." : "Sample estimate. The shop confirms the final price."} The shop reviews your request before assigning a queue number.</p></div>`;
     const selectedAddons = addons.filter(addon => d.addons?.includes(addon.id)).map(addon => addon.label);
+    const extraSummary = d.attachments?.length ? `<div class="extra-files stack"><b>Included PDFs</b>${d.attachments.map(item =>
+      `<p>${e(item.pdf.name)} · ${e(paperLabel(item.options.paper))} · ${item.options.copies} copies</p>`).join("")}</div>` : "";
     const addonSummary = selectedAddons.length ? `<p><b>Requested add-ons:</b> ${e(selectedAddons.join(", "))}. The shop includes these in the final quote.</p>` : "";
     this.confirm(d.revision ? "Send the corrected request?" : "Ready to send?", `${d.pdf.name}
 
 ${pageLabel(d.options)} \xD7 ${d.options.copies} copies
 ${d.options.paper} \xB7 ${d.options.color ? "Color" : "Black & white"} \xB7 ${d.options.duplex ? "Double-sided" : "Single-sided"}
 
-Estimated total: ${pesos(cost.total)}
+Estimated total: ${displayTotal}
 Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.revision ? "Send correction" : "Submit request", async () => {
       if (quotedVersion !== this.s.settings.version) throw new Error("Shop details or rates changed. Review your updated total.");
       await this.saveDraft();
@@ -585,7 +684,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
       this.s.route = "orders";
       history.replaceState(null, "", "#orders");
       this.toast(d.revision ? "Correction sent. The shop will review it again." : "Request submitted. Follow its progress in Orders.");
-    }, summary + addonSummary);
+    }, summary + extraSummary + addonSummary);
   }
   staffReviewDialog(action) {
     const order = this.s.orders.find(item => item.id === this.s.selected);
@@ -594,7 +693,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     this.openModal(`<form id="review-form" class="dialog-content stack">
       <h2>${quote ? "Set the final price" : "Request a correction"}</h2>
       <p class="small">${quote ? "Include any confirmed add-ons. The student must approve before you can accept the request." : "Tell the student what needs to change. They can update this same request."}</p>
-      ${quote ? `<label>Final price (₱)<input name="quote" type="number" inputmode="numeric" min="1" max="${MAX_QUOTE}" required value="${order.review?.quote ?? estimate(order.options, order.pricing).total}"></label>` : ""}
+      ${quote ? `<label>Final price (₱)<input name="quote" type="number" inputmode="numeric" min="1" max="${MAX_QUOTE}" required value="${order.review?.quote ?? ((requiresPaperQuote(order.options.paper) || order.attachments?.length) ? "" : estimate(order.options, order.pricing).total)}"></label>` : ""}
       <label>${quote ? "Note for the student (optional)" : "What needs to change?"}<textarea name="note" maxlength="500" rows="3" ${quote ? "" : "required"}></textarea></label>
       <p class="danger-text" role="alert"></p>
       <div class="dialog-actions"><button type="button" class="button outline" data-action="close-modal">Back</button><button class="button" type="submit">${quote ? "Send price" : "Request correction"}</button></div>
@@ -650,7 +749,15 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     if(uid!==this.s.session?.uid||generation!==this.generation)return;
     const options=structuredClone(order.options);delete options.selectedPages;options.pages=pdf.pages;validateOptions(options);
     const revision = correcting ? { id: order.id, version: order.review.version, note: order.review.note } : null;
-    const draft={id:correcting ? order.id : crypto.randomUUID(),revision,addons:order.review?.addons,pdf,file,options,rawCopies:String(options.copies),rawRanges:rangeText(options.pageRanges),rangeError:null};
+    const attachments = await Promise.all((order.attachments ?? []).map(async (item,index) => {
+      const file = new Blob([await this.backend.bytes(order,index+1)],{type:"application/pdf"});
+      file.name = item.fileName;
+      const pdf = await inspectPdf(file);
+      if (pdf.pages !== item.options.pages) throw new Error("A saved PDF no longer matches its page count.");
+      return { pdf, file, options: structuredClone(item.options), rawCopies: String(item.options.copies) };
+    }));
+    if(uid!==this.s.session?.uid||generation!==this.generation)return;
+    const draft={id:correcting ? order.id : crypto.randomUUID(),revision,addons:order.review?.addons,attachments,pdf,file,options,rawCopies:String(options.copies),rawRanges:rangeText(options.pageRanges),rangeError:null};
     this.s.draft=draft;this.s.draftWarning=null;this.s.requestError=null;
     const {file:blob,...value}=draft;
     try{await db.transact(['settings','files'],tx=>{tx.objectStore('settings').put({id:key,value});tx.objectStore('files').put({id:key,blob});});}

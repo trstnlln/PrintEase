@@ -53,6 +53,18 @@ Publish the current Firestore rules, then refresh the web app or sign in again o
 
 Bookbinding and lamination are optional requests on the print form. Staff include confirmed add-ons in the final quote. Students can ask the shop about its other advertised services. New requests stay paused when staff enable confirmed rates and keep the shop's availability switch off.
 
+## Paper sizes, multi-PDF requests and pickup windows
+
+Students can choose A4, Letter or Legal at configured rates. For A3, A5, B5, Folio, Tabloid and custom paper (50–1,000 mm for each dimension), staff confirm stock and send the price. The final quote is the price the student approves.
+
+A request may contain up to three PDFs. Each PDF has its own paper, copies, color and sides. Multi-PDF requests print all pages. Use a single-PDF request when selecting a subset of pages. Open each PDF from the same request, then send one quote and use one collection code.
+
+The queue groups requests by the next step. Quote and correction alerts open the corresponding student request. Use Account to enable alerts on the student's device.
+
+In shop settings, turn on **Show pickup windows** and save the actual opening days, hours, optional same-day cutoff and closure dates in Philippine time. Students see the next window before submission. Staff confirm readiness for each request.
+
+The new settings and expanded requests require publishing the current Firestore rules. Demo mode can try them immediately.
+
 ## Completed PDF cleanup
 
 Shop administrators can select **Keep files**, **7 days**, **14 days** or **30 days** in shop settings. The default is Keep files. Once a completed order reaches the selected period, choose **Remove expired PDF** in its details and confirm. The app removes the current PDF and earlier uploads stored specifically for that order. Print options, pricing, status and the request ID remain in order history. This action does not affect copies someone already saved elsewhere.

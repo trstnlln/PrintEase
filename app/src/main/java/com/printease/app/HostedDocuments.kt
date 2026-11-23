@@ -124,11 +124,13 @@ object HostedDocuments {
             }
         }
 
-    suspend fun notifyReady(orderId: String): Boolean =
+    suspend fun notifyReady(orderId: String, reviewVersion: Long? = null): Boolean =
         withContext(Dispatchers.IO) {
             require(Regex("[A-Za-z0-9_-]{1,128}").matches(orderId))
             val (_, token) = identity()
-            val request = connection("/api/push/notify/$orderId", token, "POST")
+            val route =
+                if (reviewVersion == null) "notify/$orderId" else "review/$orderId/$reviewVersion"
+            val request = connection("/api/push/$route", token, "POST")
             request.readTimeout = 45000
             try {
                 request.doOutput = true
@@ -143,11 +145,12 @@ object HostedDocuments {
             }
         }
 
-    suspend fun download(order: PrintOrder, target: File): File =
+    suspend fun download(order: PrintOrder, target: File, index: Int = 0): File =
         withContext(Dispatchers.IO) {
             require(Regex("[A-Za-z0-9_-]{1,128}").matches(order.id))
             val (_, token) = identity()
-            val request = connection("/api/documents/${order.id}", token, "GET")
+            val query = if (index == 0) "" else "?file=$index"
+            val request = connection("/api/documents/${order.id}$query", token, "GET")
             val temp = File(target.parentFile, "${order.id}-${UUID.randomUUID()}.part")
             try {
                 checkResponse(request)

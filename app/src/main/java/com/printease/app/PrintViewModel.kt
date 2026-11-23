@@ -2,6 +2,7 @@ package com.printease.app
 
 import android.app.Application
 import android.net.Uri
+import android.os.Bundle
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -43,6 +44,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     val route = saved.getStateFlow("route", "home")
     val selectedId = saved.getStateFlow("selected", "")
     val pdf = MutableStateFlow(restorePdf())
+    val attachments = MutableStateFlow(restoreAttachments())
     val options =
         MutableStateFlow(
             PrintOptions(
@@ -82,6 +84,64 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         if (!File(path).exists()) return null
         return runCatching { documents.inspect(File(path), saved["pdfName"] ?: "Document.pdf") }
             .getOrNull()
+    }
+
+    private fun restoreAttachments(): List<AttachmentDraft> =
+        saved.get<ArrayList<Bundle>>("attachments").orEmpty().take(MAX_ATTACHMENTS).mapNotNull {
+            item ->
+            runCatching {
+                    val path = requireNotNull(item.getString("path"))
+                    val pdf = documents.inspect(File(path), item.getString("name", "Document.pdf"))
+                    val options =
+                        PrintOptions(
+                            item.getString("paper", "A4"),
+                            pdf.pages,
+                            item.getInt("copies", 1),
+                            item.getBoolean("color"),
+                            item.getBoolean("duplex"),
+                        )
+                    AttachmentDraft(
+                        pdf,
+                        options,
+                        item.getString("copiesText", options.copies.toString()),
+                    )
+                }
+                .getOrNull()
+        }
+
+    private fun saveAttachments(items: List<AttachmentDraft>) {
+        attachments.value = items
+        saved["attachments"] =
+            ArrayList(
+                items.map { item ->
+                    Bundle().apply {
+                        putString("path", item.pdf.path)
+                        putString("name", item.pdf.name)
+                        putString("paper", item.options.paper)
+                        putInt("copies", item.options.copies)
+                        putBoolean("color", item.options.color)
+                        putBoolean("duplex", item.options.duplex)
+                        putString("copiesText", item.copiesText)
+                    }
+                }
+            )
+    }
+
+    fun pickAttachment(uri: Uri) = action {
+        check(pdf.value != null && shop.value.paperSizesAvailable)
+        check(attachments.value.size < MAX_ATTACHMENTS) { "Choose up to three PDFs per request." }
+        saveAttachments(attachments.value + AttachmentDraft(documents.import(uri)))
+    }
+
+    fun changeAttachment(index: Int, value: AttachmentDraft) {
+        if (busy.value || attachments.value.getOrNull(index)?.pdf?.path != value.pdf.path) return
+        saveAttachments(attachments.value.mapIndexed { i, item -> if (i == index) value else item })
+    }
+
+    fun removeAttachment(index: Int) {
+        if (busy.value) return
+        attachments.value.getOrNull(index)?.let { File(it.pdf.path).delete() }
+        saveAttachments(attachments.value.filterIndexed { i, _ -> i != index })
     }
 
     fun navigate(value: String) {
@@ -180,7 +240,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 revision,
                 ReviewAction.Revise,
                 requireNotNull(saved["revisionVersion"]),
-                draft = CorrectionDraft(document, options),
+                draft = CorrectionDraft(document, options, attachments.value),
                 progress = progressUpdate,
             )
         } else {
@@ -193,6 +253,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 document,
                 options,
                 addons.value.takeIf { reviewAvailable },
+                attachments.value,
                 progressUpdate,
             )
         }
@@ -205,6 +266,8 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun discardDraft() {
+        attachments.value.forEach { File(it.pdf.path).delete() }
+        saveAttachments(emptyList())
         pdf.value?.let { File(it.path).delete() }
         pdf.value = null
         saved.remove<String>("pdfPath")
@@ -257,6 +320,18 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     fun reviewOrder(id: String, action: ReviewAction, version: Long, note: String, quote: Long?) =
         action {
             repository!!.reviewOrder(id, action, version, note, quote)
+            if (
+                !BuildConfig.DEMO &&
+                    action in listOf(ReviewAction.Quote, ReviewAction.RequestCorrection)
+            ) {
+                try {
+                    HostedDocuments.notifyReady(id, version + 1)
+                } catch (error: CancellationException) {
+                    currentCoroutineContext().ensureActive()
+                } catch (_: Exception) {
+                    // The saved quote or correction stays visible in Orders.
+                }
+            }
             events.send(
                 when (action) {
                     ReviewAction.Quote -> "Final price sent for approval."
@@ -301,6 +376,25 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 File(imported.path).delete()
                 throw error
             }
+        val preparedAttachments = mutableListOf<AttachmentDraft>()
+        try {
+            order.attachments.forEachIndexed { index, record ->
+                val source = repository.document(order, index + 1)
+                val copy = documents.copyDraft(source, record.fileName)
+                if (copy.pages != record.options.pages) {
+                    File(copy.path).delete()
+                    error("An additional PDF no longer matches its page count.")
+                }
+                preparedAttachments += AttachmentDraft(copy, record.options)
+            }
+            check(shop.value.session?.uid == session.uid) { "Your account changed. Sign in again." }
+        } catch (error: Exception) {
+            File(imported.path).delete()
+            preparedAttachments.forEach { File(it.pdf.path).delete() }
+            throw error
+        }
+        attachments.value.forEach { File(it.pdf.path).delete() }
+        saveAttachments(preparedAttachments)
         val previous = pdf.value
         pdf.value = imported
         saved["pdfPath"] = imported.path
@@ -361,7 +455,8 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         )
     }
 
-    suspend fun loadDocument(order: PrintOrder): File = repository!!.document(order)
+    suspend fun loadDocument(order: PrintOrder, index: Int = 0): File =
+        repository!!.document(order, index)
 
     private fun action(
         timeoutMessage: String =

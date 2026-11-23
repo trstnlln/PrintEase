@@ -158,16 +158,34 @@ export function createPushApi({authorize,administrator,firestore,json,fail,origi
    await save(user,'users/'+encodeURIComponent(user.uid)+'/pushSubscriptions/'+id,{endpoint:subscription.endpoint,keys:{p256dh:subscription.keys.p256dh,auth:subscription.keys.auth},updatedAt:now()});
    return json({id,enabled:true});
   }
-  const notify=/^\/api\/push\/notify\/([A-Za-z0-9_-]{1,128})$/.exec(path);
-  if(notify&&request.method==='POST'){
-   if(!await administrator(user))fail(403,'push/access-denied','Only the shop can send pickup alerts.');
-   const {response,data}=await firestore(user,'orders/'+encodeURIComponent(notify[1]));
-   if(!response.ok)fail(404,'push/order-missing','The request is unavailable. Refresh the queue.');
-   const order=documentValue(data);
-   if(order.status!=='Ready for Pickup'||typeof order.ownerId!=='string'||!order.ownerId||/[\/\\]/.test(order.ownerId))fail(409,'push/not-ready','Pickup alerts are sent only for requests marked Ready for Pickup.');
-   const devices=await subscriptions(user,order.ownerId);
-   const message={type:'ready',ownerId:order.ownerId,orderId:notify[1]};
-   const results = await Promise.all(devices.map(item => send(user, env, item, message, 'orders/' + notify[1] + '/pushDeliveries/' + item.id)));
+  const ready = /^\/api\/push\/notify\/([A-Za-z0-9_-]{1,128})$/.exec(path);
+  const review = /^\/api\/push\/review\/([A-Za-z0-9_-]{1,128})\/(0|[1-9][0-9]{0,9})$/.exec(path);
+  if ((ready || review) && request.method === 'POST') {
+   if (!await administrator(user)) fail(403, 'push/access-denied', 'Only the shop can send order alerts.');
+   const orderId = (ready || review)[1];
+   const {response,data} = await firestore(user, 'orders/' + orderId);
+   if (!response.ok) fail(404, 'push/order-missing', 'The request is unavailable. Refresh the queue.');
+   const order = documentValue(data);
+   if (typeof order.ownerId !== 'string' || !order.ownerId || /[\/\\]/.test(order.ownerId)) {
+    fail(409, 'push/not-ready', 'This request no longer has an alert to send.');
+   }
+   let type = 'ready';
+   if (ready && order.status !== 'Ready for Pickup') {
+    fail(409, 'push/not-ready', 'Pickup alerts are sent only for requests marked Ready for Pickup.');
+   }
+   if (review) {
+    const stage = order.review?.stage;
+    if (order.status !== 'Pending' || order.review?.version !== Number(review[2]) || !['quoted','correction'].includes(stage)) {
+     fail(409, 'push/not-ready', 'This quote or correction is no longer waiting for a response.');
+    }
+    type = stage === 'quoted' ? 'quote' : 'correction';
+   }
+   const devices = await subscriptions(user, order.ownerId);
+   const message = { type, ownerId: order.ownerId, orderId };
+   const results = await Promise.all(devices.map(async item => {
+    const key = review ? await hash(item.id + ':' + type + ':' + review[2]) : item.id;
+    return send(user, env, item, message, 'orders/' + orderId + '/pushDeliveries/' + key);
+   }));
    return json(summarize(results));
   }
   if(path==='/api/push/test'&&request.method==='POST'){

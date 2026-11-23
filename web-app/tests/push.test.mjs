@@ -15,7 +15,7 @@ async function fixture(){
  const device=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
  const subscription={endpoint:'https://web.push.apple.com/device',keys:{p256dh:b64(await crypto.subtle.exportKey('raw',device.publicKey)),auth:b64(crypto.getRandomValues(new Uint8Array(16)))}};
  const env={PUSH_VAPID_PUBLIC_KEY:b64(await crypto.subtle.exportKey('raw',keys.publicKey)),PUSH_VAPID_PRIVATE_KEY:jwk.d};
- const state={status:'Ready for Pickup',documents:new Map(),sent:[],lookups:0,providerStatus:201,providerReason:null,receiptStatus:null};
+ const state={status:'Ready for Pickup',documents:new Map(),sent:[],lookups:0,providerStatus:201,providerReason:null,receiptStatus:null,review:null};
  const worker=createWorker({}, {origin,projectId,fetchImpl:async(url,init={})=>{
   if(url.includes('accounts:lookup')){state.lookups++;const uid=JSON.parse(atob(JSON.parse(init.body).idToken.split('.')[1])).sub;return Response.json({users:[{localId:uid}]});}
   if(url===subscription.endpoint){
@@ -28,7 +28,9 @@ async function fixture(){
   const path=url.split('/documents/')[1];
   if(path==='admins/admin')return Response.json({fields:{enabled:{booleanValue:true}}});
   if(path?.startsWith('admins/'))return new Response('{}',{status:404});
-  if(path==='orders/job')return Response.json({fields:{ownerId:{stringValue:'student'},status:{stringValue:state.status}}});
+  if(path==='orders/job')return Response.json({fields:{ownerId:{stringValue:'student'},status:{stringValue:state.status},
+   ...(state.review?{review:{mapValue:{fields:{stage:{stringValue:state.review.stage},version:{integerValue:String(state.review.version)}}}}}:{})}});
+
   if(path?.startsWith('users/student/pushSubscriptions?'))return Response.json({documents:[...state.documents.entries()].filter(([p])=>p.startsWith('users/student/pushSubscriptions/')).map(([p,d])=>({name:p,...d}))});
   if(init.method==='PATCH'&&path.includes('/pushDeliveries/')&&state.receiptStatus)return new Response('{}',{status:state.receiptStatus});
   if(init.method==='PATCH'){const doc=JSON.parse(init.body);state.documents.set(path,doc);return Response.json(doc);}
@@ -104,6 +106,22 @@ test('an expired or mismatched subscription prompts the student to reconnect', a
  assert.match(pickupAlertMessage(expired),/re-enable pickup alerts/);
 });
 
+test('quote alerts require the current review version and have separate delivery receipts', async () => {
+ const f=await fixture();
+ await f.call('subscriptions',{body:f.subscription});
+ f.state.status='Pending';
+ f.state.review={stage:'quoted',version:2};
+ assert.equal((await f.call('review/job/2')).status,403);
+ assert.equal((await f.call('review/job/1',{uid:'admin'})).status,409);
+ assert.equal((await (await f.call('review/job/2',{uid:'admin'})).json()).sent,1);
+ assert.equal((await (await f.call('review/job/2',{uid:'admin'})).json()).already,1);
+ f.state.review={stage:'correction',version:3};
+ assert.equal((await (await f.call('review/job/3',{uid:'admin'})).json()).sent,1);
+ f.state.status='Ready for Pickup';
+ assert.equal((await (await f.call('notify/job',{uid:'admin'})).json()).sent,1);
+ assert.equal(f.state.sent.length,3);
+});
+
 test('service worker displays generic alerts only for the current opted-in account',async()=>{
  const listeners={},shown=[];const self={addEventListener:(type,fn)=>listeners[type]=fn,location:{origin},registration:{showNotification:async(...args)=>shown.push(args)}};
  vm.runInNewContext(await readFile(new URL('../src/push-worker.js',import.meta.url),'utf8'),{self,indexedDB,URL});
@@ -111,7 +129,10 @@ test('service worker displays generic alerts only for the current opted-in accou
  async function push(message){let pending;listeners.push({data:{json:()=>message},waitUntil:value=>pending=value});await pending;}
  await push({type:'ready',ownerId:'other',orderId:'job'});assert.equal(shown.length,0);
  await push({type:'ready',ownerId:'student',orderId:'job'});assert.equal(shown.length,1);assert.equal(shown[0][1].data.path,'/#detail/job');
- await db.remove('settings','push-owner');await push({type:'ready',ownerId:'student',orderId:'job'});assert.equal(shown.length,1);
+ await push({type:'quote',ownerId:'student',orderId:'quote-job'});
+ assert.equal(shown[1][0],'Approve your print quote');
+ assert.equal(shown[1][1].data.path,'/#detail/quote-job');
+ await db.remove('settings','push-owner');await push({type:'ready',ownerId:'student',orderId:'job'});assert.equal(shown.length,2);
 });
 
 test('browser permission starts from the user gesture and account switching removes local alerts',async t=>{

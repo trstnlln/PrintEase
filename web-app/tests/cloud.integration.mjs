@@ -36,8 +36,10 @@ let state;const snapshots=[],bucket=new MemoryBucket(),host='https://test.printe
  await backend.refresh();await until(()=>state.session?.admin&&state.orders.length===1);
  await backend.transition(draft.id,'Accepted');await until(()=>state.orders[0].status==='Accepted');assert.equal(state.orders[0].queue,1);assert.deepEqual(await backend.bytes(state.orders[0]),bytes);await backend.transition(draft.id,'Printing');await backend.transition(draft.id,'Ready for Pickup');
  await backend.signOut();await backend.email('web-student@example.com','test-password-123');await until(()=>state.orders[0]?.status==='Ready for Pickup');assert.equal(state.session.admin,false);assert.equal(state.orders.length,1);
- await backend.signOut();await backend.email('web-admin@example.com','test-password-123');await until(()=>state.session?.admin);
- await backend.saveSettings({...defaultShop(),rates:{bw:4,color:12,legalExtra:2}});await until(()=>state.settings.version===1);assert.equal(state.orders[0].estimatedCost,4);
+ await backend.signOut();await backend.email('web-admin@example.com','test-password-123');await until(()=>state.session?.admin&&state.orders.length===1);
+ const pickupSchedule={days:[1,2,3,4,5],open:360,close:1320,cutoff:1200,closed:''};
+ await backend.saveSettings({...defaultShop(),rates:{bw:4,color:12,legalExtra:2},pickupSchedule});
+ await until(()=>state.settings.version===1);assert.deepEqual(state.settings.pickupSchedule,pickupSchedule);assert.equal(state.orders[0].estimatedCost,4);
  await backend.signOut();await backend.email('web-student@example.com','test-password-123');await until(()=>state.session?.uid===student&&state.settings.version===1);
  const selected={...draft,id:'web-selected',pdf:{...draft.pdf,name:'Selected.pdf'},options:{...defaults(),pages:2,pageRanges:[{start:2,end:2}]}};
  await backend.submit(selected,()=>{});await until(()=>state.orders.length===2);assert.equal(state.orders.find(o=>o.id==='web-selected').estimatedCost,4);assert.equal(state.orders.find(o=>o.id==='web-selected').options.selectedPages,1);
@@ -53,12 +55,18 @@ let state;const snapshots=[],bucket=new MemoryBucket(),host='https://test.printe
  const reviewedId='web-review-order', suffix='@example.com';
  await backend.signOut();
  await backend.email('web-student'+suffix,'test-password-123');
- await until(()=>state.session?.uid===student&&state.reviewAvailable&&state.settings.version===1);
- const reviewed={...draft,id:reviewedId,addons:['lamination']};
+ await until(()=>state.session?.uid===student&&state.reviewAvailable&&state.paperSizesAvailable&&state.settings.version===1);
+ const cover=samplePDF(1), coverHash=Buffer.from(await crypto.subtle.digest('SHA-256',cover)).toString('hex');
+ const reviewed={...draft,id:reviewedId,addons:['lamination'],options:{...draft.options,paper:'Custom 210x330 mm'},
+   attachments:[{pdf:{name:'Cover.pdf',pages:1,sha256:coverHash},file:new Blob([cover]),options:{...defaults(),paper:'A3',color:true}}]};
+ await backend.submit(reviewed,()=>{});
  await backend.submit(reviewed,()=>{});
  const findReview=()=>state.orders.find(o=>o.id===reviewedId);
  await until(()=>findReview()?.review?.stage==='submitted');
  assert.equal(findReview().storagePath,`hosted/${student}/${reviewedId}/${hash}.pdf`);
+ assert.equal(findReview().attachments[0].options.paper,'A3');
+ assert.deepEqual(await backend.bytes(findReview(),1),cover);
+ await assert.rejects(backend.bytes(findReview(),2),/unavailable/i);
  await backend.signOut();await backend.email('web-admin'+suffix,'test-password-123');
  await until(()=>state.session?.admin&&findReview()?.review?.stage==='submitted');
  await assert.rejects(backend.transition(reviewedId,'Accepted'),/must approve/);
@@ -73,6 +81,7 @@ let state;const snapshots=[],bucket=new MemoryBucket(),host='https://test.printe
  await until(()=>findReview()?.review?.stage==='revised');
  assert.equal(findReview().options.pages,3);
  assert.deepEqual(await backend.bytes(findReview()),changed);
+ assert.deepEqual(await backend.bytes(findReview(),1),cover);
  await backend.signOut();await backend.email('web-admin'+suffix,'test-password-123');
  await until(()=>state.session?.admin&&findReview()?.review?.stage==='revised');
  await backend.reviewOrder(reviewedId,'quote',2,{quote:36,note:'Includes lamination'});

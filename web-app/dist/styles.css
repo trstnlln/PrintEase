@@ -208,3 +208,27 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .review-buttons { display: flex; flex-wrap: wrap; gap: .75rem; }
 .print-addons { min-inline-size: 0; margin: 0; }
 .print-addons legend { padding-inline: .5rem; font-weight: 700; }
+
+.paper-picker { gap: .5rem; }
+.paper-dimensions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  gap: .75rem;
+}
+
+.queue-group {
+  display: grid;
+  gap: .625rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  border-radius: 1rem;
+}
+.queue-group-heading { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.queue-group-heading h3 { font-size: 1.075rem; }
+.schedule-days { display:flex; flex-wrap:wrap; gap:.5rem 1rem; border:1px solid var(--line); border-radius:.75rem; padding:.75rem; }
+.schedule-days label { display:flex; flex-direction:row; align-items:center; gap:.5rem; font-weight:500; }
+.schedule-days input { width:auto; min-height:auto; }
+.extra-files { gap: .75rem; }
+.extra-files h2 { font-size: 1.25rem; }
+.extra-file { padding: 1rem; border: 1px solid var(--line); border-radius: .75rem; gap: .625rem; }

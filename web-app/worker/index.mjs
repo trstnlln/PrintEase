@@ -138,7 +138,15 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
    if(owner!==user.uid&&!await administrator(user))fail(403,'document/access-denied','You do not have access to this PDF.');
    if(value(data,'documentDeletedAt')?.integerValue)fail(410,'document/removed','This PDF has been removed. Your order history is saved.');
    if(value(data,'documentStore')?.stringValue!=='hosted'||!/^[a-f0-9]{64}$/.test(hash||'')||(key!==`hosted/${owner}/${hash}.pdf` && key!==scopedKey(owner,order[1],hash)))fail(409,'document/store-mismatch','This PDF uses an older storage service. Open it in the matching app version.');
-   return download(env,key);
+   const index = new URL(request.url).searchParams.get('file');
+   if (index == null || index === '0') return download(env,key);
+   if (!['1','2'].includes(index)) fail(404,'document/not-found','This PDF is unavailable.');
+   const item = value(data,'attachments')?.arrayValue?.values?.[Number(index)-1]?.mapValue;
+   const fileHash = item?.fields?.fileHash?.stringValue;
+   if (!validHash.test(fileHash || '') || key !== scopedKey(owner,order[1],hash)) {
+    fail(404,'document/not-found','This PDF is unavailable.');
+   }
+   return download(env,scopedKey(owner,order[1],fileHash));
   }
   fail(404,'document/not-found','This document action is unavailable.');
  }

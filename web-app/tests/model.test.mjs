@@ -37,3 +37,24 @@ test('shop contacts reject deceptive links and sample rates remain unconfirmed b
  const {contactEmail,facebookUrl,ratesConfirmed,...legacy}=defaultShop();const migrated=validateShop({...legacy,name:'Nano Alangilan',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop'});assert.equal(migrated.pickupHours,'6:00 AM–10:00 PM');assert.equal(migrated.ratesConfirmed,false);
  assert.equal(validPickupTime(Date.now()+8*86400000),false);
 });
+
+test('quoted papers accept common sizes and bounded custom dimensions',async()=>{
+ const {customPaper,customDimensions,validPaper,requiresPaperQuote,paperLabel}=await import('../src/paper.mjs');
+ assert.equal(customPaper('210','330'),'Custom 210x330 mm');
+ assert.deepEqual(customDimensions('Custom 50x1000 mm'),[50,1000]);
+ assert.equal(paperLabel('Custom 210x330 mm'),'210 × 330 mm (custom)');
+ assert.equal(customPaper('49','100'),null);
+ assert.equal(customPaper('1001','180'),null);
+ assert.equal(validPaper('A3'),true);
+ assert.equal(requiresPaperQuote('Folio'),true);
+ assert.equal(requiresPaperQuote('Legal'),false);
+});
+
+test('pickup windows in Philippine time respect the cutoff, weekdays and holiday closures',async()=>{
+ const {validateSchedule,nextPickupWindow}=await import('../src/pickup-schedule.mjs');
+ const schedule={days:[1,2,3,4,5],open:360,close:1320,cutoff:960,closed:'2026-11-24'};
+ assert.throws(()=>validateSchedule({...schedule,closed:'2026-02-31'}));
+ assert.throws(()=>validateSchedule({...schedule,cutoff:1400}));
+ assert.match(nextPickupWindow(schedule,Date.parse('2026-11-23T07:59:00Z')).window,/^Today/);
+ assert.match(nextPickupWindow(schedule,Date.parse('2026-11-23T08:00:00Z')).window,/Wed, Nov 25/);
+});

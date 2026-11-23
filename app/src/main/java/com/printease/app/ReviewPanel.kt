@@ -27,7 +27,12 @@ fun ReviewPanel(
     var note by rememberSaveable(order.id, version) { mutableStateOf("") }
     var amount by
         rememberSaveable(order.id, version) {
-            mutableStateOf((review?.quote ?: order.total).toString())
+            mutableStateOf(
+                review?.quote?.toString()
+                    ?: if (needsPaperQuote(order.options.paper) || order.attachments.isNotEmpty())
+                        ""
+                    else order.total.toString()
+            )
         }
     val waitingForStudent =
         pending && !admin && stage in listOf(ReviewStage.Quoted, ReviewStage.Correction)
