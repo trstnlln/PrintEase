@@ -19,6 +19,7 @@ async function fixture(){
  const worker=createWorker({}, {origin,projectId,fetchImpl:async(url,init={})=>{
   if(url.includes('accounts:lookup')){state.lookups++;const uid=JSON.parse(atob(JSON.parse(init.body).idToken.split('.')[1])).sub;return Response.json({users:[{localId:uid}]});}
   if(url===subscription.endpoint){
+   if(init.redirect !== 'manual') throw new TypeError('Workers requires manual redirects for push delivery');
    state.sent.push(init);
    return state.providerReason
     ? Response.json({reason:state.providerReason},{status:state.providerStatus})
@@ -64,6 +65,17 @@ test('failed delivery stays retryable and expired devices are removed',async()=>
  f.state.providerStatus=201;assert.equal((await (await f.call('notify/job',{uid:'admin'})).json()).sent,1);
  const g=await fixture();await g.call('subscriptions',{body:g.subscription});g.state.providerStatus=410;await g.call('test');assert.equal(g.state.documents.size,0);
 });
+test('a provider redirect fails without following the response', async () => {
+ const f = await fixture();
+ await f.call('subscriptions',{body:f.subscription});
+ f.state.providerStatus=302;
+ const result=await (await f.call('notify/job',{uid:'admin'})).json();
+ assert.equal(result.failed,1);
+ assert.equal(result.sent,0);
+ assert.equal(f.state.sent.length,1);
+ assert.equal(f.state.sent[0].redirect,'manual');
+});
+
 test('an accepted provider response is counted as sent even if the receipt cannot be stored', async () => {
  const f = await fixture();
  await f.call('subscriptions',{body:f.subscription});

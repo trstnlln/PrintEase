@@ -95,8 +95,13 @@ export function createPushApi({authorize,administrator,firestore,json,fail,origi
     },
     body: payload,
     signal: AbortSignal.timeout(15000),
-    redirect: 'error'
+    // Workers accepts "manual". Inspect the response without following any redirect.
+    redirect: 'manual'
    });
+   if (response.status >= 300 && response.status < 400) {
+    report('provider-redirect', provider, response.status);
+    return 'failed';
+   }
    if (response.status === 404 || response.status === 410) {
     stage = 'subscription-cleanup';
     const removed = await firestore(user, 'users/' + encodeURIComponent(message.ownerId) + '/pushSubscriptions/' + item.id, { method: 'DELETE' });
