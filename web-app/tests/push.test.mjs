@@ -15,15 +15,21 @@ async function fixture(){
  const device=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
  const subscription={endpoint:'https://web.push.apple.com/device',keys:{p256dh:b64(await crypto.subtle.exportKey('raw',device.publicKey)),auth:b64(crypto.getRandomValues(new Uint8Array(16)))}};
  const env={PUSH_VAPID_PUBLIC_KEY:b64(await crypto.subtle.exportKey('raw',keys.publicKey)),PUSH_VAPID_PRIVATE_KEY:jwk.d};
- const state={status:'Ready for Pickup',documents:new Map(),sent:[],lookups:0,providerStatus:201};
+ const state={status:'Ready for Pickup',documents:new Map(),sent:[],lookups:0,providerStatus:201,providerReason:null,receiptStatus:null};
  const worker=createWorker({}, {origin,projectId,fetchImpl:async(url,init={})=>{
   if(url.includes('accounts:lookup')){state.lookups++;const uid=JSON.parse(atob(JSON.parse(init.body).idToken.split('.')[1])).sub;return Response.json({users:[{localId:uid}]});}
-  if(url===subscription.endpoint){state.sent.push(init);return new Response(null,{status:state.providerStatus});}
+  if(url===subscription.endpoint){
+   state.sent.push(init);
+   return state.providerReason
+    ? Response.json({reason:state.providerReason},{status:state.providerStatus})
+    : new Response(null,{status:state.providerStatus});
+  }
   const path=url.split('/documents/')[1];
   if(path==='admins/admin')return Response.json({fields:{enabled:{booleanValue:true}}});
   if(path?.startsWith('admins/'))return new Response('{}',{status:404});
   if(path==='orders/job')return Response.json({fields:{ownerId:{stringValue:'student'},status:{stringValue:state.status}}});
   if(path?.startsWith('users/student/pushSubscriptions?'))return Response.json({documents:[...state.documents.entries()].filter(([p])=>p.startsWith('users/student/pushSubscriptions/')).map(([p,d])=>({name:p,...d}))});
+  if(init.method==='PATCH'&&path.includes('/pushDeliveries/')&&state.receiptStatus)return new Response('{}',{status:state.receiptStatus});
   if(init.method==='PATCH'){const doc=JSON.parse(init.body);state.documents.set(path,doc);return Response.json(doc);}
   if(init.method==='DELETE'){state.documents.delete(path);return new Response('{}');}
   return state.documents.has(path)?Response.json(state.documents.get(path)):new Response('{}',{status:404});
@@ -48,7 +54,7 @@ test('only administrators notify ready orders, using encrypted payloads and deli
  assert.equal((await f.call('notify/job')).status,403);
  f.state.status='Printing';assert.equal((await f.call('notify/job',{uid:'admin'})).status,409);assert.equal(f.state.sent.length,0);
  f.state.status='Ready for Pickup';const sent=await (await f.call('notify/job',{uid:'admin'})).json();assert.equal(sent.sent,1);
- assert.equal(f.state.sent[0].headers['content-encoding'],'aes128gcm');assert.match(f.state.sent[0].headers.authorization,/^vapid /);assert.ok(f.state.sent[0].body.byteLength>100);
+ assert.equal(f.state.sent[0].headers['content-encoding'],'aes128gcm');assert.match(f.state.sent[0].headers.authorization,/^vapid /);assert.ok(f.state.sent[0].body.byteLength>100&&f.state.sent[0].body.byteLength<1024);assert.equal(f.state.sent[0].headers['content-length'],undefined);
  assert.equal(new TextDecoder().decode(f.state.sent[0].body).includes('student'),false);
  const repeated=await (await f.call('notify/job',{uid:'admin'})).json();assert.equal(repeated.already,1);assert.equal(f.state.sent.length,1);
 });
@@ -58,6 +64,34 @@ test('failed delivery stays retryable and expired devices are removed',async()=>
  f.state.providerStatus=201;assert.equal((await (await f.call('notify/job',{uid:'admin'})).json()).sent,1);
  const g=await fixture();await g.call('subscriptions',{body:g.subscription});g.state.providerStatus=410;await g.call('test');assert.equal(g.state.documents.size,0);
 });
+test('an accepted provider response is counted as sent even if the receipt cannot be stored', async () => {
+ const f = await fixture();
+ await f.call('subscriptions',{body:f.subscription});
+ f.state.receiptStatus = 403;
+ const result = await (await f.call('notify/job',{uid:'admin'})).json();
+ assert.equal(result.sent,1);
+ assert.equal(result.untracked,1);
+ assert.equal(result.failed,0);
+});
+
+test('an expired or mismatched subscription prompts the student to reconnect', async () => {
+ const { pickupAlertMessage } = await import('../src/push.mjs');
+ const f = await fixture();
+ await f.call('subscriptions',{body:f.subscription});
+ f.state.providerStatus=403;
+ f.state.providerReason='VapidPkHashMismatch';
+ const mismatch=await (await f.call('notify/job',{uid:'admin'})).json();
+ assert.equal(mismatch.invalid,1);
+ assert.match(pickupAlertMessage(mismatch),/re-enable pickup alerts/);
+ f.state.providerStatus=410;
+ f.state.providerReason=null;
+ const expired=await (await f.call('notify/job',{uid:'admin'})).json();
+ assert.equal(expired.expired,1);
+ assert.equal(expired.failed,0);
+ assert.equal(f.state.documents.size,0);
+ assert.match(pickupAlertMessage(expired),/re-enable pickup alerts/);
+});
+
 test('service worker displays generic alerts only for the current opted-in account',async()=>{
  const listeners={},shown=[];const self={addEventListener:(type,fn)=>listeners[type]=fn,location:{origin},registration:{showNotification:async(...args)=>shown.push(args)}};
  vm.runInNewContext(await readFile(new URL('../src/push-worker.js',import.meta.url),'utf8'),{self,indexedDB,URL});

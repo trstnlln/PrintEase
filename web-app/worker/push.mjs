@@ -1,4 +1,4 @@
-import {buildPushPayload} from '@block65/webcrypto-web-push';
+import {encryptNotification, vapidHeaders} from '@block65/webcrypto-web-push';
 
 const from64=value=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const hash=async value=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('');
@@ -32,16 +32,108 @@ export function createPushApi({authorize,administrator,firestore,json,fail,origi
   if(!response.ok)fail(503,'push/setup-needed','The status is saved, but pickup alerts need setup.');
   return (data.documents||[]).map(doc=>({id:doc.name.split('/').at(-1),subscription:documentValue(doc)}));
  }
- async function send(user,env,item,message,receipt){
-  if(!/^[a-f0-9]{64}$/.test(item.id)||!validSubscription(item.subscription))return 'skipped';
-  if(receipt){const saved=await firestore(user,receipt);if(saved.response.ok&&documentValue(saved.data).state==='sent')return 'already';if(!saved.response.ok&&saved.response.status!==404)throw new Error('Alert receipt could not be checked.');}
-  const vapid={subject:env.PUSH_VAPID_SUBJECT||origin,publicKey:env.PUSH_VAPID_PUBLIC_KEY,privateKey:env.PUSH_VAPID_PRIVATE_KEY};
-  const payload=await buildPushPayload({data:JSON.stringify(message),options:{ttl:3600,urgency:'high',topic:(await hash(message.orderId||'test')).slice(0,24)}},{...item.subscription,expirationTime:null},vapid);
-  const response=await fetchImpl(item.subscription.endpoint,{...payload,signal:AbortSignal.timeout(15000),redirect:'error'});
-  if(response.status===404||response.status===410){await firestore(user,'users/'+encodeURIComponent(message.ownerId)+'/pushSubscriptions/'+item.id,{method:'DELETE'});return 'expired';}
-  if(!response.ok)throw new Error('The push provider did not accept the alert.');
-  if(receipt)await save(user,receipt,{state:'sent',updatedAt:now()});
-  return 'sent';
+ function report(stage, provider, status, reason) {
+  // Provider URLs and tokens identify individual devices. Log only safe diagnostic fields.
+  console.warn('Pickup alert delivery issue', { stage, provider, status, reason });
+ }
+ function safeProviderReason(value) {
+  const reasons = ['BadJwtToken', 'BadVapidToken', 'VapidPkHashMismatch', 'BadAuthorizationHeader',
+    'BadWebPushRequest', 'BadTtl', 'PayloadTooLarge', 'BadUrgency', 'BadTopic', 'BadDeviceToken',
+    'Unregistered', 'TooManyRequests', 'Forbidden', 'Unauthorized', 'InvalidRegistration'];
+  return reasons.includes(value) ? value : undefined;
+ }
+ async function providerReason(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return undefined;
+  let size = 0, value = '';
+  const decoder = new TextDecoder();
+  try {
+   while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    size += chunk.value.byteLength;
+    if (size > 2048) return undefined;
+    value += decoder.decode(chunk.value, {stream: true});
+   }
+   return safeProviderReason(JSON.parse(value + decoder.decode())?.reason);
+  } catch {
+   return undefined;
+  } finally {
+   await reader.cancel().catch(() => {});
+  }
+ }
+ async function send(user, env, item, message, receipt) {
+  if (!/^[a-f0-9]{64}$/.test(item.id) || !validSubscription(item.subscription)) return 'invalid';
+  const provider = new URL(item.subscription.endpoint).hostname;
+  let stage = 'receipt-read';
+  try {
+   if (receipt) {
+    const saved = await firestore(user, receipt);
+    if (saved.response.ok && documentValue(saved.data).state === 'sent') return 'already';
+    if (!saved.response.ok && saved.response.status !== 404) {
+     report(stage, provider, saved.response.status);
+     return 'failed';
+    }
+   }
+   const vapid = {
+    subject: env.PUSH_VAPID_SUBJECT || origin,
+    publicKey: env.PUSH_VAPID_PUBLIC_KEY,
+    privateKey: env.PUSH_VAPID_PRIVATE_KEY
+   };
+   stage = 'encryption';
+   const [{ headers }, payload, topic] = await Promise.all([
+    vapidHeaders(item.subscription, vapid),
+    encryptNotification(item.subscription, new TextEncoder().encode(JSON.stringify(message)), { pad: false }),
+    hash(message.orderId || 'test')
+   ]);
+   stage = 'transport';
+   const response = await fetchImpl(item.subscription.endpoint, {
+    method: 'POST',
+    headers: {
+     ...headers, ttl: '3600', urgency: 'high', topic: topic.slice(0, 24),
+     'content-encoding': 'aes128gcm', 'content-type': 'application/octet-stream'
+    },
+    body: payload,
+    signal: AbortSignal.timeout(15000),
+    redirect: 'error'
+   });
+   if (response.status === 404 || response.status === 410) {
+    stage = 'subscription-cleanup';
+    const removed = await firestore(user, 'users/' + encodeURIComponent(message.ownerId) + '/pushSubscriptions/' + item.id, { method: 'DELETE' });
+    if (!removed.response.ok && removed.response.status !== 404) report(stage, provider, removed.response.status);
+    return 'expired';
+   }
+   if (!response.ok) {
+    const reason = await providerReason(response);
+    report('provider', provider, response.status, reason);
+    if (reason === 'VapidPkHashMismatch') return 'invalid';
+    return 'failed';
+   }
+   if (receipt) {
+    stage = 'receipt-write';
+    await save(user, receipt, { state: 'sent', updatedAt: now() });
+   }
+   return 'sent';
+  } catch (error) {
+   const errorType = ['TypeError', 'DataError', 'NotSupportedError', 'OperationError', 'AbortError', 'TimeoutError'].includes(error?.name)
+    ? error.name : undefined;
+   report(stage, provider, undefined, errorType);
+   if (stage === 'receipt-write') return 'sent-untracked';
+   if (stage === 'subscription-cleanup') return 'expired';
+   return 'failed';
+  }
+ }
+ function summarize(results) {
+  const count = (...values) => results.filter(result => values.includes(result)).length;
+  return {
+   sent: count('sent', 'sent-untracked'),
+   untracked: count('sent-untracked'),
+   already: count('already'),
+   expired: count('expired'),
+   invalid: count('invalid'),
+   failed: count('failed'),
+   devices: results.length
+  };
  }
  return async function pushApi(request,env,path){
   const enabled=!!(env.PUSH_VAPID_PUBLIC_KEY&&env.PUSH_VAPID_PRIVATE_KEY);
@@ -70,13 +162,13 @@ export function createPushApi({authorize,administrator,firestore,json,fail,origi
    if(order.status!=='Ready for Pickup'||typeof order.ownerId!=='string'||!order.ownerId||/[\/\\]/.test(order.ownerId))fail(409,'push/not-ready','Pickup alerts are sent only for requests marked Ready for Pickup.');
    const devices=await subscriptions(user,order.ownerId);
    const message={type:'ready',ownerId:order.ownerId,orderId:notify[1]};
-   const results=await Promise.allSettled(devices.map(item=>send(user,env,item,message,'orders/'+notify[1]+'/pushDeliveries/'+item.id)));
-   return json({sent:results.filter(r=>r.status==='fulfilled'&&r.value==='sent').length,already:results.filter(r=>r.status==='fulfilled'&&r.value==='already').length,failed:results.filter(r=>r.status==='rejected').length,devices:devices.length});
+   const results = await Promise.all(devices.map(item => send(user, env, item, message, 'orders/' + notify[1] + '/pushDeliveries/' + item.id)));
+   return json(summarize(results));
   }
   if(path==='/api/push/test'&&request.method==='POST'){
    const devices=await subscriptions(user,user.uid);
-   const results=await Promise.allSettled(devices.map(item=>send(user,env,item,{type:'test',ownerId:user.uid},null)));
-   return json({sent:results.filter(r=>r.status==='fulfilled'&&r.value==='sent').length,failed:results.filter(r=>r.status==='rejected').length,devices:devices.length});
+   const results = await Promise.all(devices.map(item => send(user, env, item, { type: 'test', ownerId: user.uid }, null)));
+   return json(summarize(results));
   }
   fail(404,'push/not-found','This notification action is unavailable.');
  };

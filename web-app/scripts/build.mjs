@@ -9,6 +9,17 @@ await copyFile('node_modules/pdfjs-dist/LICENSE','dist/assets/PDFJS-LICENSE.txt'
 await build({entryPoints:['src/app.mjs'],bundle:true,minify:true,format:'esm',target:['safari16.4','chrome110'],outfile:'dist/assets/app.js',
  plugins:[{name:'pdf-engine-location',setup(builder){builder.onResolve({filter:/^pdfjs-dist\/legacy\/build\/pdf\.mjs$/},()=>({path:'../assets/pdf.mjs',external:true}));}}],
  legalComments:'linked',metafile:true}).then(result=>writeFile('build-meta.json',JSON.stringify(result.metafile,null,2)));
+// A new page must request a matching stylesheet and script, even with an older cached app shell.
+const htmlPath = 'dist/index.html';
+let html = await readFile(htmlPath, 'utf8');
+for (const asset of ['/styles.css', '/assets/app.js']) {
+ const stamp = createHash('sha256').update(await readFile('dist' + asset)).digest('hex').slice(0, 12);
+ const escapedPath = asset.replaceAll('.', '\\.');
+ const pattern = new RegExp(`(href|src)="${escapedPath}(?:[?]v=[a-f0-9]+)?"`, 'g');
+ if (!pattern.test(html)) throw new Error('Missing asset in application shell: ' + asset);
+ html = html.replace(pattern, (_, attribute) => `${attribute}="${asset}?v=${stamp}"`);
+}
+await writeFile(htmlPath, html);
 async function walk(directory){
  let files=[];for(const file of await readdir(directory)){
   if(file.startsWith('.')||file==='server')continue;
@@ -26,7 +37,7 @@ self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=
 self.addEventListener('fetch',event=>{
  const url=new URL(event.request.url),path=url.pathname==='/'?'/index.html':url.pathname;
  if(event.request.method!=='GET'||url.origin!==self.location.origin||!ASSETS.includes(path))return;
- event.respondWith(fetch(event.request).then(response=>{if(response.ok){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(path,copy)));}return response;}).catch(()=>caches.match(path)));
+ event.respondWith(fetch(event.request,{cache:'no-cache'}).then(response=>{if(response.ok){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(path,copy)));}return response;}).catch(()=>caches.match(path)));
 });
 `);
 await writeFile('dist/sw.js',(await readFile('dist/sw.js','utf8'))+'\n'+pushWorker);

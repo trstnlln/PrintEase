@@ -1,11 +1,11 @@
 // Only public application assets are cached. Private API requests are never cached.
-const CACHE='printease-5ce7ee19725081b3',ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
+const CACHE='printease-5aeae3217059ba06',ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('printease-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{
  const url=new URL(event.request.url),path=url.pathname==='/'?'/index.html':url.pathname;
  if(event.request.method!=='GET'||url.origin!==self.location.origin||!ASSETS.includes(path))return;
- event.respondWith(fetch(event.request).then(response=>{if(response.ok){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(path,copy)));}return response;}).catch(()=>caches.match(path)));
+ event.respondWith(fetch(event.request,{cache:'no-cache'}).then(response=>{if(response.ok){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(path,copy)));}return response;}).catch(()=>caches.match(path)));
 });
 
 async function pushOwner(){

@@ -5,6 +5,13 @@ for(const path of ['/','/assets/app.js','/assets/pdf.mjs','/assets/pdf.worker.mj
  const response=await worker.fetch(new Request('https://preview.example'+path),{});
  assert.equal(response.status,200,path);assert.ok((await response.arrayBuffer()).byteLength>0,path);
 }
+const page = await (await worker.fetch(new Request('https://preview.example/'),{})).text();
+for (const path of ['/styles.css','/assets/app.js']) {
+ const escaped = path.replaceAll('.', '\\.');
+ const reference = page.match(new RegExp(`"${escaped}[?]v=[a-f0-9]{12}"`))?.[0]?.slice(1,-1);
+ assert.ok(reference, path + ' must have a version in the application shell');
+ assert.equal((await worker.fetch(new Request('https://preview.example'+reference),{})).status,200);
+}
 const status=await worker.fetch(new Request('https://preview.example/api/status'),{});assert.equal((await status.json()).ready,false);
 const privateResponse=await worker.fetch(new Request('https://preview.example/api/uploads/'+'a'.repeat(64)),{BUCKET:{}});
 assert.equal(privateResponse.status,401);assert.equal(privateResponse.headers.get('Cache-Control'),'no-store');

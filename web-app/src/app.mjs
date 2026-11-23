@@ -3,7 +3,7 @@ import { firebaseConfig } from "./config.mjs";
 import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, selectedPages, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
 import * as db from "./db.mjs";
-import {pushState,reconcilePushUser,enablePush,disablePush,pushRequest} from "./push.mjs";
+import {pushState,reconcilePushUser,enablePush,disablePush,pushRequest,pickupAlertMessage} from "./push.mjs";
 const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, options: defaults(), rawCopies: "1", rawRanges: "", rangeError: null });
 class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
@@ -187,8 +187,14 @@ class PrintEase {
         return this.action(async()=>{try{this.s.push={...await pending,message:"Alerts enabled on this device. Delivery depends on your connection and device settings."};}catch(error){this.s.push.message=error.message;}},"push");
       }
       case "push-disable": return this.action(async()=>{await disablePush(this.backend.auth?.currentUser);this.s.push={...await pushState(this.s.session.uid),message:"Alerts are off on this device."};});
-      case "push-notify": return this.action(async()=>{const result=await pushRequest(this.backend.auth?.currentUser,"notify/"+encodeURIComponent(node.dataset.id));this.toast(result.failed?"Some alerts could not send. Try again later.":result.sent?"Pickup alert sent.":result.already?"The pickup alert was already sent.":"The student has no device with pickup alerts enabled. They can still check Orders.");});
-      case "push-test": return this.action(async()=>{const result=await pushRequest(this.backend.auth?.currentUser,"test");this.s.push.message=result.sent?"Test alert sent. Check your notifications.":"No alert was sent. Re-enable alerts and try again.";});
+      case "push-notify": return this.action(async()=>{const result=await pushRequest(this.backend.auth?.currentUser,"notify/"+encodeURIComponent(node.dataset.id));this.toast(pickupAlertMessage(result));});
+      case "push-test":
+        return this.action(async () => {
+          const result = await pushRequest(this.backend.auth?.currentUser, "test");
+          this.s.push.message = result.sent ? "Test alert sent. Check your notifications."
+            : result.failed ? "The notification service could not send the test. Keep Orders open for updates."
+            : "Turn off alerts here, then enable them again to reconnect this device.";
+        });
       case "google":
         return this.action(() => this.backend.google());
       case "toggle-auth":
@@ -610,8 +616,16 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     this.confirm(next === "Cancelled" ? "Cancel this request?" : next === "Accepted" ? "Accept this request?" : `Mark as ${next}?`, next === "Cancelled" ? "The shop will no longer process this PDF. You can submit a new request later." : next === "Accepted" ? "Check the PDF, page count and printing preferences. A unique queue number will be assigned." : "Make sure the document is ready for the next step before confirming.", "Confirm", async () => {
       await this.backend.transition(order.id, next);
       if(next==="Ready for Pickup"&&this.s.mode!=="demo"){
-        try{const result=await pushRequest(this.backend.auth?.currentUser,"notify/"+encodeURIComponent(order.id));if(result.failed){this.toast("Marked ready. Some device alerts could not send; the student can still check Orders.");return;}}
-        catch{this.toast("Marked ready. Background alerts could not send; the student can still check Orders.");return;}
+        try {
+          const result = await pushRequest(this.backend.auth?.currentUser, "notify/" + encodeURIComponent(order.id));
+          if (result.failed || result.expired || result.invalid || result.untracked) {
+            this.toast("Marked ready. " + pickupAlertMessage(result));
+            return;
+          }
+        } catch {
+          this.toast("Marked ready. Background alerts could not send. The student can still check Orders.");
+          return;
+        }
       }
       this.toast(next === "Accepted" ? "Accepted. A unique queue number has been assigned." : next === "Cancelled" ? "Request cancelled." : `Order updated: ${next}.`);
     });
@@ -734,7 +748,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
   async registerWorker() {
     if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
     try {
-      await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
     } catch {
     }
   }

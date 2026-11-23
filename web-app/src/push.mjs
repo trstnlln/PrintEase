@@ -8,6 +8,16 @@ export async function pushRequest(user,path,body,method='POST'){
  const response=await fetch('/api/push/'+path,{method,headers:{Authorization:'Bearer '+await user.getIdToken(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),cache:'no-store',signal:AbortSignal.timeout(20000)});
  const data=await response.json();if(!response.ok)throw new Error(data.error?.message||'Pickup alerts could not update. Try again.');return data;
 }
+export function pickupAlertMessage(result) {
+ if (result.sent || result.already) {
+  if (result.failed || result.expired || result.invalid) return 'Pickup alert accepted for at least one device. Some devices could not be reached.';
+  if (result.untracked) return 'Pickup alert accepted. PrintEase could not record the delivery.';
+  return result.sent ? 'Pickup alert sent.' : 'The pickup alert was already sent.';
+ }
+ if (result.failed) return 'The notification service could not send the alert. The student can still check Orders.';
+ if (result.expired || result.invalid) return 'Ask the student to re-enable pickup alerts in Account. They can still check Orders.';
+ return 'The student has no device with pickup alerts enabled. They can still check Orders.';
+}
 export async function clearLocalAlerts(){
  await db.remove('settings','push-owner');
  const registration=await navigator.serviceWorker?.getRegistration();
