@@ -187,7 +187,7 @@ class PrintEase {
         return this.action(async()=>{try{this.s.push={...await pending,message:"Alerts enabled on this device. Delivery depends on your connection and device settings."};}catch(error){this.s.push.message=error.message;}},"push");
       }
       case "push-disable": return this.action(async()=>{await disablePush(this.backend.auth?.currentUser);this.s.push={...await pushState(this.s.session.uid),message:"Alerts are off on this device."};});
-      case "push-notify": return this.action(async()=>{const result=await pushRequest(this.backend.auth?.currentUser,"notify/"+encodeURIComponent(node.dataset.id));this.toast(result.failed?"Some alerts could not send. Try again later.":result.sent?"Pickup alert sent.":result.already?"The pickup alert was already sent.":"No enabled device alerts. The student can check Orders.");});
+      case "push-notify": return this.action(async()=>{const result=await pushRequest(this.backend.auth?.currentUser,"notify/"+encodeURIComponent(node.dataset.id));this.toast(result.failed?"Some alerts could not send. Try again later.":result.sent?"Pickup alert sent.":result.already?"The pickup alert was already sent.":"The student has no device with pickup alerts enabled. They can still check Orders.");});
       case "push-test": return this.action(async()=>{const result=await pushRequest(this.backend.auth?.currentUser,"test");this.s.push.message=result.sent?"Test alert sent. Check your notifications.":"No alert was sent. Re-enable alerts and try again.";});
       case "google":
         return this.action(() => this.backend.google());
