@@ -15,6 +15,21 @@ class ModelTest {
     }
 
     @Test
+    fun printPreviewCentersFitContentAndWarnsWhenActualSizeClips() {
+        val fit = printGeometry("Folio", 612, 1000, false)
+        val actual = printGeometry("Folio", 612, 1000, true)
+        assertTrue(fit.top + .01f >= fit.margin)
+        assertFalse(fit.clipped)
+        assertEquals(1f, actual.scale, .0001f)
+        assertTrue(actual.clipped)
+        val settings = ShopSettings(paperStock = PaperStock(listOf("A4"), listOf("Custom")))
+        assertEquals(settings, ShopSettings.fromMap(settings.toMap()))
+        assertEquals("out", settings.paperStock.status("Custom 200x330 mm"))
+        assertEquals(true, PrintOptions(actualSize = true).toMap()["actualSize"])
+        assertFalse(PrintOptions().toMap().containsKey("actualSize"))
+    }
+
+    @Test
     fun queueResetsAtPhilippineMidnight() {
         assertEquals("2026-11-15", queueDay(Instant.parse("2026-11-14T16:00:00Z").toEpochMilli()))
         assertEquals("2026-11-14", queueDay(Instant.parse("2026-11-14T15:59:59Z").toEpochMilli()))

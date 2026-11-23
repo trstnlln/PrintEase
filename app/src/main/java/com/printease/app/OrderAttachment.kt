@@ -28,6 +28,7 @@ data class OrderAttachment(val fileName: String, val fileHash: String, val optio
                     (options["copies"] as Number).toInt(),
                     options["color"] as Boolean,
                     options["duplex"] as Boolean,
+                    actualSize = options["actualSize"] == true,
                 ),
             )
         }

@@ -180,9 +180,13 @@ fun ShopSettingsContent(
     busy: Boolean,
     retentionAvailable: Boolean = false,
     scheduleAvailable: Boolean = false,
+    stockAvailable: Boolean = false,
     onSave: (ShopSettings) -> Unit,
 ) {
     // Keep an editing snapshot. A concurrent save is rejected by the repository version check.
+    var available by rememberSaveable { mutableStateOf(ArrayList(settings.paperStock.available)) }
+    var out by rememberSaveable { mutableStateOf(ArrayList(settings.paperStock.out)) }
+    val paperStock = PaperStock(available, out)
     var name by rememberSaveable { mutableStateOf(settings.name) }
     var address by rememberSaveable { mutableStateOf(settings.address) }
     var hours by rememberSaveable { mutableStateOf(settings.pickupHours) }
@@ -433,6 +437,52 @@ fun ShopSettingsContent(
                 )
             }
         }
+        if (stockAvailable)
+            Panel(Modifier.fillMaxWidth()) {
+                Text("Paper availability", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Students see these statuses in the paper menu.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                stockPapers.forEach { paper ->
+                    var expanded by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(
+                            { expanded = true },
+                            Modifier.fillMaxWidth(),
+                            enabled = !busy,
+                        ) {
+                            Text(
+                                "${if (paper == "Custom") "Custom sizes" else paper} · ${stockLabels.getValue(paperStock.status(paper))}",
+                                Modifier.weight(1f),
+                            )
+                            Icon(Icons.Default.ExpandMore, null)
+                        }
+                        DropdownMenu(expanded, { expanded = false }) {
+                            stockLabels.forEach { (status, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        available =
+                                            ArrayList(
+                                                available.filter { it != paper } +
+                                                    if (status == "available") listOf(paper)
+                                                    else emptyList()
+                                            )
+                                        out =
+                                            ArrayList(
+                                                out.filter { it != paper } +
+                                                    if (status == "out") listOf(paper)
+                                                    else emptyList()
+                                            )
+                                        expanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         if (!valid)
             Text(
                 "Complete the shop details and enter valid rates to save.",
@@ -454,6 +504,7 @@ fun ShopSettingsContent(
                         facebook.trim(),
                         ratesConfirmed,
                         schedule,
+                        paperStock,
                     )
                 )
             },

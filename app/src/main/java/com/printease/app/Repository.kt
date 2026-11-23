@@ -64,6 +64,8 @@ interface ShopRepository {
         error("Pickup estimates are unavailable.")
     }
 
+    suspend fun markPrinted(id: String, index: Int, checked: Boolean)
+
     suspend fun saveSettings(settings: ShopSettings)
 
     suspend fun document(order: PrintOrder, index: Int = 0): File
@@ -135,6 +137,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                     else Session("demo-student", "Alex Student", "student@demo.local", false),
                 reviewAvailable = true,
                 paperSizesAvailable = true,
+                printToolsAvailable = true,
             )
         publish()
     }
@@ -196,6 +199,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 return
             }
         require(pdf.pages == options.pages)
+        requirePrintOptions(options, attachments, settings, true)
         check(settings.acceptingOrders) {
             "The shop has paused new requests. Please try again later."
         }
@@ -228,6 +232,13 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         val old = all[index]
         check(next != OrderStatus.Accepted || old.canAccept) {
             "The student must approve the final price first."
+        }
+        check(
+            next != OrderStatus.Ready ||
+                old.printedFiles.isEmpty() ||
+                old.printedFiles.size == old.attachments.size + 1
+        ) {
+            "Mark every file printed before pickup."
         }
         check(old.status.canMoveTo(next)) { "This order has already changed." }
         check(session.admin || (old.ownerId == session.uid && next == OrderStatus.Cancelled))
@@ -269,6 +280,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
             if (action == ReviewAction.Revise) {
                 val correction = requireNotNull(draft)
                 correction.options.requireBatchRanges(correction.attachments)
+                requirePrintOptions(correction.options, correction.attachments, settings, true)
                 val pdf = correction.pdf
                 require(pdf.pages == correction.options.pages)
                 val target = documents.file("$id-revision-${review.version}")
@@ -286,6 +298,16 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         save()
         publish()
         progress(1f)
+    }
+
+    override suspend fun markPrinted(id: String, index: Int, checked: Boolean) {
+        check(state.value.session?.admin == true)
+        val position = all.indexOfFirst { it.id == id }
+        check(position >= 0) { "Refresh this request before updating its checklist." }
+        val order = all[position]
+        all[position] = order.updatePrinted(index, checked)
+        save()
+        publish()
     }
 
     override suspend fun setPickupTime(id: String, time: Long?) {
@@ -463,6 +485,28 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                                 )
                                     mutable.value =
                                         mutable.value.copy(paperSizesAvailable = available)
+                            }
+                            scope.launch {
+                                val available =
+                                    try {
+                                        withTimeout(10000) {
+                                            db.collection("capabilities")
+                                                .document("print-tools-v1")
+                                                .get(Source.SERVER)
+                                                .await()
+                                        }
+                                        true
+                                    } catch (_: FirebaseFirestoreException) {
+                                        false
+                                    } catch (_: TimeoutCancellationException) {
+                                        false
+                                    }
+                                if (
+                                    generation == currentGeneration &&
+                                        auth.currentUser?.uid == user.uid
+                                )
+                                    mutable.value =
+                                        mutable.value.copy(printToolsAvailable = available)
                             }
                             if (PickupAlerts.enabled(context))
                                 scope.launch { runCatching { PickupAlerts.register(context) } }
@@ -660,6 +704,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         check(currentSettings.rates == quoted.rates && currentSettings.version == quoted.version) {
             "Shop details or rates changed. Review the updated total and try again."
         }
+        requirePrintOptions(options, attachments, currentSettings, state.value.printToolsAvailable)
         val specialPaper = needsPaperQuote(options.paper) || extra.isNotEmpty()
         check(!specialPaper || state.value.paperSizesAvailable) {
             "This paper size is unavailable. Refresh and try again."
@@ -737,17 +782,27 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         owner: String,
         orderId: String?,
     ): String {
-        val total = attachments.size + 1
-        val primary = HostedDocuments.upload(pdf, { progress(it / total) }, owner, orderId)
-        attachments.forEachIndexed { index, item ->
-            HostedDocuments.upload(
-                item.pdf,
-                { progress((index + 1 + it) / total) },
-                owner,
-                requireNotNull(orderId),
-            )
-        }
-        return primary
+        val files = listOf(pdf) + attachments.map { it.pdf }
+        val paths =
+            files.mapIndexed { index, file ->
+                progress(index.toFloat() / files.size)
+                try {
+                    HostedDocuments.upload(
+                        file,
+                        { progress((index + it) / files.size) },
+                        owner,
+                        orderId,
+                    )
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException || files.size == 1)
+                        throw error
+                    throw java.io.IOException(
+                        "File ${index + 1} of ${files.size} (${file.name}) could not send. ${friendlyError(error)} Retry to continue.",
+                        error,
+                    )
+                }
+            }
+        return paths.first()
     }
 
     private suspend fun currentShopSettings(): ShopSettings =
@@ -801,6 +856,12 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 check(shop.version == state.value.settings.version) {
                     "Shop rates changed. Review the new estimate."
                 }
+                requirePrintOptions(
+                    correction.options,
+                    correction.attachments,
+                    shop,
+                    state.value.printToolsAvailable,
+                )
                 val path = uploadFiles(pdf, correction.attachments, progress, session.uid, id)
                 mapOf(
                     "fileName" to pdf.name.take(255),
@@ -849,6 +910,23 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                 ?.filter { it.name == "$id.pdf" || it.name.startsWith("$id-") }
                 ?.forEach { it.delete() }
         return removed
+    }
+
+    override suspend fun markPrinted(id: String, index: Int, checked: Boolean) {
+        check(state.value.session?.admin == true && state.value.printToolsAvailable)
+        val target = db.collection("orders").document(id)
+        withTimeout(25000) {
+            db.runTransaction { tx ->
+                    val snap = tx.get(target)
+                    val order = PrintOrder.fromMap(id, requireNotNull(snap.data))
+                    val next = order.updatePrinted(index, checked)
+                    tx.update(
+                        target,
+                        mapOf("printedFiles" to next.printedFiles, "updatedAt" to next.updatedAt),
+                    )
+                }
+                .await()
+        }
     }
 
     override suspend fun setPickupTime(id: String, time: Long?) {
@@ -935,4 +1013,30 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
         auth.removeAuthStateListener(authListener)
         scope.cancel()
     }
+}
+
+private fun requirePrintOptions(
+    options: PrintOptions,
+    attachments: List<AttachmentDraft>,
+    shop: ShopSettings,
+    tools: Boolean,
+) {
+    val choices = listOf(options) + attachments.map { it.options }
+    require(tools || choices.none { it.actualSize }) {
+        "Actual-size printing is unavailable. Choose Fit to paper or refresh."
+    }
+    require(choices.none { shop.paperStock.status(it.paper) == "out" }) {
+        "A selected paper size is out of stock. Choose a different size."
+    }
+}
+
+private fun PrintOrder.updatePrinted(index: Int, checked: Boolean): PrintOrder {
+    require(status == OrderStatus.Printing && index in 0..attachments.size) {
+        "Refresh this request before updating its checklist."
+    }
+    return copy(
+        printedFiles =
+            (if (checked) printedFiles + index else printedFiles - index).distinct().sorted(),
+        updatedAt = System.currentTimeMillis(),
+    )
 }

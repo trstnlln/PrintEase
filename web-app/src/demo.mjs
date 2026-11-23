@@ -1,4 +1,4 @@
-import { attachmentEntries, sameAttachments, requireBatchRanges } from "./attachment.mjs";
+import { attachmentEntries, sameAttachments, requireBatchRanges, requestOutOfStock } from "./attachment.mjs";
 import { requiresPaperQuote } from "./paper.mjs";
 import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import * as db from "./db.mjs";
@@ -33,7 +33,7 @@ class DemoBackend {
   async refresh() {
     const orders = await db.all("orders");
     this.settings = validateShop((await db.get("settings", "shop-details"))?.value || defaultShop());
-    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, paperSizesAvailable: true, ready: true });
+    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, paperSizesAvailable: true, printToolsAvailable: true, ready: true });
   }
   async signOut() {
     this.session = null;
@@ -52,6 +52,7 @@ class DemoBackend {
       }
       const shop = (await db.request(tx.objectStore("settings").get("shop-details")))?.value || defaultShop();
       if (!shop.acceptingOrders) throw new Error("The shop has paused new requests. Your draft is saved.");
+      if (requestOutOfStock(draft, shop)) throw new Error("A selected paper size is out of stock. Choose a different size.");
       if (shop.version !== this.settings.version) throw new Error("Shop details changed. Review your updated total and try again.");
       const order = makeOrder(draft.id, this.session, draft.pdf, draft.options, shop.rates);
       if (draft.addons != null || requiresPaperQuote(draft.options.paper) || attachments.length) order.review = newReview(draft.addons ?? []);
@@ -69,6 +70,7 @@ class DemoBackend {
       const orders = tx.objectStore("orders"), old = await db.request(orders.get(id));
       if (!old || !canTransition(old.status, next)) throw new Error("The order changed. Review its latest status.");
       if (!this.session?.admin && !(old.ownerId === this.session?.uid && next === "Cancelled")) throw new Error("You cannot update this order.");
+      if (next === "Ready for Pickup" && old.printedFiles && old.printedFiles.length !== 1 + (old.attachments?.length ?? 0)) throw new Error("Mark every file printed before pickup.");
       if (next === "Rejected" && !note.trim()) throw new Error("Please give the student a reason.");
       if (next === "Accepted") {
         if (!canAccept(old)) throw new Error("The student must approve the final price first.");
@@ -93,7 +95,8 @@ class DemoBackend {
       if (action === "revise") {
         const draft = input.draft;
         const shop = (await db.request(tx.objectStore("settings").get("shop-details")))?.value || defaultShop();
-        if (shop.version !== this.settings.version) throw new Error("Shop rates changed. Review the new estimate.");
+        if (requestOutOfStock(draft, shop)) throw new Error("A selected paper size is out of stock. Choose a different size.");
+      if (shop.version !== this.settings.version) throw new Error("Shop rates changed. Review the new estimate.");
         const { fileName, options, pricing, estimatedCost } = makeOrder(id, this.session, draft.pdf, draft.options, shop.rates);
         requireBatchRanges(draft);
         const attachments = attachmentEntries(draft.attachments);
@@ -102,6 +105,19 @@ class DemoBackend {
         tx.objectStore("files").put({ id, blob: draft.file, attachments: draft.attachments?.map(item=>item.file) ?? [] });
       }
       orders.put({ ...order, review, updatedAt: Date.now() });
+    });
+    await this.refresh();
+    this.channel?.postMessage("update");
+  }
+  async markPrinted(id, index, checked) {
+    if (!this.session?.admin) throw new Error("Only staff can update the print checklist.");
+    await db.transact(["orders"], async tx => {
+      const store = tx.objectStore("orders"), order = await db.request(store.get(id));
+      if (order?.status !== "Printing" || !Number.isInteger(index) || index < 0 || index > (order.attachments?.length ?? 0)) throw new Error("Refresh this request before updating its checklist.");
+      const printed = new Set(order.printedFiles ?? []);
+      if (checked) printed.add(index);
+      else printed.delete(index);
+      store.put({ ...order, printedFiles: [...printed].sort(), updatedAt: Date.now() });
     });
     await this.refresh();
     this.channel?.postMessage("update");

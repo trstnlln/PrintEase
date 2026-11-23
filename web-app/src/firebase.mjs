@@ -1,4 +1,4 @@
-import { attachmentEntries, sameAttachments, requireBatchRanges, uploadRequestFiles } from "./attachment.mjs";
+import { attachmentEntries, sameAttachments, requireBatchRanges, requestOutOfStock, uploadRequestFiles } from "./attachment.mjs";
 import { requiresPaperQuote } from "./paper.mjs";
 import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import { HostedDocuments } from "./documents.mjs";
@@ -25,6 +25,7 @@ class FirebaseBackend {
     this.settingsError = null;
     this.reviewAvailable = false;
     this.paperSizesAvailable = false;
+    this.printToolsAvailable = false;
   }
   async init() {
     try {
@@ -50,6 +51,7 @@ class FirebaseBackend {
       this.cache = false;
       this.reviewAvailable = false;
       this.paperSizesAvailable = false;
+      this.printToolsAvailable = false;
       this.emit();
       return;
     }
@@ -63,6 +65,7 @@ class FirebaseBackend {
       this.cache = false;
       this.reviewAvailable = false;
       this.paperSizesAvailable = false;
+      this.printToolsAvailable = false;
       this.change({ session: null, orders: [], ready: false, syncError: null });
     }
     try {
@@ -87,6 +90,12 @@ class FirebaseBackend {
       timeout(getDocFromServer(doc(this.db, "capabilities", "paper-sizes-v1")), 10000).then(() => {
         if (generation === this.generation) {
           this.paperSizesAvailable = true;
+          this.emit();
+        }
+      }).catch(() => {});
+      timeout(getDocFromServer(doc(this.db, "capabilities", "print-tools-v1")), 10000).then(() => {
+        if (generation === this.generation) {
+          this.printToolsAvailable = true;
           this.emit();
         }
       }).catch(() => {});
@@ -137,7 +146,7 @@ class FirebaseBackend {
     }
   }
   emit() {
-    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, reviewAvailable: this.reviewAvailable, paperSizesAvailable: this.paperSizesAvailable, syncError: this.error || this.persistenceWarning || null });
+    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, reviewAvailable: this.reviewAvailable, paperSizesAvailable: this.paperSizesAvailable, printToolsAvailable: this.printToolsAvailable, syncError: this.error || this.persistenceWarning || null });
   }
   google() {
     online();
@@ -177,6 +186,7 @@ class FirebaseBackend {
     const session = this.session;
     if (!session) throw new Error("Sign in first.");
     requireBatchRanges(draft);
+    this.checkPrintTools(draft);
     const attachments = attachmentEntries(draft.attachments);
     const specialPaper = requiresPaperQuote(draft.options.paper) || attachments.length > 0;
     if (specialPaper && !this.paperSizesAvailable) throw new Error("Expanded paper sizes and multi-PDF requests are unavailable. Refresh before submitting.");
@@ -241,6 +251,7 @@ class FirebaseBackend {
       const prior = (await timeout(getDocFromServer(target))).data();
       const draft = input.draft;
       requireBatchRanges(draft);
+      this.checkPrintTools(draft);
       const attachments = attachmentEntries(draft.attachments);
       if ((requiresPaperQuote(draft.options.paper) || attachments.length) && !this.paperSizesAvailable) throw new Error("Expanded paper sizes and multi-PDF requests are unavailable. Refresh before submitting.");
       // The transaction may have committed before the network acknowledged it.
@@ -266,6 +277,23 @@ class FirebaseBackend {
   async cleanupPdf(id) {
     if (!this.session?.admin) throw new Error("Only the shop can remove an expired PDF.");
     return this.documents.cleanup(this.auth.currentUser, id);
+  }
+  checkPrintTools(draft) {
+    const files = [draft, ...(draft.attachments ?? [])];
+    if (!this.printToolsAvailable && files.some(file => file.options.actualSize)) throw new Error("Actual-size printing is unavailable. Choose Fit to paper or refresh.");
+    if (requestOutOfStock(draft, this.settings)) throw new Error("A selected paper size is out of stock. Choose a different size.");
+  }
+  async markPrinted(id, index, checked) {
+    online();
+    if (!this.session?.admin || !this.printToolsAvailable) throw new Error("The print checklist is unavailable.");
+    await timeout(runTransaction(this.db, async tx => {
+      const target = doc(this.db, "orders", id), order = (await tx.get(target)).data();
+      if (order?.status !== "Printing" || !Number.isInteger(index) || index < 0 || index > (order.attachments?.length ?? 0)) throw new Error("Refresh this request before updating its checklist.");
+      const printed = new Set(order.printedFiles ?? []);
+      if (checked) printed.add(index);
+      else printed.delete(index);
+      tx.update(target, { printedFiles: [...printed].sort(), updatedAt: Date.now() });
+    }));
   }
   async setPickupTime(id, time) {
     online();

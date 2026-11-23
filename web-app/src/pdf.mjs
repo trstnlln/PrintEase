@@ -28,3 +28,28 @@ export async function inspectPdf(file){
 }
 export async function openPdf(bytes){if(bytes.byteLength>MAX_BYTES)throw new Error('This PDF exceeds 5 MB.');return(await engine()).getDocument({data:bytes.slice(),isEvalSupported:false}).promise;}
 export async function renderPage(doc,page,canvas){const pdfPage=await doc.getPage(page),base=pdfPage.getViewport({scale:1}),scale=Math.min(2,900/base.width),viewport=pdfPage.getViewport({scale});canvas.width=viewport.width;canvas.height=viewport.height;await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport}).promise;}
+
+export async function renderPrintPage(doc, number, canvas, options) {
+ const { printGeometry } = await import('./paper.mjs');
+ const page = await doc.getPage(number), source = page.getViewport({ scale: 1 });
+ const geometry = printGeometry(options.paper, source.width, source.height, options.actualSize);
+ const { sheetW, sheetH, margin, scale, x, y, clipped } = geometry;
+ const dpi = Math.min(2, 1000 / Math.max(sheetW, sheetH));
+ canvas.width = Math.ceil(sheetW * dpi);
+ canvas.height = Math.ceil(sheetH * dpi);
+ const ctx = canvas.getContext('2d');
+ ctx.fillStyle = '#fff';
+ ctx.fillRect(0, 0, canvas.width, canvas.height);
+ ctx.save();
+ try {
+  ctx.beginPath();
+  ctx.rect(margin * dpi, margin * dpi, (sheetW - 2 * margin) * dpi, (sheetH - 2 * margin) * dpi);
+  ctx.clip();
+  await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: scale * dpi }),
+    transform: [1, 0, 0, 1, x * dpi, y * dpi] }).promise;
+ } finally { ctx.restore(); }
+ ctx.strokeStyle = '#738772';
+ ctx.setLineDash([4, 4]);
+ ctx.strokeRect(margin * dpi, margin * dpi, (sheetW - 2 * margin) * dpi, (sheetH - 2 * margin) * dpi);
+ return clipped;
+}

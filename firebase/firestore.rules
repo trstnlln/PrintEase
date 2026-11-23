@@ -59,10 +59,13 @@ service cloud.firestore {
         || paper.matches('^Custom ([5-9][0-9]|[1-9][0-9]{2}|1000)x([5-9][0-9]|[1-9][0-9]{2}|1000) mm$'));
     }
     function validCoreOptions(o) {
-      return o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages'])
+      let pages = o.pages;
+      let copies = o.copies;
+      return o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages','actualSize'])
+        && o.get('actualSize',false) is bool
         && validPaper(o.paper)
-        && o.pages is int && o.pages >= 1 && o.pages <= 1000
-        && o.copies is int && o.copies >= 1 && o.copies <= 100
+        && pages is int && pages >= 1 && pages <= 1000
+        && copies is int && copies >= 1 && copies <= 100
         && o.color is bool && o.duplex is bool;
     }
     function hasPageSelection(o) { return o.keys().hasAny(['pageRanges','selectedPages']); }
@@ -129,21 +132,24 @@ service cloud.firestore {
             && next.review.quote == null && next.review.note.size() > 0);
     }
     function studentReview(old, next, orderId) {
-      let stage = old.get('review',{}).get('stage','submitted');
-      return next.diff(old).affectedKeys().hasOnly(['review','updatedAt']) && stage == 'quoted'
-          && (next.review.stage == 'approved' && next.review.quote == old.review.quote && next.review.note == old.review.note
-            || next.review.stage == 'declined' && next.review.quote == null && next.review.note == '')
-        || stage == 'correction' && next.review.stage == 'revised'
-          && next.review.quote == null && next.review.note == ''
-          && next.diff(old).affectedKeys().hasOnly(['review','updatedAt','fileName','storagePath','fileHash','documentStore','options','pricing','estimatedCost','attachments'])
+      let review = next.review;
+      let stage = old.review.stage;
+      let changed = next.diff(old).affectedKeys();
+      let name = next.fileName;
+      return stage == 'correction'
+        ? review.stage == 'revised' && review.quote == null && review.note == ''
+          && changed.hasOnly(['review','updatedAt','fileName','storagePath','fileHash','documentStore','options','pricing','estimatedCost','attachments'])
           && next.documentStore == 'hosted'
-          && next.fileName is string && next.fileName.size() > 0 && next.fileName.size() <= 255
+          && name is string && name.size() > 0 && name.size() <= 255
           && validDocument(next, orderId) && validOrderOptions(next)
-          && (next.get('attachments',[]) == old.get('attachments',[]) || validAttachments(next)) && validPrice(next);
+          && (!changed.hasAny(['attachments']) || validAttachments(next)) && validPrice(next)
+        : stage == 'quoted' && changed.hasOnly(['review','updatedAt'])
+          && (review.stage == 'approved' && review.quote == old.review.quote && review.note == old.review.note
+            || review.stage == 'declined' && review.quote == null && review.note == '');
     }
     // A permitted read of this fixed path lets clients detect the published rule version.
     match /capabilities/{capability} {
-      allow get: if signedIn() && capability in ['print-review-v1','paper-sizes-v1'];
+      allow get: if signedIn() && capability in ['print-review-v1','paper-sizes-v1','print-tools-v1'];
     }
     function validOrder(d,orderId) {
       // All required fields are accessed below; a missing field rejects the write.
@@ -164,6 +170,10 @@ service cloud.firestore {
         && d.queue == null && d.queueDay == null
         && d.note == '';
     }
+    function validPrintedFiles(files, attachments) {
+      return files is list && files.size() == files.toSet().size()
+        && files.hasOnly(attachments == 2 ? [0,1,2] : attachments == 1 ? [0,1] : [0]);
+    }
     match /orders/{orderId} {
       allow get: if signedIn() && (!exists(/databases/$(database)/documents/orders/$(orderId)) || admin() || resource.data.ownerId == request.auth.uid);
       allow list: if admin() || (signedIn() && resource.data.ownerId == request.auth.uid);
@@ -180,6 +190,9 @@ service cloud.firestore {
           ? (!request.resource.data.keys().hasAny(['completedAt']) || recent(request.resource.data.completedAt))
           : request.resource.data.get('completedAt',null) == resource.data.get('completedAt',null))
         && validTransition(resource.data.status, request.resource.data.status)
+        && (request.resource.data.status != 'Ready for Pickup'
+          || !resource.data.keys().hasAny(['printedFiles'])
+          || resource.data.printedFiles.size() == resource.data.get('attachments',[]).size() + 1)
         && request.resource.data.note is string && request.resource.data.note.size() <= 500
         && (request.resource.data.status != 'Rejected' || request.resource.data.note.size() > 0)
         && ((request.resource.data.status == 'Accepted'
@@ -192,10 +205,14 @@ service cloud.firestore {
           || (request.resource.data.status != 'Accepted'
             && request.resource.data.queue == resource.data.queue
             && request.resource.data.queueDay == resource.data.queueDay));
+      allow update: if resource.data.status == 'Printing'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedFiles','updatedAt'])
+        && validPrintedFiles(request.resource.data.printedFiles, resource.data.get('attachments',[]).size())
+        && validUpdated(request.resource.data) && admin();
       allow update: if signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['review'])
         && canReview(resource.data,request.resource.data)
-        && (admin() && staffReview(resource.data,request.resource.data)
-          || request.auth.uid == resource.data.ownerId && studentReview(resource.data,request.resource.data,orderId));
+        && (request.auth.uid == resource.data.ownerId && studentReview(resource.data,request.resource.data,orderId)
+          || admin() && staffReview(resource.data,request.resource.data));
       allow update: if admin()
         && resource.data.status in ['Pending','Accepted','Printing']
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['expectedReadyAt','updatedAt'])
@@ -232,9 +249,17 @@ service cloud.firestore {
           && (s.cutoff == null || (s.cutoff is int && s.cutoff >= s.open && s.cutoff <= s.close))
           && s.closed is string && (s.closed == '' || s.closed.matches('^([0-9]{4}-[0-9]{2}-[0-9]{2})(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,13}$'));
       }
+      function validPaperStock(stock) {
+        let papers = ['A4','Letter','Legal','A3','A5','B5','Folio','Tabloid','Custom'];
+        let available = stock.available;
+        let out = stock.out;
+        return stock.keys().hasOnly(['available','out']) && available is list && out is list
+          && available.hasOnly(papers) && out.hasOnly(papers) && !available.hasAny(out)
+          && available.size() == available.toSet().size() && out.size() == out.toSet().size();
+      }
       function validSettings(d) {
         return d.keys().hasAll(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version'])
-          && d.keys().hasOnly(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version','contactEmail','facebookUrl','ratesConfirmed','pickupSchedule'])
+          && d.keys().hasOnly(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version','contactEmail','facebookUrl','ratesConfirmed','pickupSchedule','paperStock'])
           && d.name is string && d.name.size() >= 2 && d.name.size() <= 100
           && d.address is string && d.address.size() >= 2 && d.address.size() <= 300
           && d.pickupHours is string && d.pickupHours.size() >= 2 && d.pickupHours.size() <= 200
@@ -244,6 +269,7 @@ service cloud.firestore {
           && (d.get('facebookUrl','') == '' || d.facebookUrl.matches('^https://(www[.]|m[.])?(facebook[.]com|fb[.]com)(/[^ ]*)?$'))
           && d.get('ratesConfirmed',false) is bool
           && (d.get('pickupSchedule',null) == null || validSchedule(d.pickupSchedule))
+          && (!d.keys().hasAny(['paperStock']) || validPaperStock(d.paperStock))
           && d.acceptingOrders is bool && validRates(d.rates)
           && d.retentionDays in [0,7,14,30] && d.version is int;
       }

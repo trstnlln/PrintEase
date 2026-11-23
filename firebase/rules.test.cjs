@@ -245,13 +245,15 @@ test('expanded sizes and per-file choices require a scoped request that the shop
  const document = {
    ...order(id), documentStore:'hosted', fileHash:hash, storagePath:`hosted/student/${id}/${hash}.pdf`,
    pricing, estimatedCost:0, options:{...order(id).options,paper:'Custom 203x330 mm',pages:1000,
-     pageRanges:[{start:1,end:1000}],selectedPages:1000},
+     pageRanges:[{start:1,end:1000}],selectedPages:1000,actualSize:true},
    review:{stage:'submitted',version:0,addons:[],note:'',quote:null}
  };
- const first = {fileName:'Cover.pdf', fileHash:'8'.repeat(64), options:{...order(id).options,paper:'A3',color:true,duplex:false}};
- const second = {fileName:'Appendix.pdf', fileHash:'9'.repeat(64), options:{...order(id).options,paper:'B5',copies:1}};
+ const first = {fileName:'Cover.pdf', fileHash:'8'.repeat(64), options:{...order(id).options,paper:'A3',color:true,duplex:false,actualSize:true}};
+ const second = {fileName:'Appendix.pdf', fileHash:'9'.repeat(64), options:{...order(id).options,paper:'B5',copies:1,actualSize:true}};
  const target = doc(studentDb,'orders/'+id);
  await assertSucceeds(getDoc(doc(studentDb,'capabilities/paper-sizes-v1')));
+ await assertSucceeds(getDoc(doc(studentDb,'capabilities/print-tools-v1')));
+ await assertFails(setDoc(target,{...document,options:{...document.options,actualSize:'true'}}));
  await assertFails(setDoc(target,{...document,options:{...document.options,paper:'Custom 20x3000 mm'}}));
  await assertFails(setDoc(target,{...document,attachments:[first,second,first]}));
  await assertFails(setDoc(target,{...document,attachments:[{...first,fileHash:'../another-student'}]}));
@@ -275,4 +277,27 @@ test('pickup schedules accept bounded shop settings and reject invalid hours or 
  await assertFails(setDoc(a,{...updated,pickupSchedule:{...pickupSchedule,days:[0]}}));
  await assertFails(setDoc(a,{...updated,pickupSchedule:{...pickupSchedule,cutoff:1440}}));
  await assertSucceeds(setDoc(a,updated));
+});
+
+test('staff manage valid paper availability and print checks across clients', async () => {
+ const studentDb = student().firestore(), adminDb = admin().firestore();
+ const shopRef = doc(adminDb, 'shopSettings/current'), current = (await getDoc(shopRef)).data();
+ const paperStock = {available:['A4','Folio'], out:['Legal']};
+ const next = {...current, version:current.version+1, paperStock};
+ await assertFails(setDoc(doc(studentDb,'shopSettings/current'),next));
+ await assertFails(setDoc(shopRef,{...next, paperStock:{available:['Folio'],out:['Folio']}}));
+ await assertFails(setDoc(shopRef,{...next, paperStock:{available:['A6'],out:[]}}));
+ await assertSucceeds(setDoc(shopRef,next));
+ const id = 'checklist', target = doc(adminDb,'orders/'+id);
+ await env.withSecurityRulesDisabled(async context => {
+   await setDoc(doc(context.firestore(),'orders/'+id),{...order(id),status:'Printing',queue:1,queueDay:'2026-11-23'});
+ });
+ await assertFails(updateDoc(doc(studentDb,'orders/'+id),{printedFiles:[0],updatedAt:Date.now()}));
+ await assertFails(updateDoc(target,{printedFiles:[1],updatedAt:Date.now()}));
+ await assertFails(updateDoc(target,{printedFiles:[0,0],updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{printedFiles:[0],updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{printedFiles:[],updatedAt:Date.now()}));
+ await assertFails(updateDoc(target,{status:'Ready for Pickup',updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{printedFiles:[0],updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{status:'Ready for Pickup',updatedAt:Date.now()}));
 });

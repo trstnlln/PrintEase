@@ -1,3 +1,4 @@
+import { paperStock } from "./paper.mjs";
 import { serializeOptions } from './model.mjs';
 
 export const MAX_ATTACHMENTS = 2;
@@ -33,8 +34,21 @@ export async function uploadRequestFiles(uploader, user, draft, progress, orderI
   const files = [draft, ...(draft.attachments ?? [])];
   let primary;
   for (const [index, file] of files.entries()) {
-    const stored = await uploader.upload(user, file, part => progress((index + part) / files.length), orderId);
+    let stored;
+    const report = fraction => progress((index + fraction) / files.length, { index, total: files.length, name: file.pdf.name, fraction });
+    report(0);
+    try { stored = await uploader.upload(user, file, report, orderId); }
+    catch (error) {
+      if (files.length === 1) throw error;
+      const failure = new Error(`File ${index + 1} of ${files.length} (${file.pdf.name}) could not send. ${error.message} Retry to continue.`);
+      failure.code = error.code;
+      throw failure;
+    }
     if (!primary) primary = stored;
   }
   return primary;
+}
+
+export function requestOutOfStock(draft, shop) {
+  return [draft, ...(draft.attachments ?? [])].some(file => paperStock(shop, file.options.paper) === "out");
 }

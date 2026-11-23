@@ -54,6 +54,7 @@ fun PrintEase(model: PrintViewModel) {
     val selected by model.selectedId.collectAsStateWithLifecycle()
     val requestedAddons by model.addons.collectAsStateWithLifecycle()
     val revisionNote by model.revisionNote.collectAsStateWithLifecycle()
+    val submittedId by model.submittedId.collectAsStateWithLifecycle()
     val pdf by model.pdf.collectAsStateWithLifecycle()
     val attachments by model.attachments.collectAsStateWithLifecycle()
     val options by model.options.collectAsStateWithLifecycle()
@@ -61,7 +62,17 @@ fun PrintEase(model: PrintViewModel) {
     var signOut by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<PrintOrder?>(null) }
     var previewIndex by remember { mutableIntStateOf(0) }
-    var draftPreview by remember { mutableStateOf(false) }
+    var draftPreview by remember { mutableIntStateOf(-1) }
+    var downloadOrder by rememberSaveable { mutableStateOf<String?>(null) }
+    var downloadIndex by rememberSaveable { mutableIntStateOf(0) }
+    val fileSaver =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/pdf")
+        ) { uri ->
+            val id = downloadOrder
+            downloadOrder = null
+            if (id != null && uri != null) model.savePrintFile(id, downloadIndex, uri)
+        }
     LaunchedEffect(model) {
         model.messages.collect { snackbar.showSnackbar(it, duration = SnackbarDuration.Long) }
     }
@@ -185,11 +196,13 @@ fun PrintEase(model: PrintViewModel) {
                         onPick = model::pick,
                         onOptions = model::setOptions,
                         onSubmit = model::submit,
-                        onPreview = { draftPreview = true },
+                        onPreview = { draftPreview = 0 },
                         settings = state.settings,
                         settingsError = state.settingsError,
                         reviewAvailable = state.reviewAvailable,
                         paperSizesAvailable = state.paperSizesAvailable,
+                        printToolsAvailable = state.printToolsAvailable,
+                        onPreviewAttachment = { draftPreview = it + 1 },
                         requestedAddons = requestedAddons,
                         revisionNote = revisionNote,
                         onAddon = model::toggleAddon,
@@ -225,6 +238,22 @@ fun PrintEase(model: PrintViewModel) {
                             },
                             onEdit = { model.editCorrection(order) },
                             onCleanup = { model.cleanupPdf(order.id) },
+                            onSaveFile = { index ->
+                                val name =
+                                    (if (index == 0) order.fileName
+                                        else order.attachments[index - 1].fileName)
+                                        .replace('/', '_')
+                                        .replace('\\', '_')
+                                downloadOrder = order.id
+                                downloadIndex = index
+                                fileSaver.launch(
+                                    if (name.endsWith(".pdf", true)) name else "$name.pdf"
+                                )
+                            },
+                            printToolsAvailable = state.printToolsAvailable,
+                            onPrinted = { index, checked ->
+                                model.markPrinted(order.id, index, checked)
+                            },
                             onPreviewAttachment = {
                                 previewIndex = it
                                 preview = order
@@ -243,6 +272,7 @@ fun PrintEase(model: PrintViewModel) {
                         busy,
                         retentionAvailable = state.reviewAvailable && !BuildConfig.DEMO,
                         scheduleAvailable = state.paperSizesAvailable,
+                        stockAvailable = state.printToolsAvailable,
                         onSave = model::saveSettings,
                     )
                 route == "account" ->
@@ -262,6 +292,7 @@ fun PrintEase(model: PrintViewModel) {
                         route == "home",
                         onNew = { model.navigate("request") },
                         onOrder = model::openOrder,
+                        submittedId = submittedId,
                     )
             }
         }
@@ -292,16 +323,22 @@ fun PrintEase(model: PrintViewModel) {
             order.attachments.getOrNull(previewIndex - 1)?.fileName ?: order.fileName,
             model.documents,
             load = { model.loadDocument(order, previewIndex) },
+            printOptions = order.attachments.getOrNull(previewIndex - 1)?.options ?: order.options,
             onClose = { preview = null },
         )
     }
-    if (draftPreview && pdf != null)
-        PreviewDialog(
-            pdf!!.name,
-            model.documents,
-            load = { File(pdf!!.path) },
-            onClose = { draftPreview = false },
-        )
+    if (draftPreview >= 0) {
+        val extra = attachments.getOrNull(draftPreview - 1)
+        val file = if (draftPreview == 0) pdf else extra?.pdf
+        if (file != null)
+            PreviewDialog(
+                file.name,
+                model.documents,
+                load = { File(file.path) },
+                onClose = { draftPreview = -1 },
+                printOptions = extra?.options ?: options,
+            )
+    }
 }
 
 @Composable
@@ -583,6 +620,7 @@ fun Dashboard(
     overview: Boolean,
     onNew: () -> Unit,
     onOrder: (String) -> Unit,
+    submittedId: String? = null,
 ) {
     val session = state.session ?: return
     var filter by rememberSaveable { mutableStateOf("All") }
@@ -609,6 +647,18 @@ fun Dashboard(
         contentPadding = PaddingValues(22.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (!session.admin && !overview && submittedId != null)
+            item {
+                Panel(Modifier.fillMaxWidth()) {
+                    Text("Request sent", style = MaterialTheme.typography.titleLarge)
+                    Text("Request ID $submittedId", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Follow this request in Orders. The shop assigns a queue number after review."
+                    )
+                    if (state.orders.any { it.id == submittedId })
+                        TextButton({ onOrder(submittedId) }) { Text("View request") }
+                }
+            }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow(if (session.admin) "NEARBY PRINT SHOP" else "PRINTING NEAR BSU ALANGILAN")
@@ -650,7 +700,7 @@ fun Dashboard(
                                     color = Color.White,
                                 )
                                 Text(
-                                    "Send your PDF. Collect at the shop near campus.",
+                                    "Send a document, photo, or scan. Collect at the shop near campus.",
                                     color = Color(0xFFCEE1D3),
                                 )
                                 Button(
@@ -982,6 +1032,8 @@ fun RequestContent(
     settingsError: String? = null,
     reviewAvailable: Boolean = false,
     paperSizesAvailable: Boolean = false,
+    printToolsAvailable: Boolean = false,
+    onPreviewAttachment: (Int) -> Unit = {},
     requestedAddons: List<String> = emptyList(),
     revisionNote: String? = null,
     onAddon: (String) -> Unit = {},
@@ -1012,18 +1064,22 @@ fun RequestContent(
     var choosingPaper by remember { mutableStateOf(false) }
     val validDimensions = custom == null || customPaper(paperWidth, paperHeight) == options.paper
     val quoteOnly = needsPaperQuote(options.paper) || attachments.isNotEmpty()
+    val paperOut =
+        settings.paperStock.status(options.paper) == "out" ||
+            attachments.any { settings.paperStock.status(it.options.paper) == "out" }
     val canSubmit =
         pdf != null &&
             validCopies &&
             validRanges &&
             validDimensions &&
+            !paperOut &&
             options.batchRangesValid(attachments) &&
             attachments.all { it.validCopies } &&
             (!quoteOnly || paperSizesAvailable) &&
             !busy &&
             (settings.acceptingOrders || revisionNote != null) &&
             settingsError == null
-    var reviewedRates by remember { mutableStateOf(settings.rates) }
+    var reviewedSettings by remember { mutableStateOf(settings) }
     Column(Modifier.widthIn(max = 700.dp).fillMaxSize()) {
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(22.dp),
@@ -1053,7 +1109,7 @@ fun RequestContent(
                     Text(revisionNote)
                 }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Eyebrow("01 / YOUR DOCUMENT")
+                Text("Print files", style = MaterialTheme.typography.titleMedium)
                 Panel(Modifier.fillMaxWidth()) {
                     Icon(
                         Icons.Default.UploadFile,
@@ -1062,34 +1118,33 @@ fun RequestContent(
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        pdf?.name ?: "Let’s get it on paper.",
+                        pdf?.name ?: "Add a document or image",
                         style = MaterialTheme.typography.titleLarge,
                     )
                     Text(
-                        if (pdf == null) "PDF only · Up to 5 MB · Up to 1,000 pages"
+                        if (pdf == null) "PDF, JPG, or PNG · Up to 5 MB per file"
                         else "${pdf.pages} pages · ${(pdf.bytes + 1023) / 1024} KB · Saved draft",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedButton(
-                        { picker.launch(arrayOf("application/pdf")) },
+                        { picker.launch(arrayOf("application/pdf", "image/jpeg", "image/png")) },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         Icon(Icons.Default.AttachFile, null)
                         Spacer(Modifier.width(8.dp))
-                        Text(if (pdf == null) "Choose PDF" else "Replace PDF")
+                        Text(if (pdf == null) "Choose a file" else "Replace file")
                     }
-                    if (pdf != null)
-                        TextButton(onPreview, enabled = !busy) {
-                            Icon(Icons.Default.Visibility, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Preview document")
-                        }
+                    if (pdf == null)
+                        Text(
+                            "Export Word, PowerPoint, or Excel as PDF before uploading.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Eyebrow("02 / MAKE IT YOURS")
+                Text("Print options", style = MaterialTheme.typography.titleMedium)
                 Panel(Modifier.fillMaxWidth()) {
                     OutlinedTextField(
                         rangesText,
@@ -1131,7 +1186,18 @@ fun RequestContent(
                                     else emptyList()
                             sizes.forEach { size ->
                                 DropdownMenuItem(
-                                    text = { Text(if (size == "Custom") "Custom size" else size) },
+                                    text = {
+                                        Text(
+                                            (if (size == "Custom") "Custom size" else size) +
+                                                if (printToolsAvailable)
+                                                    " · " +
+                                                        stockLabels.getValue(
+                                                            settings.paperStock.status(size)
+                                                        )
+                                                else ""
+                                        )
+                                    },
+                                    enabled = settings.paperStock.status(size) != "out",
                                     onClick = {
                                         choosingPaper = false
                                         if (size == "Custom") {
@@ -1189,6 +1255,35 @@ fun RequestContent(
                             "The shop checks stock and confirms the final price.",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    if (printToolsAvailable) {
+                        val stock = settings.paperStock.status(options.paper)
+                        Text(
+                            if (stock == "out") "Out of stock. Choose another paper size."
+                            else stockLabels.getValue(stock),
+                            color =
+                                if (stock == "out") MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        PreferenceSwitch(
+                            "Actual size",
+                            "Off for Fit to paper",
+                            options.actualSize,
+                            !busy,
+                        ) {
+                            onOptions(options.copy(actualSize = it))
+                        }
+                    }
+                    if (pdf != null)
+                        OutlinedButton(
+                            onPreview,
+                            enabled = !busy && validDimensions,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.Visibility, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Preview print layout")
+                        }
                     Spacer(Modifier.height(4.dp))
                     OutlinedTextField(
                         copiesText,
@@ -1232,7 +1327,7 @@ fun RequestContent(
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Eyebrow("03 / KNOW YOUR TOTAL")
+                Text("Print summary", style = MaterialTheme.typography.titleMedium)
                 Panel(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.fillMaxWidth(),
@@ -1241,7 +1336,7 @@ fun RequestContent(
                     ) {
                         Text("Estimated total", Modifier.weight(1f))
                         Text(
-                            if (pdf == null || !validCopies || !validRanges) "—"
+                            if (pdf == null || !validCopies || !validRanges || paperOut) "—"
                             else if (quoteOnly) "Shop quote"
                             else pesos(options.total(settings.rates)),
                             style = MaterialTheme.typography.headlineMedium,
@@ -1256,7 +1351,7 @@ fun RequestContent(
                         )
                     Text(
                         if (settings.ratesConfirmed)
-                            "Shop-confirmed rates. Duplex saves sheets; the per-side rate stays the same."
+                            "Shop-confirmed rates. Duplex saves sheets and uses the same per-side rate."
                         else
                             "Sample prices. Confirm the actual printing price with the shop before pickup.",
                         style = MaterialTheme.typography.bodySmall,
@@ -1266,14 +1361,14 @@ fun RequestContent(
             }
             if (paperSizesAvailable && pdf != null) {
                 Panel(Modifier.fillMaxWidth()) {
-                    Text("Additional PDFs", style = MaterialTheme.typography.titleLarge)
+                    Text("Additional files", style = MaterialTheme.typography.titleLarge)
                     if (!options.batchRangesValid(attachments))
                         Text(
                             "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately.",
                             color = MaterialTheme.colorScheme.error,
                         )
                     Text(
-                        "Add up to two more PDFs with their own print settings. The shop sends one quote.",
+                        "Add up to two more documents or images with their own print settings. The shop sends one quote.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     attachments.forEachIndexed { index, item ->
@@ -1284,16 +1379,23 @@ fun RequestContent(
                                 busy,
                                 { onChangeAttachment(index, it) },
                                 { onRemoveAttachment(index) },
+                                stock = settings.paperStock,
+                                printToolsAvailable = printToolsAvailable,
+                                onPreview = { onPreviewAttachment(index) },
                             )
                         }
                     }
                     if (attachments.size < MAX_ATTACHMENTS)
                         OutlinedButton(
-                            { extraPicker.launch(arrayOf("application/pdf")) },
+                            {
+                                extraPicker.launch(
+                                    arrayOf("application/pdf", "image/jpeg", "image/png")
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !busy,
                         ) {
-                            Text("Add another PDF")
+                            Text("Add another file")
                         }
                 }
             }
@@ -1331,9 +1433,16 @@ fun RequestContent(
                         progress = { progress },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    val files = listOfNotNull(pdf) + attachments.map { it.pdf }
+                    val stage = progress * files.size
+                    val index = stage.toInt()
                     Text(
-                        if (progress >= 1f) "Saving request…"
-                        else "Preparing or uploading your document…",
+                        when {
+                            progress >= 1f -> "Saving request…"
+                            files.isNotEmpty() && progress > 0f ->
+                                "File ${index + 1} of ${files.size} · ${files[index].name} · ${((stage - index) / .97f * 100).toInt().coerceAtMost(100)}%"
+                            else -> "Preparing files…"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -1346,7 +1455,7 @@ fun RequestContent(
                 PrimaryButton(
                     if (busy) "Please wait…" else "Review request",
                     {
-                        reviewedRates = settings.rates
+                        reviewedSettings = settings
                         review = true
                     },
                     Modifier.fillMaxWidth(),
@@ -1366,11 +1475,11 @@ fun RequestContent(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(pdf.name, fontWeight = FontWeight.Bold)
                     Text(
-                        "${options.pageLabel} · ${options.copies} copies · ${paperLabel(options.paper)}\n${if(options.color) "Color" else "Black & white"} · ${if(options.duplex) "Double-sided" else "Single-sided"}"
+                        "${options.pageLabel} · ${options.copies} copies · ${paperLabel(options.paper)}\n${if(options.color) "Color" else "Black & white"} · ${if(options.duplex) "Double-sided" else "Single-sided"} · ${options.scaleLabel}"
                     )
                     Text(
                         if (quoteOnly) "Final price confirmed by the shop"
-                        else "Estimated total: ${pesos(options.total(reviewedRates))}",
+                        else "Estimated total: ${pesos(options.total(reviewedSettings.rates))}",
                         fontWeight = FontWeight.Bold,
                     )
                     attachments.forEach { item ->
@@ -1393,10 +1502,10 @@ fun RequestContent(
             confirmButton = {
                 TextButton({
                     review = false
-                    if (reviewedRates == settings.rates && canSubmit) onSubmit()
+                    if (reviewedSettings.version == settings.version && canSubmit) onSubmit()
                 }) {
                     Text(
-                        if (reviewedRates == settings.rates && canSubmit) {
+                        if (reviewedSettings.version == settings.version && canSubmit) {
                             if (revisionNote != null) "Send correction" else "Submit request"
                         } else "Review updated details"
                     )
@@ -1465,7 +1574,12 @@ fun OrderDetail(
     onEdit: () -> Unit = {},
     onCleanup: () -> Unit = {},
     onPreviewAttachment: (Int) -> Unit = {},
+    printToolsAvailable: Boolean = false,
+    onPrinted: (Int, Boolean) -> Unit = { _, _ -> },
+    onSaveFile: (Int) -> Unit = {},
 ) {
+    val checklistActive = admin && printToolsAvailable && order.status == OrderStatus.Printing
+    val checkedAll = order.printedFiles.size == order.attachments.size + 1
     var replaceForCorrection by rememberSaveable(order.id) { mutableStateOf(false) }
     var removePdf by rememberSaveable(order.id) { mutableStateOf(false) }
     var action by remember { mutableStateOf<OrderStatus?>(null) }
@@ -1555,6 +1669,7 @@ fun OrderDetail(
             DetailLine("Pages / copies", "${order.options.pages} / ${order.options.copies}")
             DetailLine("Print mode", if (order.options.color) "Color" else "Black & white")
             DetailLine("Sides", if (order.options.duplex) "Double-sided" else "Single-sided")
+            DetailLine("Page sizing", order.options.scaleLabel)
             DetailLine("Sheets", "${order.options.sheets}")
             HorizontalDivider()
             DetailLine(
@@ -1579,6 +1694,17 @@ fun OrderDetail(
                 Spacer(Modifier.width(8.dp))
                 Text("View PDF")
             }
+            if (admin && order.documentDeletedAt == null)
+                TextButton({ onSaveFile(0) }, enabled = !busy) { Text("Save PDF") }
+            if (checklistActive) {
+                Text(
+                    "Print checklist · ${order.printedFiles.size} of ${order.attachments.size + 1} printed",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                PrintChecklistToggle(order.fileName, 0 in order.printedFiles, !busy && !cached) {
+                    onPrinted(0, it)
+                }
+            }
             order.attachments.forEachIndexed { index, item ->
                 HorizontalDivider()
                 Text(item.fileName, style = MaterialTheme.typography.titleMedium)
@@ -1588,7 +1714,9 @@ fun OrderDetail(
                 Text(
                     (if (item.options.color) "Color" else "Black & white") +
                         " · " +
-                        (if (item.options.duplex) "Double-sided" else "Single-sided"),
+                        (if (item.options.duplex) "Double-sided" else "Single-sided") +
+                        " · " +
+                        item.options.scaleLabel,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (order.documentDeletedAt == null)
@@ -1598,6 +1726,16 @@ fun OrderDetail(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("View PDF")
+                    }
+                if (admin && order.documentDeletedAt == null)
+                    TextButton({ onSaveFile(index + 1) }, enabled = !busy) { Text("Save PDF") }
+                if (checklistActive)
+                    PrintChecklistToggle(
+                        item.fileName,
+                        index + 1 in order.printedFiles,
+                        !busy && !cached,
+                    ) {
+                        onPrinted(index + 1, it)
                     }
             }
             if (admin && reviewAvailable && canRemovePdf(order, settings)) {
@@ -1708,6 +1846,11 @@ fun OrderDetail(
                         "Review the PDF, page count, and preferences before accepting.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                if (checklistActive && !checkedAll)
+                    Text(
+                        "Mark every file printed before marking the request ready.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 OrderStatus.entries
                     .filter {
                         order.status.canMoveTo(it) &&
@@ -1724,7 +1867,9 @@ fun OrderDetail(
                             },
                             { action = next },
                             Modifier.fillMaxWidth(),
-                            !busy && !cached,
+                            !busy &&
+                                !cached &&
+                                (next != OrderStatus.Ready || !checklistActive || checkedAll),
                         )
                     }
             }
@@ -1945,10 +2090,29 @@ fun AccountContent(
             Text("Sign out")
         }
         Text(
-            "PrintEase ${BuildConfig.VERSION_NAME} · Native Android\nPDF only, up to 5 MB. Keep your queue number for pickup.",
+            "PrintEase ${BuildConfig.VERSION_NAME} · Native Android\nPDF, JPG, and PNG, up to 5 MB per file. Keep your queue number for pickup.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun PrintChecklistToggle(
+    name: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .toggleable(checked, enabled = enabled, role = Role.Checkbox, onValueChange = onChange)
+            .heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked, onCheckedChange = null, enabled = enabled)
+        Spacer(Modifier.width(10.dp))
+        Text(if (checked) "$name · Printed" else "Mark $name printed")
     }
 }
 
@@ -1958,12 +2122,17 @@ fun PreviewDialog(
     documents: Documents,
     load: suspend () -> File,
     onClose: () -> Unit,
+    printOptions: PrintOptions? = null,
 ) {
     val context = LocalContext.current
     var file by remember { mutableStateOf<File?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
-    var page by rememberSaveable { mutableIntStateOf(0) }
+    var page by rememberSaveable {
+        mutableIntStateOf((printOptions?.pageRanges?.firstOrNull()?.start ?: 1) - 1)
+    }
+    var printLayout by rememberSaveable { mutableStateOf(printOptions != null) }
+    var clipped by remember { mutableStateOf(false) }
     var pages by remember { mutableIntStateOf(0) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(retry) {
@@ -1977,11 +2146,18 @@ fun PreviewDialog(
             error = friendlyError(e)
         }
     }
-    LaunchedEffect(file, page) {
+    LaunchedEffect(file, page, printLayout) {
         file?.let { f ->
             bitmap = null
             try {
-                bitmap = documents.render(f, page)
+                if (printLayout && printOptions != null) {
+                    val (image, crop) = documents.renderPrint(f, page, printOptions)
+                    bitmap = image
+                    clipped = crop
+                } else {
+                    bitmap = documents.render(f, page)
+                    clipped = false
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 error = "This page could not be displayed. Try opening the PDF in another app."
@@ -2071,6 +2247,31 @@ fun PreviewDialog(
                                 .verticalScroll(rememberScrollState())
                                 .padding(12.dp)
                         ) {
+                            if (printOptions != null) {
+                                Panel(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        "${paperLabel(printOptions.paper)} · ${printOptions.scaleLabel}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    if (printLayout)
+                                        Text(
+                                            "Dashed lines show estimated printer margins.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    if (clipped)
+                                        Text(
+                                            "Actual size may cut off content. Use Fit to paper to keep the whole page.",
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    TextButton({ printLayout = !printLayout }) {
+                                        Text(
+                                            if (printLayout) "View original PDF"
+                                            else "View print layout"
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(12.dp))
+                            }
                             Image(
                                 bitmap!!.asImageBitmap(),
                                 "Page ${page + 1} of $pages",

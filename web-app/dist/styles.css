@@ -232,3 +232,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .extra-files { gap: .75rem; }
 .extra-files h2 { font-size: 1.25rem; }
 .extra-file { padding: 1rem; border: 1px solid var(--line); border-radius: .75rem; gap: .625rem; }
+
+/* Keep file actions and print settings close together throughout the request. */
+.upload { gap: .875rem; border-style: dashed; border-width: 2px; }
+.upload.selected { border-style: solid; }
+.upload .file-help { max-width: 32ch; text-wrap: pretty; }
+.upload h3 { max-width: 100%; overflow-wrap: anywhere; }
+.layout-control { display: grid; gap: .75rem; padding: 1rem; border-radius: .9rem; background: var(--soft); }
+.layout-control .button { justify-self: start; }
+.stock-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: .875rem; }
+.paper-stock { margin: 0; }
+.submission-banner { display: flex; align-items: center; gap: .875rem; flex-wrap: wrap; margin-bottom: 1.25rem; border-color: var(--green); background: var(--soft); }
+.submission-banner h2, .print-checklist h2 { font-size: 1.25rem; }
+.submission-banner .grow { min-width: min(12rem, 100%); }
+.print-file-row { display: grid; gap: .5rem; border: 1px solid var(--line); border-radius: .875rem; background: var(--soft); padding: .875rem; }
+.print-file-row h3 { font-size: 1rem; }
+.print-file-actions { margin-top: .375rem; flex-wrap: wrap; }
+.preview-settings { display: grid; gap: .3rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); }
+.preview-settings button { justify-self: start; }
+.preview-settings { flex: 0 0 auto; }
+.preview-pages { min-height: 0; }

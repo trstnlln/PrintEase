@@ -1,4 +1,4 @@
-# Shop settings, page selection, pickup alerts and retention
+# Shop settings, printing and pickup
 
 PrintEase displays **Nano Print Alangilan**, near BSU Alangilan and outside campus. The location button opens the owner-provided [Google Maps listing](https://maps.app.goo.gl/gBCZetYJyz46RoeQ9), verified on November 20, 2026. The link resolves to Nano Print Alangilan at marker coordinates **13.7853824, 121.0733167** (Google Maps feature `0x33bd0ff51a980455:0x1c73b020a3978e11`). These are the place marker coordinates, not the map viewport centre.
 
@@ -65,6 +65,16 @@ In shop settings, turn on **Show pickup windows** and save the actual opening da
 
 The new settings and expanded requests require publishing the current Firestore rules. Demo mode can try them immediately.
 
+## Image uploads, print layout and paper availability
+
+Students can choose PDF, JPG or PNG up to 5 MB per file. PrintEase converts each image to a one-page PDF on the device before upload. Export Word, PowerPoint and Excel files as PDFs. A request can mix documents and images.
+
+Use **Preview print layout** to view the selected paper size and estimated 5 mm margins. **Fit to paper** shrinks oversized pages; **Actual size** preserves the PDF page scale and flags possible cropping. The preview centers the page and follows its orientation. Staff use the saved instructions and their printer’s actual margins when printing.
+
+In **Shop settings → Paper availability**, mark each size **Available**, **Out of stock** or **Ask the shop**. An unconfigured size starts at **Ask the shop**. Students can request a quote for unconfirmed stock; a size marked out of stock is disabled for new requests and corrections.
+
+In a printing request, **Save PDF** on Android or **Download PDF** on the web opens or saves each printable file next to its instructions. Mark each file printed, then move the request to **Ready for Pickup**. An interrupted upload keeps the draft, and a retry skips files already confirmed in private storage.
+
 ## Completed PDF cleanup
 
 Shop administrators can select **Keep files**, **7 days**, **14 days** or **30 days** in shop settings. The default is Keep files. Once a completed order reaches the selected period, choose **Remove expired PDF** in its details and confirm. The app removes the current PDF and earlier uploads stored specifically for that order. Print options, pricing, status and the request ID remain in order history. This action does not affect copies someone already saved elsewhere.
@@ -75,6 +85,7 @@ Legacy uploads shared by multiple orders are excluded from this workflow. Staff 
 
 - Sign in on Android and iPhone web with the same student account; submit a selected-page PDF and compare the saved quote, selection and status on both clients.
 - Use a separate admin account to edit rates. Verify old quotes remain unchanged and a fresh request uses the new rate. Try saving settings concurrently; the older version must be rejected.
+- On an Android device and iPhone Safari, try a Folio photo at Actual size and Fit to paper. Submit a mixed JPG/PDF request, interrupt the second upload, reconnect and verify the saved draft and one request ID. Check both themes and large text, then mark each file printed before pickup.
 - Pause requests and verify students retain drafts but cannot create new orders.
 - With alerts opted in, progress a test order through Accepted → Printing → Ready. Verify the notification opens the correct order. Deny permission, disable alerts, sign out and switch accounts; private alerts must not appear.
 - Leave retention off during initial testing. In an isolated Firebase test project, create an expired completed order and verify cleanup retains its metadata and never removes an active PDF.

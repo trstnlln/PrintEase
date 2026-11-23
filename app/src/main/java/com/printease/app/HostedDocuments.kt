@@ -70,6 +70,23 @@ object HostedDocuments {
             check(uid == ownerId) { "Your account changed. Sign in again before sending." }
             if (orderId != null) require(Regex("[A-Za-z0-9_-]{1,128}").matches(orderId))
             val path = orderId?.let { "$it/${pdf.sha256}" } ?: pdf.sha256
+            val expected = "hosted/$uid/$path.pdf"
+            val prior = connection("/api/uploads/$path", token, "HEAD")
+            val uploaded =
+                try {
+                    prior.readTimeout = 8000
+                    prior.connectTimeout = 8000
+                    prior.responseCode == 204
+                } catch (_: IOException) {
+                    false
+                } finally {
+                    prior.disconnect()
+                }
+            ensureActive()
+            if (uploaded) {
+                progress(.97f)
+                return@withContext expected
+            }
             val request = connection("/api/uploads/$path", token, "PUT")
             try {
                 request.doOutput = true
@@ -91,7 +108,6 @@ object HostedDocuments {
                 }
                 checkResponse(request)
                 val result = request.inputStream.bufferedReader().use { JSONObject(it.readText()) }
-                val expected = "hosted/$uid/$path.pdf"
                 check(
                     result.getString("storagePath") == expected &&
                         result.getString("fileHash") == pdf.sha256

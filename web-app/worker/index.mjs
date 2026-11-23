@@ -125,6 +125,10 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
     }
     return json({ documentStore: 'hosted', storagePath: key, fileHash: hash, bytes: bytes.length });
    }
+   if (request.method === 'HEAD') {
+    const exists = !!await env.BUCKET.head(key);
+    return new Response(null, {status:exists ? 204 : 404, headers:{'Cache-Control':'private, no-store'}});
+   }
    if (request.method === 'GET' && !orderId) return download(env, key);
   }
   const cleanupId = path.startsWith('/api/document-cleanup/') ? path.slice('/api/document-cleanup/'.length) : '';
@@ -155,7 +159,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   if(path.startsWith('/api/')){
    const incoming=request.headers.get('Origin');
    if(incoming&&incoming!==origin)return json({error:{code:'document/origin-denied',message:'This website cannot access PrintEase documents.'}},403);
-   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, PUT, POST, DELETE, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Vary':'Origin'}});
+   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, HEAD, PUT, POST, DELETE, OPTIONS','Access-Control-Allow-Headers':'Authorization, Content-Type','Vary':'Origin'}});
    let response;try{response=await api(request,env,path);}catch(error){response=json({error:{code:error instanceof HttpError?error.code:'document/service-unavailable',message:error instanceof HttpError?error.message:'The document service could not finish. Keep your draft and try again.'}},error instanceof HttpError?error.status:503);}
    response.headers.set('Access-Control-Allow-Origin',origin);response.headers.set('Vary','Origin');return response;
   }

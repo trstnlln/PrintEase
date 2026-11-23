@@ -13,3 +13,20 @@ test('corrupt PDF bytes and oversized files cannot become a selected draft',asyn
  const file=new Blob(['%PDF-this is corrupt']);file.name='Broken.pdf';await assert.rejects(inspectPdf(file),/could not be read/);
  await assert.rejects(inspectPdf({size:5*1024*1024+1}),/no larger than 5 MB/);
 });
+
+test('file selection uses signatures and image PDFs preserve page proportions',async()=>{
+ const {fileKind,imagePdf,preparePrintFile}=await import('../src/print-file.mjs');
+ const {openPdf}=await import('../src/pdf.mjs');
+ assert.equal(fileKind(new Uint8Array([137,80,78,71,13,10,26,10])),'PNG');
+ assert.equal(fileKind(new Uint8Array([255,216,255,224])),'JPG');
+ const file = new File([imagePdf(new Uint8Array([255,216,255,217]),600,300)],'Photo.pdf');
+ const selected = await preparePrintFile(file);
+ const doc = await openPdf(new Uint8Array(await selected.file.arrayBuffer()));
+ try {
+   assert.equal(doc.numPages,1);
+   const page=(await doc.getPage(1)).getViewport({scale:1});
+   assert.equal(page.width,288);
+   assert.equal(page.height,144);
+ } finally { await doc.destroy(); }
+ await assert.rejects(preparePrintFile(new File(['Office bytes'],'Report.docx')),/Export Word, PowerPoint, or Excel/);
+});

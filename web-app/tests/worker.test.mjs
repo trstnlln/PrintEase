@@ -59,3 +59,32 @@ test('public status does not expose PDFs and cross-origin access is rejected',as
  const status=await s.worker.fetch(new Request(SITE+'/api/status'),{});assert.deepEqual(await status.json(),{ready:false,documentStore:'hosted',maxBytes:5*1024*1024});
  assert.equal((await s.call('/api/uploads/'+s.hash,{headers:{Origin:'https://another.example'}})).status,403);
 });
+
+test('an interrupted batch skips private PDFs the server already received',async()=>{
+ const { HostedDocuments }=await import('../src/documents.mjs');
+ const { uploadRequestFiles }=await import('../src/attachment.mjs');
+ const s=await setup(), sent=[], second=samplePDF(3);
+ const firstHash=s.hash, secondHash=Buffer.from(await crypto.subtle.digest('SHA-256',second)).toString('hex');
+ const draft={pdf:{name:'Notes.pdf',sha256:firstHash},file:s.bytes,
+   attachments:[{pdf:{name:'Slides.pdf',sha256:secondHash},file:second}]};
+ let fail=true;
+ const uploader=new HostedDocuments({baseUrl:SITE,xhr:null,request:(url,init)=>{
+   const path=new URL(url).pathname;
+   if(init.method==='PUT') {
+     sent.push(path.split('/').at(-1));
+     if(path.endsWith(secondHash)&&fail) return Promise.resolve(Response.json({}, {status:503}));
+   }
+   return s.worker.fetch(new Request(url,init),{BUCKET:s.bucket});
+ }});
+ const user={uid:'student',getIdToken:async()=>token('student')}, orderId='draft-batch';
+ const updates=[];
+ await assert.rejects(uploadRequestFiles(uploader,user,draft,(fraction,file)=>updates.push(file),orderId),/File 2 of 2 \(Slides.pdf\)/);
+ fail=false;
+ await uploadRequestFiles(uploader,user,draft,()=>{},orderId);
+ assert.deepEqual(sent,[firstHash,secondHash,secondHash]);
+ assert.ok(updates.some(file=>file.index===0&&file.fraction===.97));
+ const path='/api/uploads/'+orderId+'/'+firstHash;
+ assert.equal((await s.call(path,{method:'HEAD',jwt:null})).status,401);
+ assert.equal((await s.call(path,{method:'HEAD',uid:'other'})).status,404);
+ assert.equal((await s.call(path,{method:'HEAD'})).status,204);
+});

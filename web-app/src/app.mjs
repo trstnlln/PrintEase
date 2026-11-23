@@ -1,6 +1,6 @@
-import { MAX_ATTACHMENTS, batchRangesValid } from "./attachment.mjs";
+import { MAX_ATTACHMENTS, batchRangesValid, requestOutOfStock } from "./attachment.mjs";
 import { clockMinutes } from "./pickup-schedule.mjs";
-import { customPaper, requiresPaperQuote, paperLabel } from "./paper.mjs";
+import { customPaper, requiresPaperQuote, paperLabel, printScaleLabel } from "./paper.mjs";
 import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
 import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, selectedPages, pageLabel, collectionCode, terminal } from "./model.mjs";
@@ -11,7 +11,7 @@ const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, opti
 class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
     this.root = root;
-    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
+    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
     this.modal = null;
     this.preview = null;
     this.generation = 0;
@@ -51,7 +51,7 @@ class PrintEase {
     this.backend?.close();
     const generation = ++this.generation;
     this.closeModal();
-    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
+    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
     try {
       localStorage.setItem("pe_mode", mode);
     } catch {
@@ -67,6 +67,7 @@ class PrintEase {
         reconcilePushUser(snapshot.session?.uid).then(value=>{if(generation===this.generation){this.s.push={...value,message:null};this.render();}}).catch(()=>{});
         this.closeModal();
         this.s.draft = freshDraft();
+        this.s.submitted = null;
         this.s.auth.password = "";
         this.s.auth.register = false;
         if (snapshot.session) {
@@ -299,12 +300,41 @@ class PrintEase {
         await this.saveDraft();
         return this.render();
       }
+      case "download-print-file": {
+        const order = this.s.orders.find(item => item.id === this.s.selected);
+        if (!order || !this.s.session?.admin) return;
+        const index = Number(node.dataset.index);
+        const file = index === 0 ? order : order.attachments?.[index - 1];
+        if (!file) return;
+        return this.action(async () => {
+          const bytes = await this.backend.bytes(order, index);
+          const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = /\.pdf$/i.test(file.fileName) ? file.fileName : file.fileName + ".pdf";
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 30000);
+        });
+      }
+      case "mark-printed": {
+        const order = this.s.orders.find(item => item.id === this.s.selected);
+        if (!order) return;
+        const index = Number(node.dataset.index);
+        return this.action(() => this.backend.markPrinted(order.id, index, !order.printedFiles?.includes(index)));
+      }
+      case "draft-attachment-preview": {
+        const item = this.s.draft.attachments?.[Number(node.dataset.index)];
+        if (!item) return;
+        return this.previewPdf(item.pdf.name, async () => new Uint8Array(await item.file.arrayBuffer()), item.options);
+      }
       case "attachment-preview": {
         const order = this.s.orders.find(item => item.id === this.s.selected);
         const position = Number(node.dataset.index);
         const attachment = order?.attachments?.[position-1];
         if (!attachment) return;
-        return this.previewPdf(attachment.fileName, () => this.backend.bytes(order, position));
+        return this.previewPdf(attachment.fileName, () => this.backend.bytes(order, position), attachment.options);
       }
       case "estimate": return this.pickupEstimateDialog();
       case "estimate-save": {
@@ -333,13 +363,22 @@ class PrintEase {
           this.toast("Request rejected. The student can see your reason.");
         });
       }
-      case "draft-preview":
-        return this.previewPdf(this.s.draft.pdf.name, async () => new Uint8Array(await this.s.draft.file.arrayBuffer()));
+      case "draft-preview": {
+        const draft = this.s.draft;
+        if (draft.paperError) return this.toast(draft.paperError);
+        return this.previewPdf(draft.pdf.name, async () => new Uint8Array(await draft.file.arrayBuffer()), draft.options);
+      }
       case "order-preview": {
         const order = this.s.orders.find((o) => o.id === this.s.selected);
-        if (order) return this.previewPdf(order.fileName, () => this.backend.bytes(order));
+        if (order) return this.previewPdf(order.fileName, () => this.backend.bytes(order), order.options);
         return;
       }
+      case "preview-layout":
+        if (this.preview?.doc && !this.preview.rendering) {
+          this.preview.layout = !this.preview.layout;
+          return this.drawPreview();
+        }
+        return;
       case "preview-prev":
         return this.changePage(-1);
       case "preview-next":
@@ -392,6 +431,15 @@ class PrintEase {
       if (confirm) confirm.disabled = !target.value.trim();
       return;
     }
+    if (this.s.route === "settings" && target.dataset.stock) {
+      const edit = this.s.shopEdit ??= structuredClone(this.s.settings);
+      const stock = edit.paperStock ??= { available: [], out: [] };
+      for (const status of ["available", "out"]) {
+        stock[status] = stock[status].filter(size => size !== target.dataset.stock);
+        if (target.value === status) stock[status].push(target.dataset.stock);
+      }
+      return;
+    }
     if (this.s.route === "settings" && target.dataset.calendar) {
       const edit = this.s.shopEdit ??= structuredClone(this.s.settings);
       const key = target.dataset.calendar;
@@ -426,7 +474,9 @@ class PrintEase {
         const copies = Number(target.value);
         if (Number.isInteger(copies) && copies >= 1 && copies <= 100) item.options.copies = copies;
       } else if (field === "paper") item.options.paper = target.value;
+      else if (field === "actualSize") item.options.actualSize = target.value === "actual";
       else if (field === "color" || field === "duplex") item.options[field] = target.checked;
+      if (field === "paper") this.render();
       this.updateEstimate();
       this.saveDraft().catch(() => {});
       return;
@@ -449,7 +499,8 @@ class PrintEase {
       if (target.checked) chosen.add(target.dataset.addon);
       else chosen.delete(target.dataset.addon);
       d.addons = addons.filter(addon => chosen.has(addon.id)).map(addon => addon.id);
-    } else if (id === "color") d.options.color = target.checked;
+    } else if (id === "scale") d.options.actualSize = target.value === "actual";
+    else if (id === "color") d.options.color = target.checked;
     else if (id === "duplex") d.options.duplex = target.checked;
     else if (target.name === "paper") {
       d.paperError = null;
@@ -581,11 +632,11 @@ class PrintEase {
     this.s.fileReading = true;
     return this.action(async () => {
       try {
-        const { inspectPdf } = await import("./pdf.mjs");
-        const pdf = await inspectPdf(file);
+        const { preparePrintFile } = await import("./print-file.mjs");
+        const { pdf, file: printable } = await preparePrintFile(file);
         if (generation !== this.generation || uid !== this.s.session?.uid) return;
         const { selectedPages: ignored, ...oldOptions } = this.s.draft.options;
-        const draft = { ...this.s.draft, id: this.s.draft.revision ? this.s.draft.id : crypto.randomUUID(), pdf, file, options: { ...oldOptions, pages: pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null, rawCopies: this.s.draft.rawCopies };
+        const draft = { ...this.s.draft, id: this.s.draft.revision ? this.s.draft.id : crypto.randomUUID(), pdf, file: printable, options: { ...oldOptions, pages: pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null, rawCopies: this.s.draft.rawCopies };
         this.s.draft = draft;
         this.s.draftWarning = null;
         const { file: blob, ...value } = draft;
@@ -606,10 +657,10 @@ class PrintEase {
     if (!this.s.draft.pdf || !this.s.paperSizesAvailable || (this.s.draft.attachments?.length ?? 0) >= MAX_ATTACHMENTS) return;
     const uid = this.s.session?.uid;
     return this.action(async () => {
-      const { inspectPdf } = await import("./pdf.mjs");
-      const pdf = await inspectPdf(file);
+      const { preparePrintFile } = await import("./print-file.mjs");
+      const { pdf, file: printable } = await preparePrintFile(file);
       if (uid !== this.s.session?.uid) return;
-      this.s.draft.attachments = [...(this.s.draft.attachments ?? []), { pdf, file, options: { ...defaults(), pages: pdf.pages }, rawCopies: "1" }];
+      this.s.draft.attachments = [...(this.s.draft.attachments ?? []), { pdf, file: printable, options: { ...defaults(), pages: pdf.pages }, rawCopies: "1" }];
       await this.saveDraft();
     }, "request");
   }
@@ -627,12 +678,13 @@ class PrintEase {
     set("summary-mode", o.color ? "Color" : "Black & white");
     set("summary-sides", o.duplex ? "Double-sided" : "Single-sided");
     set("summary-paper", paperLabel(o.paper));
+    set("summary-scale", printScaleLabel(o));
     set("paper-dimension-help", d.paperError || "Enter whole millimeters from 50 to 1,000.");
     document.getElementById("paper-dimension-help")?.classList.toggle("danger-text", !!d.paperError);
     const quoteOnly = requiresPaperQuote(o.paper) || !!d.attachments?.length;
     set("summary-price-label", quoteOnly ? "Pricing" : "Estimated total");
-    set("summary-total", d.pdf && valid ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
-    set("mobile-total", d.pdf && valid ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
+    set("summary-total", d.pdf && valid && !requestOutOfStock(d, this.s.settings) ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
+    set("mobile-total", d.pdf && valid && !requestOutOfStock(d, this.s.settings) ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
     set("summary-formula", quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side. ${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate.");
     const rangeProblem = d.rangeError || (!batchRangesValid(d) ? "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately." : null);
     set("range-help", rangeProblem || "Leave blank for all pages, or enter 1-3, 5, 8-10.");
@@ -641,11 +693,12 @@ class PrintEase {
     set("copy-help", Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 ? "Choose 1\u2013100 copies." : "Enter a whole number from 1 to 100.");
     document.getElementById("copy-help")?.classList.toggle("danger-text", !valid);
     document.getElementById("copies")?.setAttribute("aria-invalid", String(!valid));
-    document.querySelectorAll('[data-action="review"]').forEach((button) => button.disabled = !d.pdf || !valid || this.s.busy || (!this.s.settings.acceptingOrders && !d.revision) || !!this.s.settingsError);
+    document.querySelectorAll('[data-action="review"]').forEach((button) => button.disabled = !d.pdf || !valid || requestOutOfStock(d, this.s.settings) || this.s.busy || (!this.s.settings.acceptingOrders && !d.revision) || !!this.s.settingsError);
   }
   review() {
     const d = this.s.draft;
     if (d.paperError) return this.toast(d.paperError);
+    if (requestOutOfStock(d, this.s.settings)) return this.toast("Choose a paper size the shop can supply.");
     if (!batchRangesValid(d)) return this.toast("Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately.");
     if (!this.validAttachmentCopies()) return this.toast("Enter 1–100 copies for each PDF.");
     if (!d.pdf || !d.rawCopies.trim() || Number(d.rawCopies) !== d.options.copies || d.rangeError) return this.toast("Choose a PDF and a valid number of copies.");
@@ -653,11 +706,11 @@ class PrintEase {
     const quotedVersion = this.s.settings.version;
     const cost = estimate(d.options, this.s.settings.rates);
     const displayTotal = requiresPaperQuote(d.options.paper) || d.attachments?.length ? "Shop quote" : pesos(cost.total);
-    const summary=`<div class="review-sheet"><div class="review-file">${icon('pdf')}<div><b>${e(d.pdf.name)}</b><p class="small">${d.pdf.pages} pages in PDF · ${Math.ceil(d.pdf.bytes/1024)} KB</p></div></div><dl class="review-options">${[['Pages to print',pageLabel(d.options)],['Copies',d.options.copies],['Paper',paperLabel(d.options.paper)],['Print mode',d.options.color?'Color':'Black & white'],['Sides',d.options.duplex?'Double-sided':'Single-sided'],['Pickup at',this.s.settings.name]].map(([label,value])=>`<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join('')}</dl><div class="review-total"><span>Estimated total</span><strong>${displayTotal}</strong></div><p class="small">${displayTotal === "Shop quote" ? "The shop will send one price for approval." :
+    const summary=`<div class="review-sheet"><div class="review-file">${icon('pdf')}<div><b>${e(d.pdf.name)}</b><p class="small">${d.pdf.pages} pages in PDF · ${Math.ceil(d.pdf.bytes/1024)} KB</p></div></div><dl class="review-options">${[['Pages to print',pageLabel(d.options)],['Copies',d.options.copies],['Paper',paperLabel(d.options.paper)],['Print mode',d.options.color?'Color':'Black & white'],['Sides',d.options.duplex?'Double-sided':'Single-sided'],['Page sizing',printScaleLabel(d.options)],['Pickup at',this.s.settings.name]].map(([label,value])=>`<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join('')}</dl><div class="review-total"><span>Estimated total</span><strong>${displayTotal}</strong></div><p class="small">${displayTotal === "Shop quote" ? "The shop will send one price for approval." :
       this.s.settings.ratesConfirmed ? "Pay at pickup." : "Sample estimate. The shop confirms the final price."} The shop reviews your request before assigning a queue number.</p></div>`;
     const selectedAddons = addons.filter(addon => d.addons?.includes(addon.id)).map(addon => addon.label);
     const extraSummary = d.attachments?.length ? `<div class="extra-files stack"><b>Included PDFs</b>${d.attachments.map(item =>
-      `<p>${e(item.pdf.name)} · ${e(paperLabel(item.options.paper))} · ${item.options.copies} copies</p>`).join("")}</div>` : "";
+      `<p>${e(item.pdf.name)} · ${e(paperLabel(item.options.paper))} · ${item.options.copies} copies · ${printScaleLabel(item.options)}</p>`).join("")}</div>` : "";
     const addonSummary = selectedAddons.length ? `<p><b>Requested add-ons:</b> ${e(selectedAddons.join(", "))}. The shop includes these in the final quote.</p>` : "";
     this.confirm(d.revision ? "Send the corrected request?" : "Ready to send?", `${d.pdf.name}
 
@@ -668,12 +721,12 @@ Estimated total: ${displayTotal}
 Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.revision ? "Send correction" : "Submit request", async () => {
       if (quotedVersion !== this.s.settings.version) throw new Error("Shop details or rates changed. Review your updated total.");
       await this.saveDraft();
-      const progress = (p) => {
+      const progress = (p, file) => {
         this.s.progress = p;
         const bar = document.querySelector(".progress span");
         if (bar) bar.style.width = Math.round(p * 100) + "%";
         const label = document.getElementById("progress-text");
-        if (label) label.textContent = p >= 1 ? "Saving your request\u2026" : `Uploading your PDF \xB7 ${Math.round(p * 100)}%`;
+        if (label) label.textContent = p >= 1 ? "Saving your request…" : file ? `File ${file.index + 1} of ${file.total} · ${file.name} · ${Math.round(file.fraction / .97 * 100)}%` : "Preparing files…";
       };
       if (d.revision) {
         await this.backend.reviewOrder(d.revision.id, "revise", d.revision.version, { draft: d, onProgress: progress });
@@ -681,6 +734,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
         await this.backend.submit({ ...d, addons: this.s.reviewAvailable ? d.addons ?? [] : d.addons }, progress);
       }
       await this.clearDraft();
+      this.s.submitted = { id: d.revision?.id ?? d.id, revision: !!d.revision };
       this.s.route = "orders";
       history.replaceState(null, "", "#orders");
       this.toast(d.revision ? "Correction sent. The shop will review it again." : "Request submitted. Follow its progress in Orders.");
@@ -704,6 +758,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
   status(next) {
     const order = this.s.orders.find((o) => o.id === this.s.selected);
     if (!order) return;
+    if (next === "Ready for Pickup" && this.s.printToolsAvailable && order.printedFiles?.length !== (order.attachments?.length ?? 0) + 1) return this.toast("Mark each file printed before pickup.");
     if(next==='Completed'){
       this.openModal(`<div class="dialog-content stack"><h2>Verify collection</h2><p class="small">Ask the student for the six-character code shown on their request before handing over the prints.</p><label>Collection code<input id="collection-code" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter student’s code"></label><div class="dialog-actions"><button class="button outline" data-action="close-modal">Go back</button><button class="button" data-action="collect-confirm" data-id="${e(order.id)}" disabled>Confirm collection</button></div></div>`);return;
     }
@@ -783,7 +838,6 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
   }
   closeModal() {
     if (this.preview) {
-      this.preview.generation++;
       this.preview.doc?.destroy().catch(() => {
       });
       if (this.preview.url) URL.revokeObjectURL(this.preview.url);
@@ -799,13 +853,17 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
   installHelp() {
     this.openModal(`<div class="dialog-content"><div class="row between"><h2>PrintEase on your iPhone</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>Open this link in <b>Safari</b>, then:</p><ol class="install-steps"><li>Tap <b>Share</b> ${icon("share")}.</li><li>Scroll down and select <b>Add to Home Screen</b>.</li><li>Keep the name <b>PrintEase</b> and tap <b>Add</b>.</li></ol><p class="small">PrintEase’s Firebase sign-in is separate from your browser account. Live orders require internet.</p><button class="button" data-action="close-modal">Got it</button></div>`);
   }
-  async previewPdf(name, load) {
-    this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header><div class="preview-pages" id="preview-pages"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button><a id="pdf-download" class="icon-button hidden" download="${e(name)}" aria-label="Download PDF">${icon("download")}</a></footer></div>`, null, true);
-    const current = { generation: 0, doc: null, page: 1, url: null, rendering: false };
+  async previewPdf(name, load, options) {
+    this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header>${options ? `<div class="preview-settings"><p><strong>${e(paperLabel(options.paper))}</strong> · ${e(printScaleLabel(options))}</p><p class="small">Dashed lines show estimated printer margins.</p><p class="danger-text" id="preview-clipped" role="status" hidden></p><button class="text-action" data-action="preview-layout">View original PDF</button></div>` : ""}<div class="preview-pages" id="preview-pages"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button><a id="pdf-download" class="icon-button hidden" download="${e(name)}" aria-label="Download PDF">${icon("download")}</a></footer></div>`, null, true);
+    const current = { doc: null, page: options?.pageRanges?.[0]?.start ?? 1, url: null, rendering: false, options, layout: !!options };
     this.preview = current;
     try {
       const bytes = await load();
       if (this.preview !== current) return;
+      current.url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      const a = document.getElementById("pdf-download");
+      a.href = current.url;
+      a.classList.remove("hidden");
       const { openPdf } = await import("./pdf.mjs");
       const doc = await openPdf(bytes);
       if (this.preview !== current) {
@@ -813,10 +871,6 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
         return;
       }
       current.doc = doc;
-      current.url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-      const a = document.getElementById("pdf-download");
-      a.href = current.url;
-      a.classList.remove("hidden");
       await this.drawPreview();
     } catch (error) {
       if (this.preview === current) {
@@ -834,13 +888,23 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     document.getElementById("page-label").textContent = `${p.page} / ${p.doc.numPages}`;
     this.modal.dialog.querySelectorAll('[data-action^="preview-"]').forEach((b) => b.disabled = true);
     try {
-      const { renderPage } = await import("./pdf.mjs");
-      await renderPage(p.doc, p.page, canvas);
+      const { renderPage, renderPrintPage } = await import("./pdf.mjs");
+      const clipped = p.layout ? await renderPrintPage(p.doc, p.page, canvas, p.options) : (await renderPage(p.doc, p.page, canvas), false);
+      if (this.preview !== p) return;
+      const note = document.getElementById("preview-clipped");
+      if (note) {
+        note.hidden = !clipped;
+        note.textContent = clipped ? "Actual size may cut off content. Use Fit to paper to keep the whole page." : "";
+      }
+      const toggle = document.querySelector('[data-action="preview-layout"]');
+      if (toggle) toggle.textContent = p.layout ? "View original PDF" : "View print layout";
     } catch (error) {
       if (this.preview === p) this.toast(errorMessage(error));
     } finally {
       p.rendering = false;
       if (this.preview === p) {
+        const toggle = document.querySelector('[data-action="preview-layout"]');
+        if (toggle) toggle.disabled = false;
         document.querySelector('[data-action="preview-prev"]').disabled = p.page <= 1;
         document.querySelector('[data-action="preview-next"]').disabled = p.page >= p.doc.numPages;
       }

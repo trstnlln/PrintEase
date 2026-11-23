@@ -16,6 +16,9 @@ fun AttachmentEditor(
     busy: Boolean,
     onChange: (AttachmentDraft) -> Unit,
     onRemove: () -> Unit,
+    stock: PaperStock,
+    printToolsAvailable: Boolean,
+    onPreview: () -> Unit,
 ) {
     var choosePaper by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -36,7 +39,15 @@ fun AttachmentEditor(
             DropdownMenu(expanded = choosePaper, onDismissRequest = { choosePaper = false }) {
                 (standardPaperSizes + quotedPaperSizes).forEach { size ->
                     DropdownMenuItem(
-                        text = { Text(size) },
+                        text = {
+                            Text(
+                                size +
+                                    if (printToolsAvailable)
+                                        " · " + stockLabels.getValue(stock.status(size))
+                                    else ""
+                            )
+                        },
+                        enabled = stock.status(size) != "out",
                         onClick = {
                             choosePaper = false
                             onChange(item.copy(options = item.options.copy(paper = size)))
@@ -45,6 +56,11 @@ fun AttachmentEditor(
                 }
             }
         }
+        if (stock.status(item.options.paper) == "out")
+            Text(
+                "Out of stock. Choose another paper size.",
+                color = MaterialTheme.colorScheme.error,
+            )
         OutlinedTextField(
             item.copiesText,
             { text ->
@@ -62,6 +78,18 @@ fun AttachmentEditor(
             isError = !item.validCopies,
             supportingText = { Text("1–100 copies") },
         )
+        if (printToolsAvailable)
+            PreferenceSwitch(
+                "Actual size",
+                "Off for Fit to paper",
+                item.options.actualSize,
+                !busy,
+            ) {
+                onChange(item.copy(options = item.options.copy(actualSize = it)))
+            }
+        OutlinedButton(onPreview, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
+            Text("Preview print layout")
+        }
         PreferenceSwitch("Print in color", "Off for black & white", item.options.color, !busy) {
             onChange(item.copy(options = item.options.copy(color = it)))
         }

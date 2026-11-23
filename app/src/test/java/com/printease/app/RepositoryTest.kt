@@ -96,6 +96,43 @@ class RepositoryTest {
     }
 
     @Test
+    fun jpegAndPngImportsBecomeOnePagePdfs() = runBlocking {
+        val image =
+            android.graphics.Bitmap.createBitmap(160, 96, android.graphics.Bitmap.Config.ARGB_8888)
+        image.eraseColor(android.graphics.Color.GREEN)
+        for ((extension, format) in
+            listOf(
+                "jpg" to android.graphics.Bitmap.CompressFormat.JPEG,
+                "png" to android.graphics.Bitmap.CompressFormat.PNG,
+            )) {
+            val photo = File(context.cacheDir, "Sample.$extension")
+            photo.outputStream().use { assertTrue(image.compress(format, 92, it)) }
+            val pdf = documents.import(android.net.Uri.fromFile(photo))
+            assertEquals("Sample.pdf", pdf.name)
+            assertEquals(1, pdf.pages)
+            val bytes = File(pdf.path).readBytes()
+            val content = bytes.toString(Charsets.ISO_8859_1)
+            assertTrue(content.startsWith("%PDF-1.4"))
+            assertTrue("/MediaBox [0 0 77 46]" in content)
+            assertTrue("/Count 1" in content)
+            val xref = Regex("startxref\n(\\d+)").find(content)!!.groupValues[1].toInt()
+            assertEquals("xref", content.substring(xref, xref + 4))
+            val imageStream = Regex("/DCTDecode /Length (\\d+) >>\nstream\n").find(content)!!
+            val embedded =
+                android.graphics.BitmapFactory.decodeByteArray(
+                    bytes,
+                    imageStream.range.last + 1,
+                    imageStream.groupValues[1].toInt(),
+                )
+            assertEquals(160, embedded.width)
+            assertEquals(96, embedded.height)
+            assertTrue(android.graphics.Color.green(embedded.getPixel(80, 48)) > 230)
+            embedded.recycle()
+        }
+        image.recycle()
+    }
+
+    @Test
     fun settingsAndQuoteSurviveRestartAndStudentsCannotEditRates() = runBlocking {
         val repo = DemoRepository(context, documents)
         repo.demoSignIn(true)

@@ -2,16 +2,24 @@ package com.printease.app
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.DashPathEffect
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -51,31 +59,204 @@ class Documents(private val context: Context) {
                 context.contentResolver
                     .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                     ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-                    ?.take(255) ?: "Document.pdf"
+                    ?.take(255) ?: uri.lastPathSegment?.take(255) ?: "Document"
             val target = file("draft-${UUID.randomUUID()}")
+            val source = File.createTempFile("printease-import-", ".tmp", context.cacheDir)
             try {
                 context.contentResolver.openInputStream(uri)?.use { input ->
-                    target.outputStream().use { output ->
+                    source.outputStream().use { output ->
                         val buffer = ByteArray(8192)
                         var total = 0
                         while (true) {
                             val count = input.read(buffer)
                             if (count == -1) break
                             total += count
-                            require(total <= MAX_PDF_BYTES) { "Choose a PDF no larger than 5 MB." }
+                            require(total <= MAX_PDF_BYTES) {
+                                "Choose a PDF, JPG, or PNG file up to 5 MB."
+                            }
                             output.write(buffer, 0, count)
                         }
                     }
                 }
                     ?: error(
-                        "This document could not be opened. Download it to your phone and try again."
+                        "This file could not be opened. Download it to your phone and try again."
                     )
-                inspect(target, name)
-            } catch (e: Exception) {
+                val prefix =
+                    source.inputStream().use { input ->
+                        val bytes = ByteArray(8)
+                        val length = input.read(bytes).coerceAtLeast(0)
+                        bytes.copyOf(length)
+                    }
+                when {
+                    prefix.copyOfRange(0, minOf(5, prefix.size)).toString(Charsets.US_ASCII) ==
+                        "%PDF-" -> {
+                        source.copyTo(target)
+                        inspect(target, name)
+                    }
+                    prefix.take(3).map { it.toInt() and 255 } == listOf(255, 216, 255) ||
+                        prefix.map { it.toInt() and 255 } ==
+                            listOf(137, 80, 78, 71, 13, 10, 26, 10) -> {
+                        imageAsPdf(source, target)
+                        metadata(
+                            target,
+                            (name.substringBeforeLast('.', name).take(250).ifBlank { "Image" }) +
+                                ".pdf",
+                            1,
+                        )
+                    }
+                    else ->
+                        error(
+                            "Choose a valid PDF, JPG, or PNG. Export Word, PowerPoint, or Excel files as PDF first."
+                        )
+                }
+            } catch (error: Exception) {
                 target.delete()
-                throw e
+                throw error
+            } finally {
+                source.delete()
             }
         }
+
+    private fun imageAsPdf(source: File, target: File) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(source.path, bounds)
+        require(
+            bounds.outWidth > 0 &&
+                bounds.outHeight > 0 &&
+                bounds.outWidth.toLong() * bounds.outHeight <= 40_000_000
+        ) {
+            "Choose a readable image under 40 megapixels."
+        }
+        val orientation =
+            runCatching {
+                    ExifInterface(source.path).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1)
+                }
+                .getOrDefault(1)
+        val transform =
+            Matrix().apply {
+                when (orientation) {
+                    2 -> setScale(-1f, 1f)
+                    3 -> setRotate(180f)
+                    4 -> setScale(1f, -1f)
+                    5 -> {
+                        setRotate(90f)
+                        postScale(-1f, 1f)
+                    }
+                    6 -> setRotate(90f)
+                    7 -> {
+                        setRotate(-90f)
+                        postScale(-1f, 1f)
+                    }
+                    8 -> setRotate(-90f)
+                }
+            }
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        val swap = orientation in 5..8
+        val scale = minOf(1f, 2400f / longest) * 72 / 150
+        val pageWidth =
+            maxOf(1, ((if (swap) bounds.outHeight else bounds.outWidth) * scale).roundToInt())
+        val pageHeight =
+            maxOf(1, ((if (swap) bounds.outWidth else bounds.outHeight) * scale).roundToInt())
+        for (limit in listOf(2400, 1600, 1100)) {
+            var sample = 1
+            while (longest / (sample * 2) >= limit) sample *= 2
+            val decoded =
+                BitmapFactory.decodeFile(
+                    source.path,
+                    BitmapFactory.Options().apply { inSampleSize = sample },
+                ) ?: error("This image could not be opened. Try exporting it as JPG or PNG.")
+            val ratio = minOf(1f, limit.toFloat() / maxOf(decoded.width, decoded.height))
+            val sized =
+                Bitmap.createScaledBitmap(
+                    decoded,
+                    maxOf(1, (decoded.width * ratio).roundToInt()),
+                    maxOf(1, (decoded.height * ratio).roundToInt()),
+                    true,
+                )
+            if (sized !== decoded) decoded.recycle()
+            val image = Bitmap.createBitmap(sized, 0, 0, sized.width, sized.height, transform, true)
+            if (image !== sized) sized.recycle()
+            val jpeg = ByteArrayOutputStream()
+            try {
+                val opaque = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
+                try {
+                    opaque.eraseColor(Color.WHITE)
+                    android.graphics.Canvas(opaque).drawBitmap(image, 0f, 0f, null)
+                    check(opaque.compress(Bitmap.CompressFormat.JPEG, 92, jpeg)) {
+                        "This image could not be converted to PDF."
+                    }
+                    writeImagePdf(
+                        target,
+                        jpeg.toByteArray(),
+                        opaque.width,
+                        opaque.height,
+                        pageWidth,
+                        pageHeight,
+                    )
+                } finally {
+                    opaque.recycle()
+                }
+            } finally {
+                image.recycle()
+            }
+            if (target.length() in 5..MAX_PDF_BYTES.toLong()) return
+        }
+        error("This image produces a PDF larger than 5 MB. Choose a smaller image.")
+    }
+
+    // A single JPEG XObject on a single page. The cross-reference records byte offsets.
+    private fun writeImagePdf(
+        target: File,
+        jpeg: ByteArray,
+        width: Int,
+        height: Int,
+        pageWidth: Int,
+        pageHeight: Int,
+    ) {
+        target.outputStream().use { stream ->
+            val offsets = IntArray(6)
+            var position = 0
+            fun append(text: String) {
+                val bytes = text.toByteArray(Charsets.US_ASCII)
+                stream.write(bytes)
+                position += bytes.size
+            }
+            fun startObject(id: Int, dictionary: String) {
+                offsets[id] = position
+                append("$id 0 obj\n$dictionary")
+            }
+            fun endObject() = append("\nendobj\n")
+            append("%PDF-1.4\n")
+            startObject(1, "<< /Type /Catalog /Pages 2 0 R >>")
+            endObject()
+            startObject(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+            endObject()
+            startObject(
+                3,
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $pageWidth $pageHeight] " +
+                    "/Resources << /XObject << /Photo 4 0 R >> >> /Contents 5 0 R >>",
+            )
+            endObject()
+            val imageLength = jpeg.size
+            startObject(
+                4,
+                "<< /Type /XObject /Subtype /Image /Width $width /Height $height " +
+                    "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length $imageLength >>\nstream\n",
+            )
+            stream.write(jpeg)
+            position += imageLength
+            append("\nendstream")
+            endObject()
+            val content = "q $pageWidth 0 0 $pageHeight 0 0 cm /Photo Do Q\n"
+            val contentLength = content.length
+            startObject(5, "<< /Length $contentLength >>\nstream\n" + content + "endstream")
+            endObject()
+            val xref = position
+            append("xref\n0 6\n0000000000 65535 f \n")
+            for (id in 1..5) append(offsets[id].toString().padStart(10, '0') + " 00000 n \n")
+            append("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n$xref\n%%EOF\n")
+        }
+    }
 
     fun inspect(file: File, name: String): PdfFile {
         require(file.length() in 5..MAX_PDF_BYTES.toLong()) { "Choose a PDF no larger than 5 MB." }
@@ -97,6 +278,10 @@ class Documents(private val context: Context) {
                 error("This PDF cannot be read. Use an unlocked, undamaged PDF.")
             }
         require(pages in 1..1000) { "Choose a PDF with 1–1,000 pages." }
+        return metadata(file, name, pages)
+    }
+
+    private fun metadata(file: File, name: String, pages: Int): PdfFile {
         val digest =
             MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") {
                 "%02x".format(it)
@@ -115,6 +300,49 @@ class Documents(private val context: Context) {
                         bitmap.eraseColor(Color.WHITE)
                         p.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     }
+                }
+            }
+        }
+
+    suspend fun renderPrint(file: File, page: Int, options: PrintOptions): Pair<Bitmap, Boolean> =
+        withContext(Dispatchers.IO) {
+            PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)).use {
+                renderer ->
+                renderer.openPage(page).use { p ->
+                    val layout = printGeometry(options.paper, p.width, p.height, options.actualSize)
+                    val scale = minOf(2f, 1000f / maxOf(layout.width, layout.height))
+                    val bitmap =
+                        Bitmap.createBitmap(
+                            (layout.width * scale).roundToInt(),
+                            (layout.height * scale).roundToInt(),
+                            Bitmap.Config.ARGB_8888,
+                        )
+                    bitmap.eraseColor(Color.WHITE)
+                    val margin = layout.margin * scale
+                    val clip =
+                        Rect(
+                            margin.roundToInt(),
+                            margin.roundToInt(),
+                            bitmap.width - margin.roundToInt(),
+                            bitmap.height - margin.roundToInt(),
+                        )
+                    val matrix =
+                        Matrix().apply {
+                            setScale(layout.scale * scale, layout.scale * scale)
+                            postTranslate(layout.left * scale, layout.top * scale)
+                        }
+                    p.render(bitmap, clip, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    android.graphics
+                        .Canvas(bitmap)
+                        .drawRect(
+                            RectF(clip),
+                            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.rgb(115, 135, 114)
+                                style = Paint.Style.STROKE
+                                pathEffect = DashPathEffect(floatArrayOf(4f, 4f), 0f)
+                            },
+                        )
+                    bitmap to layout.clipped
                 }
             }
         }

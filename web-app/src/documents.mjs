@@ -12,6 +12,12 @@ export class HostedDocuments {
   if(orderId&&!/^[A-Za-z0-9_-]{1,128}$/.test(orderId))throw new Error('This request ID is invalid.');
   const path = orderId ? orderId+'/'+draft.pdf.sha256 : draft.pdf.sha256;
   const headers=await this.headers(user),url=this.baseUrl+'/api/uploads/'+path;
+  const stored = {documentStore:'hosted',fileHash:draft.pdf.sha256,storagePath:`hosted/${user.uid}/${path}.pdf`};
+  // Reuse only a server-confirmed file with the same authenticated scope and hash.
+  if (this.request) {
+   const prior = await timeout(this.request(url,{method:'HEAD',headers,cache:'no-store'}),8000).catch(()=>null);
+   if (prior?.status === 204) { progress(.97); return stored; }
+  }
   if(this.XHR)await new Promise((resolve,reject)=>{
    const xhr=new this.XHR();xhr.open('PUT',url);xhr.timeout=90000;xhr.setRequestHeader('Authorization',headers.Authorization);xhr.setRequestHeader('Content-Type','application/pdf');
    xhr.upload.onprogress=event=>{if(event.lengthComputable)progress(Math.min(.95,event.loaded/event.total*.95));};
@@ -20,7 +26,7 @@ export class HostedDocuments {
    xhr.ontimeout=()=>reject(new Error('The upload timed out. Keep this draft and retry; it uses the same request ID.'));
    xhr.onabort=()=>reject(new Error('The upload stopped. Your PDF is still selected.'));xhr.send(draft.file);
   });else await this.response(await timeout(this.request(url,{method:'PUT',headers:{...headers,'Content-Type':'application/pdf'},body:draft.file}),90000));
-  progress(.97);return {documentStore:'hosted',fileHash:draft.pdf.sha256,storagePath:`hosted/${user.uid}/${path}.pdf`};
+  progress(.97);return stored;
  }
  async cleanup(user,id){
   const response = await this.response(await timeout(this.request(this.baseUrl+'/api/document-cleanup/'+encodeURIComponent(id),{

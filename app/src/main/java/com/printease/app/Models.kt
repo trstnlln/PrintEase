@@ -77,6 +77,7 @@ data class ShopSettings(
     val facebookUrl: String = "",
     val ratesConfirmed: Boolean = false,
     val pickupSchedule: PickupSchedule? = null,
+    val paperStock: PaperStock = PaperStock(),
 ) {
     init {
         require(
@@ -105,7 +106,10 @@ data class ShopSettings(
             "contactEmail" to contactEmail.trim(),
             "facebookUrl" to facebookUrl.trim(),
             "ratesConfirmed" to ratesConfirmed,
-        ) + (pickupSchedule?.let { mapOf("pickupSchedule" to it.toMap()) } ?: emptyMap())
+        ) +
+            (pickupSchedule?.let { mapOf("pickupSchedule" to it.toMap()) } ?: emptyMap()) +
+            (if (paperStock == PaperStock()) emptyMap()
+            else mapOf("paperStock" to paperStock.toMap()))
 
     companion object {
         fun fromMap(m: Map<String, Any?>?) =
@@ -138,6 +142,7 @@ data class ShopSettings(
                     m["facebookUrl"] as? String ?: "",
                     m["ratesConfirmed"] as? Boolean ?: false,
                     (m["pickupSchedule"] as? Map<*, *>)?.let(PickupSchedule::fromMap),
+                    PaperStock.fromMap(m["paperStock"] as? Map<*, *>),
                 )
     }
 }
@@ -219,6 +224,7 @@ data class PrintOptions(
     val color: Boolean = false,
     val duplex: Boolean = false,
     val pageRanges: List<PageRange> = emptyList(),
+    val actualSize: Boolean = false,
 ) {
     init {
         require(validPaper(paper))
@@ -264,7 +270,7 @@ data class PrintOptions(
             "duplex" to duplex,
             "pageRanges" to (pageRanges.ifEmpty { listOf(PageRange(1, pages)) }).map { it.toMap() },
             "selectedPages" to selectedPages,
-        )
+        ) + (if (actualSize) mapOf("actualSize" to true) else emptyMap())
 }
 
 data class Session(
@@ -305,6 +311,7 @@ data class PrintOrder(
     val expectedReadyAt: Long? = null,
     val review: OrderReview? = null,
     val attachments: List<OrderAttachment> = emptyList(),
+    val printedFiles: List<Int> = emptyList(),
 ) {
     init {
         require(documentStore in listOf("firebase", "hosted"))
@@ -345,7 +352,8 @@ data class PrintOrder(
             (expectedReadyAt?.let { mapOf("expectedReadyAt" to it) } ?: emptyMap()) +
             (review?.let { mapOf("review" to it.toMap()) } ?: emptyMap()) +
             (if (attachments.isEmpty()) emptyMap()
-            else mapOf("attachments" to attachments.map { it.toMap() }))
+            else mapOf("attachments" to attachments.map { it.toMap() })) +
+            (if (printedFiles.isEmpty()) emptyMap() else mapOf("printedFiles" to printedFiles))
 
     companion object {
         fun fromMap(id: String, d: Map<String, Any?>): PrintOrder {
@@ -372,6 +380,7 @@ data class PrintOrder(
                                 emptyList()
                             else it
                         } ?: emptyList(),
+                    o["actualSize"] == true,
                 ),
                 (d["createdAt"] as Number).toLong(),
                 OrderStatus.parse(d["status"] as String),
@@ -389,6 +398,7 @@ data class PrintOrder(
                 (d["attachments"] as? List<*>)
                     ?.map { OrderAttachment.fromMap(it as Map<*, *>) }
                     .orEmpty(),
+                (d["printedFiles"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
             )
         }
     }
@@ -405,6 +415,7 @@ data class ShopState(
     val settingsCached: Boolean = false,
     val reviewAvailable: Boolean = false,
     val paperSizesAvailable: Boolean = false,
+    val printToolsAvailable: Boolean = false,
 )
 
 fun sortedQueue(orders: List<PrintOrder>): List<PrintOrder> =

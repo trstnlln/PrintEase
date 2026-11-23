@@ -10,7 +10,7 @@ const {PrintEase}=await import('../src/app.mjs');
 async function setup(t){const window=new Window({url:'https://test.printease.example/'});for(const name of ['window','document','location','history','localStorage','navigator'])Object.defineProperty(globalThis,name,{configurable:true,value:window[name]});Object.defineProperty(globalThis,'crypto',{configurable:true,value:webcrypto});window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};window.HTMLDialogElement.prototype.close=function(){this.open=false;};document.body.innerHTML='<div id="app"></div><div id="toast"></div><div id="modal-root"></div>';await db.transact(['orders','files','settings'],tx=>{for(const name of ['orders','files','settings'])tx.objectStore(name).clear();});const app=new PrintEase({demo:true});t.after(async()=>{app.close();await window.happyDOM.abort();});await app.start();return app;}
 test('student can navigate from home to a guarded draft',async t=>{const app=await setup(t);await app.backend.login(false);assert.match(document.body.textContent,/Hello, Alex/);await app.onClick({target:document.querySelector('[data-action="new-request"]'),preventDefault(){}});assert.equal(app.s.route,'request');assert.equal(document.querySelector('[data-action="review"]').disabled,true);});
 test('invalid copies disable submission and updates do not replace the focused field',async t=>{const app=await setup(t);await app.backend.login(false);app.s.draft.pdf={name:'Two.pdf',pages:2,bytes:100};app.s.draft.options={...defaults(),pages:2};app.go('request');const input=document.getElementById('copies');input.focus();input.value='0';app.onInput({target:input});assert.equal(document.querySelector('[data-action="review"]').disabled,true);assert.equal(document.getElementById('copies'),input);input.value='2';app.onInput({target:input});assert.equal(document.getElementById('summary-total').textContent,'₱8.00');assert.equal(document.querySelector('[data-action="review"]').disabled,false);});
-test('confirmation submits one request and updates the student list',async t=>{const app=await setup(t);await app.backend.login(false);app.s.draft={id:'ui-order',pdf:{name:'Report.pdf',pages:2,bytes:100},file:new Blob(['%PDF-example']),options:{...defaults(),pages:2},rawCopies:'1'};app.go('request');app.review();assert.match(document.getElementById('modal-root').textContent,/₱4.00/);await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});assert.equal(app.s.route,'orders');assert.equal(app.s.orders.filter(o=>o.id==='ui-order').length,1);assert.match(document.body.textContent,/Report.pdf/);});
+test('confirmation submits one request and updates the student list',async t=>{const app=await setup(t);await app.backend.login(false);app.s.draft={id:'ui-order',pdf:{name:'Report.pdf',pages:2,bytes:100},file:new Blob(['%PDF-example']),options:{...defaults(),pages:2},rawCopies:'1'};app.go('request');app.review();assert.match(document.getElementById('modal-root').textContent,/₱4.00/);await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});assert.equal(app.s.route,'orders');assert.equal(app.s.orders.filter(o=>o.id==='ui-order').length,1);assert.match(document.body.textContent,/Report.pdf/);assert.match(document.body.textContent,/Request ID ui-order/);});
 test('admin can reject with a reason and the student sees it',async t=>{const app=await setup(t);await app.backend.login(true);app.go('detail','sample-1043');app.status('Rejected');const reason=document.getElementById('reject-reason');assert.equal(document.querySelector('[data-action="reject-confirm"]').disabled,true);reason.value='Please upload the final PDF.';app.onInput({target:reason});await app.onClick({target:document.querySelector('[data-action="reject-confirm"]'),preventDefault(){}});await app.backend.login(false);app.go('detail','sample-1043');assert.match(document.body.textContent,/Please upload the final PDF/);assert.match(document.body.textContent,/Rejected/);});
 test('file and account names cannot inject HTML',async t=>{const app=await setup(t);await app.backend.login(false);app.s.orders[0].fileName='<img id="injected" src=x onerror=bad()>';app.render();assert.equal(document.querySelector('#injected'),null);assert.match(document.body.textContent,/<img id="injected"/);});
 test('installation guide uses Safari share instructions and stays separate from Firebase auth',async t=>{const app=await setup(t);app.installHelp();assert.match(document.getElementById('modal-root').textContent,/Add to Home Screen/);assert.match(document.getElementById('modal-root').textContent,/Firebase sign-in is separate/);});
@@ -32,7 +32,7 @@ test('returning from the phone file picker preserves the signed-in account and s
  app.backend.refresh=async()=>{refreshes++;app.s.session=null;app.s.route='home';};
  const pending=app.pick(await selectedFile(2));window.dispatchEvent(new window.Event('focus'));await pending;
  assert.equal(refreshes,0);assert.equal(app.s.session.uid,uid);assert.equal(app.s.route,'request');assert.equal(app.s.draft.pdf.pages,2);assert.equal(app.s.draft.pdf.name,'iPhone.pdf');
- assert.match(document.body.textContent,/PDF selected/);assert.equal(document.querySelector('[data-action="review"]').disabled,false);
+ assert.match(document.body.textContent,/File ready to preview/);assert.equal(document.querySelector('[data-action="review"]').disabled,false);
 });
 test('Safari autofilled credentials are read from the form before it is re-rendered',async t=>{
  const app=await setup(t);app.s.mode='live';app.s.auth.register=true;app.render();let received;
@@ -162,4 +162,33 @@ test("shop queue separates orders waiting on the student from work staff can act
  app.go("orders");
  assert.ok(document.querySelector('[aria-label="Waiting for student"] [data-id="sample-1043"]'));
  assert.ok(document.querySelector('[aria-label="Printing"] [data-id="sample-1042"]'));
+});
+
+test('paper stock is editable and blocks an unavailable size in an existing student draft',async t=>{
+ const app=await setup(t);await app.backend.login(true);app.go('settings');
+ const folio=document.querySelector('[data-stock="Folio"]');
+ folio.value='out';app.onInput({target:folio});
+ await app.onSubmit({target:document.getElementById('shop-form'),preventDefault(){}});
+ assert.deepEqual(app.s.settings.paperStock.out,['Folio']);
+ await app.backend.login(false);
+ app.s.draft.pdf={name:'Lecture.pdf',pages:1,bytes:200};
+ app.s.draft.options={...defaults(),paper:'Folio'};
+ app.go('request');
+ assert.match(document.body.textContent,/Out of stock. Choose another paper size/);
+ assert.equal(document.querySelector('[data-action="review"]').disabled,true);
+ const paper=document.querySelector('#paper-size');paper.value='Legal';app.onInput({target:paper});
+ const scale=document.querySelector('#scale');scale.value='actual';app.onInput({target:scale});
+ assert.equal(document.querySelector('#summary-scale').textContent,'Actual size');
+ assert.equal(document.querySelector('[data-action="review"]').disabled,false);
+});
+
+test('staff checklist saves each printed file and unlocks pickup when complete',async t=>{
+ const app=await setup(t);await app.backend.login(true);app.go('detail','sample-1042');
+ const ready=()=>document.querySelector('[data-status="Ready for Pickup"]');
+ assert.equal(ready().disabled,true);
+ await app.onClick({target:document.querySelector('[data-action="mark-printed"]'),preventDefault(){}});
+ assert.match(document.querySelector('.print-checklist').textContent,/1 of 1 printed/);
+ assert.equal(ready().disabled,false);
+ await app.onClick({target:document.querySelector('[data-action="mark-printed"]'),preventDefault(){}});
+ assert.equal(ready().disabled,true);
 });

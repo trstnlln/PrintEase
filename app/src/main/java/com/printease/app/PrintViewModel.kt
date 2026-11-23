@@ -55,6 +55,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 saved["duplex"] ?: false,
                 runCatching { parsePageRanges(saved["pageRanges"] ?: "", pdf.value?.pages ?: 1) }
                     .getOrDefault(emptyList()),
+                saved["actualSize"] ?: false,
             )
         )
     private val events = Channel<String>(Channel.BUFFERED)
@@ -62,6 +63,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     val addons = saved.getStateFlow("draftAddons", arrayListOf<String>())
     val revisionNote = saved.getStateFlow<String?>("revisionNote", null)
     val revisionId = saved.getStateFlow<String?>("revisionId", null)
+    val submittedId = saved.getStateFlow<String?>("submittedId", null)
 
     fun toggleAddon(id: String) {
         val current = addons.value
@@ -99,6 +101,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                             item.getInt("copies", 1),
                             item.getBoolean("color"),
                             item.getBoolean("duplex"),
+                            actualSize = item.getBoolean("actualSize"),
                         )
                     AttachmentDraft(
                         pdf,
@@ -121,6 +124,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                         putInt("copies", item.options.copies)
                         putBoolean("color", item.options.color)
                         putBoolean("duplex", item.options.duplex)
+                        putBoolean("actualSize", item.options.actualSize)
                         putString("copiesText", item.copiesText)
                     }
                 }
@@ -154,6 +158,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun demoLogin(admin: Boolean) {
+        saved["submittedId"] = null as String?
         repository?.demoSignIn(admin)
         navigate("home")
     }
@@ -168,6 +173,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         if (!BuildConfig.DEMO) runCatching { PickupAlerts.unregister() }
         PickupAlerts.clear(getApplication())
         repository?.signOut()
+        saved["submittedId"] = null as String?
         discardDraft()
         saved["route"] = "home"
         if (!BuildConfig.DEMO) GoogleSignIn.clearSession(getApplication())
@@ -223,6 +229,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["paper"] = value.paper
         saved["copies"] = value.copies
         saved["color"] = value.color
+        saved["actualSize"] = value.actualSize
         saved["duplex"] = value.duplex
         saved["pageRanges"] = pageRangeLabel(value.pageRanges)
     }
@@ -257,6 +264,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 progressUpdate,
             )
         }
+        saved["submittedId"] = revision ?: draftId
         discardDraft()
         saved["route"] = "orders"
         events.send(
@@ -281,12 +289,33 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["paper"] = "A4"
         saved["copies"] = 1
         saved["color"] = false
+        saved["actualSize"] = false
         saved["duplex"] = false
         saved["pageRanges"] = ""
     }
 
     fun clearAuthError() {
         authError.value = null
+    }
+
+    fun savePrintFile(orderId: String, index: Int, destination: android.net.Uri) = action {
+        check(shop.value.session?.admin == true)
+        val order =
+            shop.value.orders.find { it.id == orderId } ?: error("This request is unavailable.")
+        val source = repository!!.document(order, index)
+        withContext(Dispatchers.IO) {
+            val output =
+                getApplication<android.app.Application>()
+                    .contentResolver
+                    .openOutputStream(destination, "wt")
+                    ?: error("The selected folder could not be opened.")
+            output.use { stream -> source.inputStream().use { it.copyTo(stream) } }
+        }
+        events.send("PDF saved.")
+    }
+
+    fun markPrinted(id: String, index: Int, checked: Boolean) = action {
+        repository!!.markPrinted(id, index, checked)
     }
 
     fun setPickupTime(id: String, time: Long?) = action {
