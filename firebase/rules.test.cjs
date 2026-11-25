@@ -301,3 +301,17 @@ test('staff manage valid paper availability and print checks across clients', as
  await assertSucceeds(updateDoc(target,{printedFiles:[0],updatedAt:Date.now()}));
  await assertSucceeds(updateDoc(target,{status:'Ready for Pickup',updatedAt:Date.now()}));
 });
+
+test('customers read aggregate queue counts without access to another request', async () => {
+ const publicStatus = 'queueStatus/current';
+ const staff = doc(admin().firestore(), publicStatus), customer = doc(student().firestore(), publicStatus);
+ const updated = {waiting:3,printing:1,checkedAt:Date.now()};
+ await assertFails(setDoc(customer,updated));
+ await assertFails(setDoc(staff,{...updated,orderId:'private'}));
+ await assertSucceeds(setDoc(staff,updated));
+ await assertSucceeds(getDoc(customer));
+ await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(),publicStatus)));
+ await assertFails(getDoc(doc(env.authenticatedContext('unrelated-customer').firestore(),'orders/private')));
+ await assertFails(setDoc(staff,{...updated,waiting:2}));
+ await assertSucceeds(setDoc(staff,{...updated,waiting:2,checkedAt:updated.checkedAt+1}));
+});

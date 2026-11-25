@@ -147,6 +147,11 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         mutable.value =
             mutable.value.copy(
                 settings = settings,
+                queueStatus =
+                    QueueStatus.fromStatuses(
+                        all.map { it.status.label },
+                        System.currentTimeMillis(),
+                    ),
                 orders =
                     all.filter { session != null && (session.admin || it.ownerId == session.uid) }
                         .sortedByDescending { it.createdAt },
@@ -392,6 +397,8 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
     private var listener: ListenerRegistration? = null
     private var sessionJob: Job? = null
     private var settingsListener: ListenerRegistration? = null
+    private var queueListener: ListenerRegistration? = null
+    private var queueSourceListener: ListenerRegistration? = null
     private var generation = 0L
     private val authListener =
         FirebaseAuth.AuthStateListener { firebaseAuth ->
@@ -400,6 +407,10 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             sessionJob?.cancel()
             settingsListener?.remove()
             settingsListener = null
+            queueListener?.remove()
+            queueSourceListener?.remove()
+            queueListener = null
+            queueSourceListener = null
             listener?.remove()
             listener = null
             val user = firebaseAuth.currentUser
@@ -508,6 +519,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                                     mutable.value =
                                         mutable.value.copy(printToolsAvailable = available)
                             }
+                            scope.launch { bindQueue(currentGeneration, session.admin) }
                             if (PickupAlerts.enabled(context))
                                 scope.launch { runCatching { PickupAlerts.register(context) } }
                             settingsListener =
@@ -1006,9 +1018,75 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
             }
         }
 
+    private suspend fun bindQueue(currentGeneration: Long, isAdmin: Boolean) {
+        val target = db.collection("queueStatus").document("current")
+        try {
+            withTimeout(10000) { target.get(Source.SERVER).await() }
+        } catch (_: FirebaseFirestoreException) {
+            return
+        } catch (_: TimeoutCancellationException) {
+            return
+        }
+        if (currentGeneration != generation) return
+        queueListener =
+            target.addSnapshotListener { snapshot, error ->
+                if (error != null || currentGeneration != generation) return@addSnapshotListener
+                val waiting = snapshot?.getLong("waiting")?.toInt()
+                val printing = snapshot?.getLong("printing")?.toInt()
+                val checkedAt = snapshot?.getLong("checkedAt")
+                mutable.value =
+                    mutable.value.copy(
+                        queueStatus =
+                            if (waiting != null && printing != null && checkedAt != null)
+                                QueueStatus(waiting, printing, checkedAt)
+                            else null
+                    )
+            }
+        if (!isAdmin) return
+        var lastCounts: Pair<Int, Int>? = null
+        var observedAt = 0L
+        queueSourceListener =
+            db.collection("orders")
+                .whereIn("status", listOf(OrderStatus.Accepted.label, OrderStatus.Printing.label))
+                .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
+                    if (
+                        error != null ||
+                            snapshot == null ||
+                            currentGeneration != generation ||
+                            snapshot.metadata.isFromCache ||
+                            snapshot.metadata.hasPendingWrites()
+                    )
+                        return@addSnapshotListener
+                    observedAt = maxOf(System.currentTimeMillis(), observedAt + 1)
+                    val next =
+                        QueueStatus.fromStatuses(
+                            snapshot.documents.map { it.getString("status") },
+                            observedAt,
+                        )
+                    val counts = next.waiting to next.printing
+                    if (counts == lastCounts) return@addSnapshotListener
+                    lastCounts = counts
+                    scope.launch {
+                        val saved = runCatching {
+                            withTimeout(15000) {
+                                db.runTransaction { tx ->
+                                        val old = tx.get(target).getLong("checkedAt") ?: 0
+                                        if (currentGeneration == generation && old < next.checkedAt)
+                                            tx.set(target, next.toMap())
+                                    }
+                                    .await()
+                            }
+                        }
+                        if (saved.isFailure && lastCounts == counts) lastCounts = null
+                    }
+                }
+    }
+
     override fun close() {
         generation++
         settingsListener?.remove()
+        queueListener?.remove()
+        queueSourceListener?.remove()
         listener?.remove()
         auth.removeAuthStateListener(authListener)
         scope.cancel()

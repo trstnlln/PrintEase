@@ -34,7 +34,11 @@ let state;const snapshots=[],bucket=new MemoryBucket(),host='https://test.printe
  await backend.signOut();await backend.email('web-admin@example.com','test-password-123','Web Admin');const adminId=backend.auth.currentUser.uid;
  const response=await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:update?key=demo-fake-key',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer owner'},body:JSON.stringify({localId:adminId,customAttributes:JSON.stringify({admin:true})})});assert.equal(response.status,200);
  await backend.refresh();await until(()=>state.session?.admin&&state.orders.length===1);
- await backend.transition(draft.id,'Accepted');await until(()=>state.orders[0].status==='Accepted');assert.equal(state.orders[0].queue,1);assert.deepEqual(await backend.bytes(state.orders[0]),bytes);await backend.transition(draft.id,'Printing');await backend.transition(draft.id,'Ready for Pickup');
+ await backend.transition(draft.id,'Accepted');
+ await until(()=>state.orders[0].status==='Accepted'&&state.queueStatus?.waiting===1);assert.equal(state.orders[0].queue,1);assert.deepEqual(await backend.bytes(state.orders[0]),bytes);await backend.transition(draft.id,'Printing');
+ await until(()=>state.queueStatus?.waiting===0&&state.queueStatus?.printing===1);
+ await backend.transition(draft.id,'Ready for Pickup');
+ await until(()=>state.queueStatus?.printing===0);
  await backend.signOut();await backend.email('web-student@example.com','test-password-123');await until(()=>state.orders[0]?.status==='Ready for Pickup');assert.equal(state.session.admin,false);assert.equal(state.orders.length,1);
  await backend.signOut();await backend.email('web-admin@example.com','test-password-123');await until(()=>state.session?.admin&&state.orders.length===1);
  const pickupSchedule={days:[1,2,3,4,5],open:360,close:1320,cutoff:1200,closed:''};

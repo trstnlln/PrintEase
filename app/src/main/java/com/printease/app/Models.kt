@@ -428,7 +428,21 @@ data class ShopState(
     val reviewAvailable: Boolean = false,
     val paperSizesAvailable: Boolean = false,
     val printToolsAvailable: Boolean = false,
+    val queueStatus: QueueStatus? = null,
 )
+
+data class QueueStatus(val waiting: Int, val printing: Int, val checkedAt: Long) {
+    fun toMap() = mapOf("waiting" to waiting, "printing" to printing, "checkedAt" to checkedAt)
+
+    companion object {
+        fun fromStatuses(statuses: Iterable<String?>, checkedAt: Long) =
+            QueueStatus(
+                statuses.count { it == OrderStatus.Accepted.label },
+                statuses.count { it == OrderStatus.Printing.label },
+                checkedAt,
+            )
+    }
+}
 
 fun sortedQueue(orders: List<PrintOrder>): List<PrintOrder> =
     orders.sortedWith(

@@ -7,7 +7,10 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +28,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -112,10 +117,6 @@ fun PrintEase(model: PrintViewModel) {
                     },
                     actions = {
                         if (BuildConfig.DEMO) ModeBadge()
-                        if (mainRoute && !BuildConfig.DEMO)
-                            IconButton(onClick = model::refresh, enabled = !busy) {
-                                Icon(Icons.Default.Refresh, "Refresh orders")
-                            }
                         if (mainRoute)
                             IconButton(onClick = { model.navigate("account") }, enabled = !busy) {
                                 UserAvatar(session, size = 36.dp)
@@ -200,6 +201,7 @@ fun PrintEase(model: PrintViewModel) {
                         onPreview = { draftPreview = 0 },
                         settings = state.settings,
                         settingsError = state.settingsError,
+                        queueStatus = state.queueStatus,
                         reviewAvailable = state.reviewAvailable,
                         paperSizesAvailable = state.paperSizesAvailable,
                         printToolsAvailable = state.printToolsAvailable,
@@ -413,6 +415,29 @@ fun EmptyPanel(title: String, description: String, icon: ImageVector = Icons.Def
 }
 
 @Composable
+private fun Modifier.pressFeedback(source: MutableInteractionSource): Modifier {
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) .96f else 1f, label = "Button press")
+    return this.scale(scale)
+}
+
+@Composable
+private fun QueueStatusCard(status: QueueStatus) {
+    Panel(Modifier.fillMaxWidth()) {
+        Text("Shop queue", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "${status.waiting} waiting · ${status.printing} printing",
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "Reported ${formatDate(status.checkedAt)}. Check your request for the shop’s pickup estimate.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
 fun PrimaryButton(
     text: String,
     onClick: () -> Unit,
@@ -420,9 +445,11 @@ fun PrimaryButton(
     enabled: Boolean = true,
     icon: ImageVector? = null,
 ) {
+    val interaction = remember { MutableInteractionSource() }
     Button(
         onClick,
-        modifier.heightIn(min = 52.dp),
+        modifier.heightIn(min = 52.dp).pressFeedback(interaction),
+        interactionSource = interaction,
         enabled = enabled,
         shape = RoundedCornerShape(16.dp),
         contentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp),
@@ -688,7 +715,11 @@ fun Dashboard(
                         shape = RoundedCornerShape(26.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Box {
+                        Box(
+                            Modifier.background(
+                                Brush.linearGradient(listOf(Color(0xFF123E32), Color(0xFF1B5C47)))
+                            )
+                        ) {
                             Icon(
                                 Icons.Default.Description,
                                 null,
@@ -699,7 +730,17 @@ fun Dashboard(
                                 Modifier.padding(24.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                             ) {
-                                Icon(Icons.Default.Description, null, tint = Lime)
+                                Surface(
+                                    color = Color.White.copy(alpha = .14f),
+                                    shape = RoundedCornerShape(14.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Description,
+                                        null,
+                                        Modifier.padding(10.dp).size(22.dp),
+                                        tint = Lime,
+                                    )
+                                }
                                 Text(
                                     "Send files to print",
                                     style = MaterialTheme.typography.headlineMedium,
@@ -709,8 +750,10 @@ fun Dashboard(
                                     "Upload a PDF, JPG, or PNG and collect it at the shop near campus.",
                                     color = Color(0xFFCEE1D3),
                                 )
+                                val interaction = remember { MutableInteractionSource() }
                                 Button(
                                     onNew,
+                                    interactionSource = interaction,
                                     enabled =
                                         state.settings.acceptingOrders &&
                                             state.settingsError == null,
@@ -719,7 +762,8 @@ fun Dashboard(
                                             containerColor = Lime,
                                             contentColor = Ink,
                                         ),
-                                    modifier = Modifier.heightIn(min = 52.dp),
+                                    modifier =
+                                        Modifier.heightIn(min = 52.dp).pressFeedback(interaction),
                                     shape = RoundedCornerShape(14.dp),
                                 ) {
                                     Icon(Icons.Default.Add, null)
@@ -768,6 +812,8 @@ fun Dashboard(
                     }
             }
             item { ShopCard(state.settings, Modifier.fillMaxWidth()) }
+            if (!session.admin)
+                state.queueStatus?.let { status -> item { QueueStatusCard(status) } }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard(
@@ -1036,6 +1082,7 @@ fun RequestContent(
     onDiscard: () -> Unit,
     settings: ShopSettings = ShopSettings(),
     settingsError: String? = null,
+    queueStatus: QueueStatus? = null,
     reviewAvailable: Boolean = false,
     paperSizesAvailable: Boolean = false,
     printToolsAvailable: Boolean = false,
@@ -1098,6 +1145,7 @@ fun RequestContent(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(22.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
+            queueStatus?.let { QueueStatusCard(it) }
             settings.pickupSchedule
                 ?.let { schedule -> nextPickupWindow(schedule) }
                 ?.let { next ->

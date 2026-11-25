@@ -7,6 +7,15 @@ export function greetingName(displayName) {
   return name.split(/\s+/, 1)[0].replace(/^[.;:]+|[.;:]+$/g, "");
 }
 
+export function queueStatus(orders, checkedAt = Date.now()) {
+  let waiting = 0, printing = 0;
+  for (const { status } of orders) {
+    if (status === "Accepted") waiting++;
+    if (status === "Printing") printing++;
+  }
+  return { waiting, printing, checkedAt };
+}
+
 const MAX_BYTES = 5 * 1024 * 1024;
 const statuses = ["Pending", "Accepted", "Printing", "Ready for Pickup", "Completed", "Rejected", "Cancelled"];
 const terminal = ["Completed", "Rejected", "Cancelled"];

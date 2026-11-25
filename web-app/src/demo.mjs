@@ -2,7 +2,7 @@ import { attachmentEntries, sameAttachments, requireBatchRanges, requestOutOfSto
 import { requiresPaperQuote } from "./paper.mjs";
 import { newReview, canAccept, reviewUpdate } from "./review.mjs";
 import * as db from "./db.mjs";
-import { canTransition, dayKey, makeOrder, defaultShop, validateShop, sameOptions, validPickupTime } from "./model.mjs";
+import { canTransition, dayKey, makeOrder, defaultShop, validateShop, sameOptions, validPickupTime, queueStatus } from "./model.mjs";
 class DemoBackend {
   constructor(change) {
     this.change = change;
@@ -33,7 +33,7 @@ class DemoBackend {
   async refresh() {
     const orders = await db.all("orders");
     this.settings = validateShop((await db.get("settings", "shop-details"))?.value || defaultShop());
-    this.change({ session: this.session, settings: this.settings, settingsError: null, orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, paperSizesAvailable: true, printToolsAvailable: true, ready: true });
+    this.change({ session: this.session, settings: this.settings, settingsError: null, queueStatus: queueStatus(orders), orders: orders.filter((o) => this.session && (this.session.admin || o.ownerId === this.session.uid)), cached: false, syncError: null, reviewAvailable: true, paperSizesAvailable: true, printToolsAvailable: true, ready: true });
   }
   async signOut() {
     this.session = null;

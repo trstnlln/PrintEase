@@ -6,7 +6,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, getIdTokenResult, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail, signOut, browserLocalPersistence, inMemoryPersistence, setPersistence } from "firebase/auth";
 import { getFirestore, collection, query, where, orderBy, limit, onSnapshot, doc, getDocFromServer, setDoc, runTransaction } from "firebase/firestore";
 import { getStorage, ref, getBytes } from "firebase/storage";
-import { dayKey, canTransition, makeOrder, online, timeout, MAX_BYTES, validateOptions, defaultShop, validateShop, sameOptions, validPickupTime } from "./model.mjs";
+import { dayKey, canTransition, makeOrder, online, timeout, MAX_BYTES, validateOptions, defaultShop, validateShop, queueStatus, sameOptions, validPickupTime } from "./model.mjs";
 class FirebaseBackend {
   constructor(config, change, documents = new HostedDocuments()) {
     this.documents = documents;
@@ -23,6 +23,7 @@ class FirebaseBackend {
     this.error = null;
     this.settings = defaultShop();
     this.settingsError = null;
+    this.queueStatus = null;
     this.reviewAvailable = false;
     this.paperSizesAvailable = false;
     this.printToolsAvailable = false;
@@ -40,12 +41,15 @@ class FirebaseBackend {
     const previous = { session: this.session, orders: this.orders, settings: this.settings }, generation = ++this.generation;
     this.unOrders?.();
     this.unSettings?.();
+    this.unQueueStatus?.();
+    this.unQueueSource?.();
     this.unOrders = null;
     this.unSettings = null;
     if (!user) {
       this.orders = [];
       this.session = null;
       this.settings = defaultShop();
+      this.queueStatus = null;
       this.settingsError = null;
       this.error = null;
       this.cache = false;
@@ -60,6 +64,7 @@ class FirebaseBackend {
       this.orders = [];
       this.session = null;
       this.settings = defaultShop();
+      this.queueStatus = null;
       this.settingsError = null;
       this.error = null;
       this.cache = false;
@@ -99,6 +104,7 @@ class FirebaseBackend {
           this.emit();
         }
       }).catch(() => {});
+      this.bindQueue(generation, isAdmin);
       this.unSettings = onSnapshot(doc(this.db, "shopSettings", "current"), { includeMetadataChanges: true }, (snapshot) => {
         if (generation !== this.generation) return;
         try {
@@ -130,7 +136,7 @@ class FirebaseBackend {
         this.emit();
       }, () => {
         if (generation !== this.generation) return;
-        this.error = "Orders could not sync. Check your connection, then tap Refresh. If this continues, contact the shop.";
+        this.error = "Orders could not sync. Check your connection, then check Orders again. If this continues, contact the shop.";
         this.emit();
       });
     } catch (error) {
@@ -140,13 +146,39 @@ class FirebaseBackend {
         this.orders = previous.orders;
         this.settings = previous.settings;
         this.cache = true;
-        this.error = "Could not refresh. Showing saved orders; reconnect and tap Refresh.";
+        this.error = "Could not refresh. Showing saved orders; reconnect to sync.";
         this.emit();
       } else this.change({ session: null, orders: [], ready: true, syncError: "Could not restore the account. Check your connection and sign in again." });
     }
   }
+  async bindQueue(generation, admin) {
+    const target = doc(this.db, "queueStatus", "current");
+    try { await timeout(getDocFromServer(target), 10000); }
+    catch { return; }
+    if (generation !== this.generation) return;
+    this.unQueueStatus = onSnapshot(target, snapshot => {
+      if (generation !== this.generation) return;
+      this.queueStatus = snapshot.data() ?? null;
+      this.emit();
+    }, () => {});
+    if (!admin) return;
+    let lastKey, observedAt = 0;
+    const source = query(collection(this.db, "orders"), where("status", "in", ["Accepted", "Printing"]));
+    // Report only server-confirmed snapshots. Older observations cannot overwrite newer ones.
+    this.unQueueSource = onSnapshot(source, { includeMetadataChanges: true }, snapshot => {
+      if (generation !== this.generation || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+      const next = queueStatus(snapshot.docs.map(item => item.data()), observedAt = Math.max(Date.now(), observedAt + 1));
+      const key = next.waiting + ":" + next.printing;
+      if (key === lastKey) return;
+      lastKey = key;
+      timeout(runTransaction(this.db, async tx => {
+        const previous = (await tx.get(target)).data();
+        if (generation === this.generation && (previous?.checkedAt ?? 0) < next.checkedAt) tx.set(target, next);
+      })).catch(() => { if (lastKey === key) lastKey = null; });
+    }, () => {});
+  }
   emit() {
-    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, reviewAvailable: this.reviewAvailable, paperSizesAvailable: this.paperSizesAvailable, printToolsAvailable: this.printToolsAvailable, syncError: this.error || this.persistenceWarning || null });
+    this.change({ session: this.session, orders: this.orders, ready: true, cached: this.cache, settings: this.settings, settingsError: this.settingsError, queueStatus: this.queueStatus, reviewAvailable: this.reviewAvailable, paperSizesAvailable: this.paperSizesAvailable, printToolsAvailable: this.printToolsAvailable, syncError: this.error || this.persistenceWarning || null });
   }
   google() {
     online();
@@ -332,6 +364,8 @@ class FirebaseBackend {
     this.unAuth?.();
     this.unOrders?.();
     this.unSettings?.();
+    this.unQueueStatus?.();
+    this.unQueueSource?.();
   }
 }
 export {

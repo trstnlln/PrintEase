@@ -11,7 +11,7 @@ const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, opti
 class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
     this.root = root;
-    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
+    this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, queueStatus: null, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
     this.modal = null;
     this.preview = null;
     this.generation = 0;
@@ -51,7 +51,7 @@ class PrintEase {
     this.backend?.close();
     const generation = ++this.generation;
     this.closeModal();
-    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
+    this.s = { ...this.s, mode, session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, queueStatus: null, settingsError: null, shopEdit: null, ready: false, syncError: null, route: "home", draft: freshDraft(), auth: { ...this.s.auth, password: "" } };
     try {
       localStorage.setItem("pe_mode", mode);
     } catch {

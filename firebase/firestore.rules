@@ -238,6 +238,19 @@ service cloud.firestore {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, create, update, delete: if false;
     }
+    match /queueStatus/{id} {
+      allow get: if signedIn() && id == 'current';
+      function validQueueStatus(d) {
+        return d.keys().hasOnly(['waiting','printing','checkedAt'])
+          && d.waiting is int && d.waiting >= 0 && d.waiting <= 10000
+          && d.printing is int && d.printing >= 0 && d.printing <= 10000
+          && recent(d.checkedAt);
+      }
+      allow create: if id == 'current' && admin() && validQueueStatus(request.resource.data);
+      allow update: if id == 'current' && admin() && validQueueStatus(request.resource.data)
+        && request.resource.data.checkedAt > resource.data.checkedAt;
+      allow list, delete: if false;
+    }
     match /shopSettings/{id} {
       allow read: if signedIn() && id == 'current';
       function validSchedule(s) {

@@ -307,3 +307,61 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .page-title .compact-action .icon { display: block; }
   .request-layout .upload { padding: 1.25rem; }
 }
+
+.queue-status-card { display: grid; gap: .75rem; margin: 0 0 1rem; }
+.queue-status-card h2 { font-size: 1.125rem; }
+.queue-status-counts { display: flex; flex-wrap: wrap; gap: .5rem; }
+.queue-status-counts span { padding: .5rem .75rem; background: var(--soft); border-radius: .65rem; }
+.queue-status-counts b { margin-right: .25rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .button, .icon-button, .text-action, .filter, .bottom-nav a, .order-card {
+    transition: transform 140ms ease-out, background-color 140ms ease-out, border-color 140ms ease-out;
+  }
+  .button:not(:disabled):active, .icon-button:not(:disabled):active,
+  .text-action:not(:disabled):active, .filter:active, .bottom-nav a:active {
+    transform: scale(.96);
+  }
+  .order-card:active { transform: scale(.985); }
+}
+
+:root {
+  --active-surface: #d6eedf;
+  --control-line: #b1c5b9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --active-surface: #244d3b;
+    --control-line: #71897b;
+  }
+}
+.hero-copy { display: grid; gap: .625rem; justify-items: start; }
+.hero-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: #e4f5dc;
+  background: #ffffff24;
+  border-radius: .875rem;
+}
+.hero h2 { margin: 0; }
+.hero p { margin: 0 0 .375rem; }
+.hero-graphic { opacity: .5; }
+.bottom-nav a.active .icon-wrap, .nav-item.active { background: var(--active-surface); color: var(--green); }
+.top-actions { gap: .5rem; }
+.top-actions .user-avatar { box-shadow: 0 0 0 2px var(--paper); }
+.order-card { border-radius: 1rem; }
+.order-card .file-title { font-weight: 650; letter-spacing: -.012em; }
+.order-card .status { padding: .35rem .6rem; }
+.filter.active { background: var(--active-surface); border-color: var(--active-surface); color: var(--ink); }
+.request-layout .upload { background: linear-gradient(180deg, var(--paper), var(--soft)); border-color: var(--control-line); }
+.request-layout .upload.selected { background: var(--paper); }
+.options-grid { row-gap: 1rem; }
+.mobile-submit { box-shadow: 0 -4px 14px #10251a12; }
+@media (max-width: 800px) {
+  .hero-grid { gap: .75rem; }
+  .hero-copy { gap: .5rem; }
+  .hero-graphic { opacity: .35; }
+  .shop-overview { margin-block: 1rem; }
+  .order-card { gap: .75rem; padding: 1rem; }
+}

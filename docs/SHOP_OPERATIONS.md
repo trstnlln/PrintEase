@@ -27,6 +27,10 @@ The price is selected pages × copies × the saved rate per printed side. Duplex
 
 Rules independently validate each persisted range, the selected-page count, the current rate snapshot and total. Clients cannot change submitted PDF paths, options, quotes or completion times. Admin status changes preserve these fields.
 
+## Shop queue counts
+
+After publishing the matching Firestore rules, sign in with an administrator account on the updated web or Android app. The app reports the number of accepted requests waiting to print and the number currently printing. Signed-in customers see those aggregate numbers and the report time on Home and the request form. The last report remains visible if staff disconnect. Use the individual pickup estimate on a request for timing.
+
 ## Pickup estimates, collection and repeat requests
 
 In an active request, staff can set **Minutes from now** (1 minute to 7 days) or clear an existing estimate. Students see the estimated time and a note that it may change. Queue numbers identify requests; they do not imply an exact wait.

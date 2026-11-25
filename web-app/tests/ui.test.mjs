@@ -174,6 +174,16 @@ test("shop queue separates orders waiting on the student from work staff can act
  assert.ok(document.querySelector('[aria-label="Printing"] [data-id="sample-1042"]'));
 });
 
+test('customers see aggregate workload while the header syncs without a refresh icon',async t=>{
+ const app=await setup(t);await app.backend.login(false);
+ const queue=document.querySelector('.queue-status-card');
+ assert.match(queue.textContent,/Shop queue/);
+ assert.match(queue.textContent,/0 waiting/);
+ assert.match(queue.textContent,/1 printing/);
+ assert.equal(document.querySelector('.topbar [data-action="refresh"]'),null);
+ app.go('request');
+ assert.ok(document.querySelector('.queue-status-card'));
+});
 test('customer accounts omit a role badge and shop accounts keep their administrator label',async t=>{
  const app=await setup(t);await app.backend.login(false);app.go('account');
  const profile=()=>document.querySelector('.account-grid>section');

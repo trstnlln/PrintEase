@@ -66,7 +66,8 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(settings.name, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (settings.acceptingOrders) "Accepting requests" else "New requests paused",
+                    if (settings.acceptingOrders) "Online requests open"
+                    else "Online requests paused",
                     style = MaterialTheme.typography.labelMedium,
                     color =
                         if (settings.acceptingOrders) MaterialTheme.colorScheme.primary
