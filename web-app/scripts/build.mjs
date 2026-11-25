@@ -12,7 +12,7 @@ await build({entryPoints:['src/app.mjs'],bundle:true,minify:true,format:'esm',ta
 // A new page must request a matching stylesheet and script, even with an older cached app shell.
 const htmlPath = 'dist/index.html';
 let html = await readFile(htmlPath, 'utf8');
-for (const asset of ['/styles.css', '/assets/app.js']) {
+for (const asset of ['/styles.css', '/assets/app.js','/assets/theme.js']) {
  const stamp = createHash('sha256').update(await readFile('dist' + asset)).digest('hex').slice(0, 12);
  const escapedPath = asset.replaceAll('.', '\\.');
  const pattern = new RegExp(`(href|src)="${escapedPath}(?:[?]v=[a-f0-9]+)?"`, 'g');

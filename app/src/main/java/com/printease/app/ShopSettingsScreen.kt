@@ -38,7 +38,12 @@ private val nanoPrintServices =
     )
 
 @Composable
-fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() -> Unit)? = null) {
+fun ShopCard(
+    settings: ShopSettings,
+    modifier: Modifier = Modifier,
+    onEdit: (() -> Unit)? = null,
+    stackActions: Boolean = false,
+) {
     val context = LocalContext.current
     val isNanoPrint = settings.name in listOf("Nano Print Alangilan", "Nano Alangilan")
     var showServices by rememberSaveable(settings.name) { mutableStateOf(false) }
@@ -112,7 +117,7 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
             )
         }
         if (settings.contactEmail.isNotBlank() || settings.facebookUrl.isNotBlank()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val contacts: @Composable (Modifier) -> Unit = { buttonModifier ->
                 if (settings.contactEmail.isNotBlank())
                     OutlinedButton(
                         {
@@ -133,7 +138,7 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                                         .show()
                                 }
                         },
-                        Modifier.weight(1f).heightIn(min = 48.dp),
+                        buttonModifier.heightIn(min = 48.dp),
                     ) {
                         Text("Email shop")
                     }
@@ -154,10 +159,19 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
                                         .show()
                                 }
                         },
-                        Modifier.weight(1f).heightIn(min = 48.dp),
+                        buttonModifier.heightIn(min = 48.dp),
                     ) {
                         Text("Facebook")
                     }
+            }
+            if (stackActions) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    contacts(Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    contacts(Modifier.weight(1f))
+                }
             }
         }
         if (isNanoPrint) {

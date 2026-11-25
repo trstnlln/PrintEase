@@ -28,7 +28,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,7 +50,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
-fun PrintEase(model: PrintViewModel) {
+fun PrintEase(
+    model: PrintViewModel,
+    dark: Boolean = isSystemInDarkTheme(),
+    onToggleTheme: (() -> Unit)? = null,
+) {
     val authContext = LocalContext.current
     val state by model.shop.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
@@ -115,6 +121,7 @@ fun PrintEase(model: PrintViewModel) {
                             }
                     },
                     actions = {
+                        onToggleTheme?.let { ThemeModeButton(dark, it) }
                         if (BuildConfig.DEMO) ModeBadge()
                         if (mainRoute)
                             IconButton(onClick = { model.navigate("account") }, enabled = !busy) {
@@ -186,6 +193,8 @@ fun PrintEase(model: PrintViewModel) {
                         model::authenticate,
                         model::resetPassword,
                         onGoogle = { model.signInWithGoogle(authContext) },
+                        dark = dark,
+                        onToggleTheme = onToggleTheme,
                     )
                 route == "request" ->
                     RequestContent(
@@ -363,6 +372,16 @@ fun Brand() {
 }
 
 @Composable
+private fun ThemeModeButton(dark: Boolean, onClick: () -> Unit) {
+    IconButton(onClick) {
+        Icon(
+            if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
+            if (dark) "Switch to light mode" else "Switch to dark mode",
+        )
+    }
+}
+
+@Composable
 fun ModeBadge() {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -444,6 +463,7 @@ fun PrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     icon: ImageVector? = null,
+    colors: ButtonColors = ButtonDefaults.buttonColors(),
 ) {
     val interaction = remember { MutableInteractionSource() }
     Button(
@@ -451,6 +471,7 @@ fun PrimaryButton(
         modifier.heightIn(min = 52.dp).pressFeedback(interaction),
         interactionSource = interaction,
         enabled = enabled,
+        colors = colors,
         shape = RoundedCornerShape(16.dp),
         contentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp),
     ) {
@@ -471,6 +492,8 @@ fun AuthContent(
     onAuth: (String, String, String?) -> Unit,
     onReset: (String) -> Unit,
     onGoogle: () -> Unit = {},
+    dark: Boolean = isSystemInDarkTheme(),
+    onToggleTheme: (() -> Unit)? = null,
 ) {
     var register by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
@@ -484,7 +507,14 @@ fun AuthContent(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Brand()
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Brand()
+            onToggleTheme?.let { ThemeModeButton(dark, it) }
+        }
         Spacer(Modifier.height(16.dp))
         Eyebrow("YOUR CAMPUS. YOUR TIME.")
         Text(
@@ -711,39 +741,44 @@ fun Dashboard(
         if (overview) {
             if (!session.admin)
                 item {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        shape = RoundedCornerShape(24.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(
+                                Brush.linearGradient(listOf(Color(0xFF123D32), Color(0xFF195440)))
+                            )
                     ) {
+                        Icon(
+                            Icons.Default.Description,
+                            null,
+                            Modifier.align(Alignment.TopEnd).padding(22.dp).size(76.dp),
+                            tint = Color.White.copy(alpha = .08f),
+                        )
                         Column(
-                            Modifier.padding(22.dp),
+                            Modifier.padding(24.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                         ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surface,
-                                    contentColor = MaterialTheme.colorScheme.primary,
-                                    shape = RoundedCornerShape(14.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Default.Description,
-                                        null,
-                                        Modifier.padding(11.dp).size(22.dp),
-                                    )
-                                }
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(
-                                        "Send files to print",
-                                        style = MaterialTheme.typography.titleLarge,
-                                    )
-                                    Text(
-                                        "Upload a PDF, JPG, or PNG for pickup near campus.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                }
+                            Surface(
+                                color = Color.White.copy(alpha = .14f),
+                                contentColor = Lime,
+                                shape = RoundedCornerShape(14.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Description,
+                                    null,
+                                    Modifier.padding(11.dp).size(22.dp),
+                                )
                             }
+                            Text(
+                                "Send files to print",
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineMedium,
+                            )
+                            Text(
+                                "Upload a PDF, JPG, or PNG and collect it at the shop near campus.",
+                                color = Color(0xFFC6DBD1),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                             PrimaryButton(
                                 text =
                                     when {
@@ -752,14 +787,23 @@ fun Dashboard(
                                         else -> "New print request"
                                     },
                                 onClick = onNew,
-                                modifier = Modifier.widthIn(max = 304.dp).fillMaxWidth(),
                                 enabled =
                                     state.settings.acceptingOrders && state.settingsError == null,
                                 icon = Icons.Default.Add,
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = Lime,
+                                        contentColor = Ink,
+                                        disabledContainerColor = Color.White.copy(alpha = .14f),
+                                        disabledContentColor = Color(0xFFC6DBD1),
+                                    ),
                             )
                         }
                     }
                 }
+            item {
+                ShopCard(state.settings, Modifier.fillMaxWidth(), stackActions = !session.admin)
+            }
             if (!session.admin)
                 state.queueStatus?.let { status -> item { QueueStatusCard(status) } }
             if (!session.admin) {
@@ -796,9 +840,6 @@ fun Dashboard(
                         }
                     }
             }
-            item { ShopCard(state.settings, Modifier.fillMaxWidth()) }
-            if (!session.admin)
-                state.queueStatus?.let { status -> item { QueueStatusCard(status) } }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatCard(

@@ -11,14 +11,14 @@ import androidx.compose.ui.unit.sp
 
 val Forest = Color(0xFF174F3E)
 val Lime = Color(0xFFDEF3AA)
-val Cream = Color(0xFFF4F7F4)
+val Cream = Color(0xFFF7F7F5)
 val Ink = Color(0xFF19352E)
-val Muted = Color(0xFF52675D)
+val Muted = Color(0xFF535A56)
 private val Light =
     lightColorScheme(
         primary = Forest,
         onPrimary = Color.White,
-        primaryContainer = Color(0xFFE6F0E5),
+        primaryContainer = Color(0xFFEFEFEC),
         onPrimaryContainer = Ink,
         secondaryContainer = Lime,
         onSecondaryContainer = Ink,
@@ -26,23 +26,25 @@ private val Light =
         surface = Color.White,
         onSurface = Ink,
         onSurfaceVariant = Muted,
-        surfaceVariant = Color(0xFFEDF1EA),
-        outline = Color(0xFF76877B),
-        outlineVariant = Color(0xFFDCE5D9),
+        surfaceVariant = Color(0xFFEFEFEC),
+        outline = Color(0xFF858C88),
+        outlineVariant = Color(0xFFD8DAD8),
     )
 private val Dark =
     darkColorScheme(
         primary = Color(0xFFA8D5B5),
         onPrimary = Ink,
-        primaryContainer = Forest,
-        onPrimaryContainer = Color(0xFFE4F3E6),
+        primaryContainer = Color(0xFF2D3032),
+        onPrimaryContainer = Color(0xFFF1F2F3),
         secondaryContainer = Color(0xFF4C6335),
         onSecondaryContainer = Lime,
-        background = Color(0xFF101B15),
-        surface = Color(0xFF192A22),
-        onSurface = Color(0xFFE1EDE2),
-        onSurfaceVariant = Color(0xFFB7C8BA),
-        outlineVariant = Color(0xFF35463A),
+        background = Color(0xFF17181A),
+        surface = Color(0xFF222426),
+        onSurface = Color(0xFFF1F2F3),
+        onSurfaceVariant = Color(0xFFB7BBBF),
+        surfaceVariant = Color(0xFF2D3032),
+        outline = Color(0xFF777E82),
+        outlineVariant = Color(0xFF53585C),
     )
 
 @Composable

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import worker from '../dist/server/index.js';
-for(const path of ['/','/assets/app.js','/assets/pdf.mjs','/assets/pdf.worker.mjs','/styles.css','/sw.js']){
+for(const path of ['/','/assets/app.js','/assets/theme.js','/assets/pdf.mjs','/assets/pdf.worker.mjs','/styles.css','/sw.js']){
  const response=await worker.fetch(new Request('https://preview.example'+path),{});
  assert.equal(response.status,200,path);assert.ok((await response.arrayBuffer()).byteLength>0,path);
 }
 const page = await (await worker.fetch(new Request('https://preview.example/'),{})).text();
-for (const path of ['/styles.css','/assets/app.js']) {
+for (const path of ['/styles.css','/assets/app.js','/assets/theme.js']) {
  const escaped = path.replaceAll('.', '\\.');
  const reference = page.match(new RegExp(`"${escaped}[?]v=[a-f0-9]{12}"`))?.[0]?.slice(1,-1);
  assert.ok(reference, path + ' must have a version in the application shell');
