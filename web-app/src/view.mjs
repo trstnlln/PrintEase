@@ -63,7 +63,7 @@ function homePrintPanel(s, current) {
         <h2>Send files to print</h2>
         <p>Upload a PDF, JPG, or PNG for pickup near campus.</p>
         ${button(open ? s.draft?.pdf ? "Continue your draft" : "New print request" : "Online requests paused", "new-request",
-          { icon: "plus", disabled: !open || !!s.settingsError })}
+          { icon: "plus", disabled: !open })}
       </div>
       <div class="hero-graphic" aria-hidden="true">
         <div class="paper-line"></div><div class="paper-line"></div><div class="paper-line short"></div>

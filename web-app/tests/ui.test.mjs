@@ -15,8 +15,10 @@ test('the customer Home puts the print action first and keeps existing drafts re
  assert.equal(firstAction().textContent,'New print request');
  assert.equal(firstAction().dataset.action,'new-request');
  app.s.draft.pdf={name:'Draft.pdf',pages:1,bytes:100};
+ app.s.settingsError='Shop details could not sync.';
  app.render();
  assert.equal(firstAction().textContent,'Continue your draft');
+ assert.equal(firstAction().disabled,false);
  assert.equal(document.querySelector('.customer-home .pickup-card [data-action="order"]').textContent,'View request');
 });
 test('the student greeting reads a surname-first profile without its separating comma',async t=>{
