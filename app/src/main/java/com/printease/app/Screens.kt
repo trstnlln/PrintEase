@@ -1250,25 +1250,10 @@ fun RequestContent(
                         )
                 }
             }
-            attachments.forEachIndexed { index, item ->
-                key(item.pdf.path) {
-                    Panel(Modifier.fillMaxWidth()) {
-                        AttachmentEditor(
-                            item,
-                            busy,
-                            { onChangeAttachment(index, it) },
-                            { onRemoveAttachment(index) },
-                            stock = settings.paperStock,
-                            printToolsAvailable = printToolsAvailable,
-                            onPreview = { onPreviewAttachment(index) },
-                            onResize = { onResizeImage(index + 1, it) },
-                        )
-                    }
-                }
-            }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Print options", style = MaterialTheme.typography.titleMedium)
                 Panel(Modifier.fillMaxWidth()) {
+                    pdf?.let { FileOptionsHeading(it.name, 1, attachments.size + 1) }
                     OutlinedTextField(
                         rangesText,
                         { value ->
@@ -1451,6 +1436,24 @@ fun RequestContent(
                         onOptions(options.copy(duplex = it))
                     }
                 }
+                attachments.forEachIndexed { index, item ->
+                    key(item.pdf.path) {
+                        Panel(Modifier.fillMaxWidth()) {
+                            AttachmentEditor(
+                                item,
+                                busy,
+                                { onChangeAttachment(index, it) },
+                                { onRemoveAttachment(index) },
+                                position = index + 2,
+                                count = attachments.size + 1,
+                                stock = settings.paperStock,
+                                printToolsAvailable = printToolsAvailable,
+                                onPreview = { onPreviewAttachment(index) },
+                                onResize = { onResizeImage(index + 1, it) },
+                            )
+                        }
+                    }
+                }
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Print summary", style = MaterialTheme.typography.titleMedium)
@@ -1558,21 +1561,26 @@ fun RequestContent(
                 Text(if (revisionNote != null) "Send the corrected request?" else "Ready to send?")
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(pdf.name, fontWeight = FontWeight.Bold)
-                    Text(
-                        "${options.pageLabel} · ${options.copies} copies · ${paperLabel(options.paper)}\n${if(options.color) "Color" else "Black & white"} · ${if(options.duplex) "Double-sided" else "Single-sided"} · ${options.scaleLabel}"
-                    )
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    val files =
+                        listOf(pdf.name to options) + attachments.map { it.pdf.name to it.options }
+                    files.forEachIndexed { index, (name, details) ->
+                        if (index > 0) HorizontalDivider()
+                        FileOptionsHeading(name, index + 1, files.size)
+                        Text(
+                            "${details.pageLabel} · ${paperLabel(details.paper)} · ${details.copies} copies\n" +
+                                "${if (details.color) "Color" else "Black & white"} · " +
+                                "${if (details.duplex) "Double-sided" else "Single-sided"} · ${details.scaleLabel}"
+                        )
+                    }
                     Text(
                         if (quoteOnly) "Final price confirmed by the shop"
                         else "Estimated total: ${pesos(options.total(reviewedSettings.rates))}",
                         fontWeight = FontWeight.Bold,
                     )
-                    attachments.forEach { item ->
-                        Text(
-                            "${item.pdf.name} · ${paperLabel(item.options.paper)} · ${item.options.copies} copies"
-                        )
-                    }
                     if (requestedAddons.isNotEmpty()) {
                         val labels =
                             PrintAddon.entries

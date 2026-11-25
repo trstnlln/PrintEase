@@ -725,19 +725,26 @@ class PrintEase {
     const quotedVersion = this.s.settings.version;
     const cost = estimate(d.options, this.s.settings.rates);
     const displayTotal = requiresPaperQuote(d.options.paper) || d.attachments?.length ? "Shop quote" : pesos(cost.total);
-    const summary=`<div class="review-sheet"><div class="review-file">${icon('pdf')}<div><b>${e(d.pdf.name)}</b><p class="small">${d.pdf.pages} pages in PDF · ${Math.ceil(d.pdf.bytes/1024)} KB</p></div></div><dl class="review-options">${[['Pages to print',pageLabel(d.options)],['Copies',d.options.copies],['Paper',paperLabel(d.options.paper)],['Print mode',d.options.color?'Color':'Black & white'],['Sides',d.options.duplex?'Double-sided':'Single-sided'],['Page sizing',printScaleLabel(d.options)],['Pickup at',this.s.settings.name]].map(([label,value])=>`<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join('')}</dl><div class="review-total"><span>Estimated total</span><strong>${displayTotal}</strong></div><p class="small">${displayTotal === "Shop quote" ? "The shop will send one price for approval." :
-      this.s.settings.ratesConfirmed ? "Pay at pickup." : "Sample estimate. The shop confirms the final price."} The shop reviews your request before assigning a queue number.</p></div>`;
+    const files = [d, ...(d.attachments ?? [])];
+    const summary = `<div class="review-sheet review-request-files">
+      ${files.map(({pdf, options}, index) => `<section>
+        <header class="review-file">${icon("pdf")}<div><p class="small">File ${index + 1} of ${files.length}</p><h3 class="text-wrap" ${index === 0 ? 'tabindex="-1" autofocus' : ""}>${e(pdf.name)}</h3></div></header>
+        <dl class="review-options">${[
+          ["Pages to print", pageLabel(options)],
+          ["Paper", paperLabel(options.paper)],
+          ["Copies", options.copies],
+          ["Print mode", options.color ? "Color" : "Black & white"],
+          ["Sides", options.duplex ? "Double-sided" : "Single-sided"],
+          ["Page sizing", printScaleLabel(options)]
+        ].map(([label, value]) => `<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join("")}</dl>
+      </section>`).join("")}
+      <div class="review-total"><span>${displayTotal === "Shop quote" ? "Pricing" : "Estimated total"}</span><strong>${displayTotal}</strong></div>
+      <p class="small">Pickup at ${e(this.s.settings.name)}. ${displayTotal === "Shop quote" ? "The shop will send one price for approval." :
+        this.s.settings.ratesConfirmed ? "Pay at pickup." : "Sample estimate. The shop confirms the final price."} The shop reviews your request before assigning a queue number.</p>
+    </div>`;
     const selectedAddons = addons.filter(addon => d.addons?.includes(addon.id)).map(addon => addon.label);
-    const extraSummary = d.attachments?.length ? `<div class="extra-files stack"><b>Included PDFs</b>${d.attachments.map(item =>
-      `<p>${e(item.pdf.name)} · ${e(paperLabel(item.options.paper))} · ${item.options.copies} copies · ${printScaleLabel(item.options)}</p>`).join("")}</div>` : "";
     const addonSummary = selectedAddons.length ? `<p><b>Requested add-ons:</b> ${e(selectedAddons.join(", "))}. The shop includes these in the final quote.</p>` : "";
-    this.confirm(d.revision ? "Send the corrected request?" : "Ready to send?", `${d.pdf.name}
-
-${pageLabel(d.options)} \xD7 ${d.options.copies} copies
-${d.options.paper} \xB7 ${d.options.color ? "Color" : "Black & white"} \xB7 ${d.options.duplex ? "Double-sided" : "Single-sided"}
-
-Estimated total: ${displayTotal}
-Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.revision ? "Send correction" : "Submit request", async () => {
+    this.confirm(d.revision ? "Send the corrected request?" : "Ready to send?", "", d.revision ? "Send correction" : "Submit request", async () => {
       if (quotedVersion !== this.s.settings.version) throw new Error("Shop details or rates changed. Review your updated total.");
       await this.saveDraft();
       const progress = (p, file) => {
@@ -757,7 +764,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
       this.s.route = "orders";
       history.replaceState(null, "", "#orders");
       this.toast(d.revision ? "Correction sent. The shop will review it again." : "Request submitted. Follow its progress in Orders.");
-    }, summary + extraSummary + addonSummary);
+    }, summary + addonSummary);
   }
   staffReviewDialog(action) {
     const order = this.s.orders.find(item => item.id === this.s.selected);
@@ -855,7 +862,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
       if (!this.s.busy) this.closeModal();
     });
     dialog.showModal();
-    dialog.querySelector("button,input,textarea,a")?.focus();
+    (dialog.querySelector("[autofocus]") ?? dialog.querySelector("button,input,textarea,a"))?.focus();
   }
   closeModal() {
     if (this.preview) {

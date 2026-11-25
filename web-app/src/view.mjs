@@ -116,7 +116,7 @@ function requestView(s) {
   const allowed = (shop.acceptingOrders || d.revision) && !s.settingsError && !d.rangeError && !d.paperError && (d.attachments || []).every(attachmentCopiesValid) && batchRangesValid(d) && !requestOutOfStock(d, shop);
   const quoteOnly = requiresPaperQuote(o.paper) || !!d.attachments?.length;
   const priceText = d.pdf && valid && allowed ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "—";
-  return `<div class="page-title"><div><button class="text-action" data-action="back">${icon("back")} Back to orders</button><h1>${d.revision ? "Correct your request" : "New print request"}</h1><p class="muted">${d.revision ? e(d.revision.note) : "Add your files, choose how they print, and review your request."}</p></div></div>${queueStatusCard(s.queueStatus)}${pickupWindowCard(shop)}${s.requestError ? `<div class="notice error request-error" role="alert">${icon("info")}<span>${e(s.requestError)}</span></div>` : ""}${s.draftWarning ? `<div class="notice draft-warning" role="status">${icon("info")}<span>${e(s.draftWarning)}</span></div>` : ""}<div class="request-layout"><div>${printFilesPicker(s)}<section class="step"><h2 class="step-head">Print options</h2><div class="card options-grid"><label>Pages to print<input id="page-ranges" type="text" inputmode="text" maxlength="120" placeholder="All pages" value="${e(d.rawRanges ?? rangeText(o.pageRanges))}" aria-describedby="range-help" aria-invalid="${!!d.rangeError}" ${s.busy || !d.pdf ? "disabled" : ""}><small id="range-help" class="${d.rangeError || !batchRangesValid(d) ? "danger-text" : ""}">${e(d.rangeError || (!batchRangesValid(d) ? "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately." : "Leave blank for all pages, or enter 1-3, 5, 8-10."))}</small></label>${paperPicker(s)}${layoutControl(s)}<label>Number of copies<input id="copies" type="number" inputmode="numeric" min="1" max="100" step="1" value="${e(d.rawCopies)}" aria-describedby="copy-help" ${s.busy ? "disabled" : ""}><small id="copy-help" class="${valid ? "" : "danger-text"}">${valid ? "Choose 1\u2013100 copies." : "Enter a whole number from 1 to 100."}</small></label><hr><label class="switch-row"><span>Print in color<small>Off for black & white</small></span><input id="color" type="checkbox" ${o.color ? "checked" : ""} ${s.busy ? "disabled" : ""}></label><label class="switch-row"><span>Double-sided<small>Use both sides to save paper</small></span><input id="duplex" type="checkbox" ${o.duplex ? "checked" : ""} ${s.busy ? "disabled" : ""}></label></div></section>${s.reviewAvailable && !d.revision ? addonPicker(d, s.busy) : ""}${d.pdf ? button("Discard this draft", "discard", { cls: "ghost", disabled: s.busy }) : ""}</div><aside class="card estimate stack" aria-label="Order estimate"><div><h2>Print summary</h2></div><div><div class="price-line"><span>Document</span><b>${d.pdf ? `${d.pdf.pages} pages` : "Not selected"}</b></div><div class="price-line"><span>Paper</span><b id="summary-paper">${e(paperLabel(o.paper))}</b></div><div class="price-line"><span>Copies</span><b id="summary-copies">${valid ? o.copies : "\u2014"}</b></div><div class="price-line"><span>Print mode</span><b id="summary-mode">${o.color ? "Color" : "Black & white"}</b></div><div class="price-line"><span>Sides</span><b id="summary-sides">${o.duplex ? "Double-sided" : "Single-sided"}</b></div><div class="price-line"><span>Page sizing</span><b id="summary-scale">${printScaleLabel(o)}</b></div><hr><div class="small" id="summary-price-label">${quoteOnly ? "Pricing" : "Estimated total"}</div><div class="total" id="summary-total">${priceText}</div><small id="summary-formula">${quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side<br>${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate."}</small></div><div class="notice" style="margin:0">${icon("info")}<span>${quoteOnly ? "The shop will quote the full request after reviewing your files and paper choices." :
+  return `<div class="page-title"><div><button class="text-action" data-action="back">${icon("back")} Back to orders</button><h1>${d.revision ? "Correct your request" : "New print request"}</h1><p class="muted">${d.revision ? e(d.revision.note) : "Add your files, choose how they print, and review your request."}</p></div></div>${queueStatusCard(s.queueStatus)}${pickupWindowCard(shop)}${s.requestError ? `<div class="notice error request-error" role="alert">${icon("info")}<span>${e(s.requestError)}</span></div>` : ""}${s.draftWarning ? `<div class="notice draft-warning" role="status">${icon("info")}<span>${e(s.draftWarning)}</span></div>` : ""}<div class="request-layout"><div>${printFilesPicker(s)}${printOptions(s, valid)}${s.reviewAvailable && !d.revision ? addonPicker(d, s.busy) : ""}${d.pdf ? button("Discard this draft", "discard", { cls: "ghost", disabled: s.busy }) : ""}</div><aside class="card estimate stack" aria-label="Order estimate"><div><h2>Print summary</h2></div><div>${d.attachments?.length ? `<div class="price-line"><span>Files</span><b>${1 + d.attachments.length} selected</b></div><p class="small">Check each file’s settings before sending.</p>` : `<div class="price-line"><span>Document</span><b>${d.pdf ? `${d.pdf.pages} pages` : "Not selected"}</b></div><div class="price-line"><span>Paper</span><b id="summary-paper">${e(paperLabel(o.paper))}</b></div><div class="price-line"><span>Copies</span><b id="summary-copies">${valid ? o.copies : "\u2014"}</b></div><div class="price-line"><span>Print mode</span><b id="summary-mode">${o.color ? "Color" : "Black & white"}</b></div><div class="price-line"><span>Sides</span><b id="summary-sides">${o.duplex ? "Double-sided" : "Single-sided"}</b></div><div class="price-line"><span>Page sizing</span><b id="summary-scale">${printScaleLabel(o)}</b></div>`}<hr><div class="small" id="summary-price-label">${quoteOnly ? "Pricing" : "Estimated total"}</div><div class="total" id="summary-total">${priceText}</div><small id="summary-formula">${quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side<br>${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate."}</small></div><div class="notice" style="margin:0">${icon("info")}<span>${quoteOnly ? "The shop will quote the full request after reviewing your files and paper choices." :
     (shop.ratesConfirmed ? "Shop-confirmed rates." : "Sample estimate. The shop confirms the final price.") + " Duplex uses fewer sheets. The per-side charge stays the same."}</span></div>${s.busy ? `<div><div class="progress"><span style="width:${Math.round(s.progress * 100)}%"></span></div><small id="progress-text" aria-live="polite">${s.progress >= 1 ? "Saving your request\u2026" : "Preparing or uploading your document\u2026"}</small></div>` : ""}${!shop.acceptingOrders || s.settingsError ? `<div class="notice error">${icon("info")}<span>${e(s.settingsError || "The shop has paused new requests. Your draft is saved.")}</span></div>` : ""}<div class="desktop-submit">${button(s.busy ? "Please wait\u2026" : "Review request", "review", { cls: "full", icon: "right", disabled: !d.pdf || !valid || !allowed || s.busy })}</div></aside></div><div class="mobile-submit"><div class="row"><div style="min-width:94px"><div class="small">${quoteOnly ? "Pricing" : "Estimated total"}</div><strong id="mobile-total">${priceText}</strong></div>${button(s.busy ? "Please wait\u2026" : "Review request", "review", { icon: "right", disabled: !d.pdf || !valid || !allowed || s.busy })}</div></div>`;
 }
 function printFilesPicker(s) {
@@ -141,7 +141,31 @@ function printFilesPicker(s) {
       ${pdf && capacity > 1 ? `<p class="small">${count} of ${capacity} files selected</p>` : ""}
       ${pdf ? "" : '<p class="file-help small">Export Word, PowerPoint, or Excel as PDF before uploading.</p>'}
     </div>
-    ${draft.attachments?.length ? attachmentOptions(draft.attachments, s) : ""}
+  </section>`;
+}
+
+function fileOptionsHeading(pdf, position, count, remove = "") {
+  return `<header class="file-options-heading">
+    <div><p class="small">File ${position} of ${count}</p><h3 id="print-file-${position}" class="text-wrap">${e(pdf.name)}</h3></div>
+    ${remove}
+  </header>`;
+}
+
+function printOptions(s, valid) {
+  const d = s.draft, o = d.options;
+  const count = 1 + (d.attachments?.length ?? 0);
+  return `<section class="step">
+    <h2 class="step-head" id="print-options-title">Print options</h2>
+    <div class="card options-grid file-options" role="group" aria-labelledby="${d.pdf ? "print-file-1" : "print-options-title"}">
+      ${d.pdf ? fileOptionsHeading(d.pdf, 1, count) : ""}
+        <label>Pages to print<input id="page-ranges" type="text" inputmode="text" maxlength="120" placeholder="All pages" value="${e(d.rawRanges ?? rangeText(o.pageRanges))}" aria-describedby="range-help" aria-invalid="${!!d.rangeError}" ${s.busy || !d.pdf ? "disabled" : ""}><small id="range-help" class="${d.rangeError || !batchRangesValid(d) ? "danger-text" : ""}">${e(d.rangeError || (!batchRangesValid(d) ? "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately." : "Leave blank for all pages, or enter 1-3, 5, 8-10."))}</small></label>
+        ${paperPicker(s)}${layoutControl(s)}
+        <label>Number of copies<input id="copies" type="number" inputmode="numeric" min="1" max="100" step="1" value="${e(d.rawCopies)}" aria-describedby="copy-help" ${s.busy ? "disabled" : ""}><small id="copy-help" class="${valid ? "" : "danger-text"}">${valid ? "Choose 1\u2013100 copies." : "Enter a whole number from 1 to 100."}</small></label>
+        <hr>
+        <label class="switch-row"><span>Print in color<small>Off for black & white</small></span><input id="color" type="checkbox" ${o.color ? "checked" : ""} ${s.busy ? "disabled" : ""}></label>
+        <label class="switch-row"><span>Double-sided<small>Use both sides to save paper</small></span><input id="duplex" type="checkbox" ${o.duplex ? "checked" : ""} ${s.busy ? "disabled" : ""}></label>
+    </div>
+    ${attachmentOptions(d.attachments ?? [], s, count)}
   </section>`;
 }
 
@@ -211,27 +235,26 @@ function attachmentCopiesValid(item) {
   return raw !== "" && Number(raw) === item.options.copies;
 }
 
-function attachmentOptions(attachments, s) {
+function attachmentOptions(attachments, s, count) {
   const busy = s.busy;
   const disabled = busy ? "disabled" : "";
-  return `<div class="stack extra-files selected-print-files">
-    ${attachments.map((item, index) => {
-      const field = key => `id="file-${index}-${key}" data-attachment-index="${index}" data-attachment-field="${key}" ${disabled}`;
-      const select = [...standardPapers, ...quotedPapers];
-      return `<div class="extra-file stack">
-        <div class="row between"><h3 class="text-wrap">${e(item.pdf.name)}</h3><button class="text-action" data-action="remove-attachment" data-index="${index}" ${disabled}>Remove</button></div>
-        <p class="small">${item.pdf.pages} pages · All pages</p>
-        <div class="paper-dimensions"><label>Paper size<select ${field("paper")}>${select.map(paper => paperOption(paper, item.options.paper, s)).join("")}</select></label>
-        <label>Copies<input ${field("copies")} type="number" inputmode="numeric" min="1" max="100" value="${e(item.rawCopies ?? item.options.copies)}"></label></div>
-        ${stockNote(s, item.options.paper)}
-        ${s.printToolsAvailable ? `<label>Page sizing<select ${field("actualSize")}>${scaleOptions(item.options)}</select></label>` : ""}
-        ${imageSizeEditor(item.pdf, index + 1, busy)}
-        <button class="text-action" data-action="draft-attachment-preview" data-index="${index}" ${disabled}>${icon("eye")} Preview print layout</button>
-        <label class="switch-row"><span>Print in color</span><input ${field("color")} type="checkbox" ${item.options.color ? "checked" : ""}></label>
-        <label class="switch-row"><span>Double-sided</span><input ${field("duplex")} type="checkbox" ${item.options.duplex ? "checked" : ""}></label>
-      </div>`;
-    }).join("")}
-  </div>`;
+  return attachments.map((item, index) => {
+    const field = key => `id="file-${index}-${key}" data-attachment-index="${index}" data-attachment-field="${key}" ${disabled}`;
+    const select = [...standardPapers, ...quotedPapers];
+    const remove = `<button class="text-action" data-action="remove-attachment" data-index="${index}" aria-label="Remove ${e(item.pdf.name)}" ${disabled}>Remove</button>`;
+    return `<div class="card options-grid file-options" role="group" aria-labelledby="print-file-${index + 2}">
+      ${fileOptionsHeading(item.pdf, index + 2, count, remove)}
+      <p class="small">${item.pdf.pages} pages · All pages</p>
+      <div class="paper-dimensions"><label>Paper size<select ${field("paper")}>${select.map(paper => paperOption(paper, item.options.paper, s)).join("")}</select></label>
+      <label>Copies<input ${field("copies")} type="number" inputmode="numeric" min="1" max="100" value="${e(item.rawCopies ?? item.options.copies)}"></label></div>
+      ${stockNote(s, item.options.paper)}
+      ${s.printToolsAvailable ? `<label>Page sizing<select ${field("actualSize")}>${scaleOptions(item.options)}</select></label>` : ""}
+      ${imageSizeEditor(item.pdf, index + 1, busy)}
+      <button class="text-action" data-action="draft-attachment-preview" data-index="${index}" ${disabled}>${icon("eye")} Preview print layout</button>
+      <label class="switch-row"><span>Print in color</span><input ${field("color")} type="checkbox" ${item.options.color ? "checked" : ""}></label>
+      <label class="switch-row"><span>Double-sided</span><input ${field("duplex")} type="checkbox" ${item.options.duplex ? "checked" : ""}></label>
+    </div>`;
+  }).join("");
 }
 
 function addonPicker(draft, busy) {

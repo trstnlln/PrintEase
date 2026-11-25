@@ -8,8 +8,28 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+
+@Composable
+internal fun FileOptionsHeading(
+    name: String,
+    position: Int,
+    count: Int,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "File $position of $count",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(name, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
+    }
+}
 
 @Composable
 fun AttachmentEditor(
@@ -17,6 +37,8 @@ fun AttachmentEditor(
     busy: Boolean,
     onChange: (AttachmentDraft) -> Unit,
     onRemove: () -> Unit,
+    position: Int,
+    count: Int,
     stock: PaperStock,
     printToolsAvailable: Boolean,
     onPreview: () -> Unit,
@@ -25,8 +47,14 @@ fun AttachmentEditor(
     var choosePaper by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(item.pdf.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            TextButton(onRemove, enabled = !busy) { Text("Remove") }
+            FileOptionsHeading(item.pdf.name, position, count, Modifier.weight(1f))
+            TextButton(
+                onRemove,
+                modifier = Modifier.semantics { contentDescription = "Remove ${item.pdf.name}" },
+                enabled = !busy,
+            ) {
+                Text("Remove")
+            }
         }
         Text("${item.pdf.pages} pages · All pages", style = MaterialTheme.typography.bodySmall)
         Box {

@@ -251,7 +251,7 @@ test('the top picker accepts a batch and keeps print settings close to each file
  const picker=document.querySelector('#pdf-input');
  assert.equal(picker.multiple,true);
  const first=await selectedFile(2),second=await selectedFile(3),third=await selectedFile(1);
- second.name='Notes.pdf';third.name='Cover.pdf';
+ first.name='Report.pdf';second.name='Notes.pdf';third.name='Cover.pdf';
  Object.defineProperty(picker,'files',{value:[first,second]});
  await app.onInput({target:picker,type:'change'});
  assert.equal(app.s.draft.attachments[0].pdf.name,'Notes.pdf');
@@ -263,6 +263,36 @@ test('the top picker accepts a batch and keeps print settings close to each file
  assert.equal(app.s.draft.attachments.length,2);
  assert.equal(document.querySelector('#attachment-input'),null);
  assert.doesNotMatch(document.querySelector('#main').textContent,/Additional files|Add another file/);
+ const cards = [...document.querySelectorAll('.file-options')];
+ const names = ['Report.pdf', 'Notes.pdf', 'Cover.pdf'];
+ assert.deepEqual(cards.map(card => card.firstElementChild.querySelector('h3').textContent), names);
+ assert.deepEqual(cards.map(card => document.getElementById(card.getAttribute('aria-labelledby')).textContent), names);
+ assert.deepEqual(cards.map(card => card.querySelector('input[type=number]').id), ['copies', 'file-0-copies', 'file-1-copies']);
+ for (const [id, value] of [['copies', '2'], ['file-0-copies', '3'], ['file-1-copies', '4']]) {
+  const target = document.getElementById(id);
+  target.value = value;
+  app.onInput({target});
+ }
+ for (const id of ['file-0-color', 'file-1-duplex']) {
+  const target = document.getElementById(id);
+  target.checked = true;
+  app.onInput({target});
+ }
+ app.review();
+ const reviewFiles = [...document.querySelectorAll('.review-request-files section')];
+ assert.deepEqual(reviewFiles.map(file => file.querySelector('h3').textContent), names);
+ assert.equal(document.activeElement, reviewFiles[0].querySelector('h3'));
+ assert.deepEqual(reviewFiles.map(file => [...file.querySelectorAll('dd')].slice(2, 5).map(option => option.textContent)), [
+  ['2', 'Black & white', 'Single-sided'],
+  ['3', 'Color', 'Single-sided'],
+  ['4', 'Black & white', 'Double-sided']
+ ]);
+ await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});
+ const submitted = app.s.orders.find(order => order.fileName === names[0]);
+ assert.equal(submitted.options.copies, 2);
+ assert.deepEqual(submitted.attachments.map(({fileName,options}) => [fileName,options.copies,options.color,options.duplex]), [
+  ['Notes.pdf',3,true,false], ['Cover.pdf',4,false,true]
+ ]);
  app.go('orders');
  const shortcut=document.querySelector('.compact-action');
  assert.equal(shortcut.getAttribute('aria-label'),'New print request');
