@@ -24,7 +24,10 @@ test('admin settings persist, price quotes remain stable, and paused requests ca
  await app.backend.login(true);await app.backend.saveSettings({...app.s.settings,acceptingOrders:false});await app.backend.login(false);app.go('request');assert.equal(document.querySelector('[data-action="review"]').disabled,true);assert.match(document.body.textContent,/paused new requests/);
 });
 test('shop details are escaped and pickup guidance consistently refers to shops near campus',async t=>{
- const app=await setup(t);await app.backend.login(false);app.s.settings.name='<img id="shop-xss" src=x>';app.render();assert.equal(document.getElementById('shop-xss'),null);assert.doesNotMatch(document.body.textContent,/Campus Print Shop|campus print shop/);assert.match(document.body.textContent,/near campus/);
+ const app=await setup(t);await app.backend.login(false);
+ assert.equal(document.querySelector('.shop-logo').getAttribute('src'),'/assets/nano-print-alangilan.jpg');
+ app.s.settings.name='<img id="shop-xss" src=x>';app.render();
+ assert.equal(document.querySelector('.shop-logo'),null);assert.equal(document.getElementById('shop-xss'),null);assert.doesNotMatch(document.body.textContent,/Campus Print Shop|campus print shop/);assert.match(document.body.textContent,/near campus/);
 });
 async function selectedFile(pages=2){const {samplePDF}=await import('../src/demo.mjs');const file=new Blob([samplePDF(pages)],{type:'application/pdf'});file.name='iPhone.pdf';return file;}
 test('returning from the phone file picker preserves the signed-in account and selected PDF',async t=>{

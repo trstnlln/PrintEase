@@ -71,6 +71,22 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 .hero p, .hero .small { color: #e0eee5; font-size: .9375rem; }
 .hero .eyebrow { color: #e0eee5; }
 .shop-card { gap: 18px; }
+.shop-card--branded { --shop-logo-size: 88px; }
+.shop-symbol.shop-logo {
+  align-self: flex-start;
+  width: var(--shop-logo-size);
+  height: var(--shop-logo-size);
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+.account-grid > .shop-card--branded .shop-info {
+  flex-basis: calc(100% - var(--shop-logo-size) - 18px);
+}
+@media (max-width: 760px) {
+  .shop-card--branded { --shop-logo-size: 76px; }
+  .shop-card--branded .shop-info { flex-basis: calc(100% - var(--shop-logo-size) - 18px); }
+}
 .shop-overview { background: var(--paper); border-color: var(--line); }
 .shop-info h3 { font-size: 1.1875rem; line-height: 1.4; color: var(--ink); }
 .shop-info p { color: var(--ink); font-size: 1rem; line-height: 1.6; }

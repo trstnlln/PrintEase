@@ -42,7 +42,7 @@ self.addEventListener('fetch',event=>{
 `);
 await writeFile('dist/sw.js',(await readFile('dist/sw.js','utf8'))+'\n'+pushWorker);
 files=await walk('dist');
-const types={html:'text/html; charset=utf-8',css:'text/css; charset=utf-8',js:'text/javascript; charset=utf-8',mjs:'text/javascript; charset=utf-8',json:'application/json',webmanifest:'application/manifest+json',png:'image/png',txt:'text/plain; charset=utf-8'};
+const types={html:'text/html; charset=utf-8',css:'text/css; charset=utf-8',js:'text/javascript; charset=utf-8',mjs:'text/javascript; charset=utf-8',json:'application/json',webmanifest:'application/manifest+json',png:'image/png',jpg:'image/jpeg',txt:'text/plain; charset=utf-8'};
 const assets={};for(const file of files){const extension=file.split('.').at(-1);assets['/'+file.slice(5)]={type:types[extension]||'application/octet-stream',data:(await readFile(file)).toString('base64')};}
 await mkdir('dist/server',{recursive:true});
 await build({stdin:{contents:`import {createWorker} from './worker/index.mjs';export default createWorker(${JSON.stringify(assets)});`,resolveDir:process.cwd(),sourcefile:'hosted-entry.mjs'},bundle:true,format:'esm',platform:'browser',target:'es2022',minify:true,outfile:'dist/server/index.js'});

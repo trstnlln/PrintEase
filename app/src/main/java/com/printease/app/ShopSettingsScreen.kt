@@ -2,6 +2,7 @@ package com.printease.app
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,7 +15,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -42,15 +45,23 @@ fun ShopCard(settings: ShopSettings, modifier: Modifier = Modifier, onEdit: (() 
     Panel(modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color =
+                    if (isNanoPrint) Color.White else MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(14.dp),
             ) {
-                Icon(
-                    Icons.Default.Storefront,
-                    null,
-                    Modifier.padding(12.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                if (isNanoPrint)
+                    Image(
+                        painterResource(R.drawable.nano_print_alangilan),
+                        contentDescription = null,
+                        modifier = Modifier.size(80.dp),
+                    )
+                else
+                    Icon(
+                        Icons.Default.Storefront,
+                        null,
+                        Modifier.padding(12.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(settings.name, style = MaterialTheme.typography.titleMedium)
