@@ -300,6 +300,12 @@ class PrintEase {
         await this.saveDraft();
         return this.render();
       }
+      case "resize-image": {
+        const index = Number(node.dataset.index);
+        const input = document.getElementById("image-size-" + index);
+        const percent = Number(input?.value);
+        return this.resizeImage(index, percent);
+      }
       case "download-print-file": {
         const order = this.s.orders.find(item => item.id === this.s.selected);
         if (!order || !this.s.session?.admin) return;
@@ -340,7 +346,7 @@ class PrintEase {
       case "estimate-save": {
         const minutes=Number(document.getElementById('pickup-minutes')?.value),id=node.dataset.id;
         if(!Number.isInteger(minutes)||minutes<1||minutes>10080)return;
-        this.closeModal();return this.action(async()=>{await this.backend.setPickupTime(id,Date.now()+minutes*60000);this.toast('Pickup estimate saved. The student can see it.');});
+        this.closeModal();return this.action(async()=>{await this.backend.setPickupTime(id,Date.now()+minutes*60000);this.toast('Pickup estimate saved. The customer can see it.');});
       }
       case "estimate-clear": {
         const id=node.dataset.id;this.closeModal();return this.action(async()=>{await this.backend.setPickupTime(id,null);this.toast('Pickup estimate cleared.');});
@@ -360,7 +366,7 @@ class PrintEase {
         this.closeModal();
         return this.action(async () => {
           await this.backend.transition(id, "Rejected", note);
-          this.toast("Request rejected. The student can see your reason.");
+          this.toast("Request rejected. The customer can see your reason.");
         });
       }
       case "draft-preview": {
@@ -406,14 +412,9 @@ class PrintEase {
       });
       return;
     }
-    if (id === "attachment-input" && event.type === "change") {
-      const file = target.files?.[0];
-      if (file) this.addAttachment(file);
-      return;
-    }
-    if (id === "pdf-input" && event.type === "change") {
-      const file = target.files?.[0];
-      if (file) this.pick(file);
+    if ((id === "pdf-input" || id === "attachment-input") && event.type === "change") {
+      const files = Array.from(target.files ?? []);
+      if (files.length) return this.pickFiles(files, id === "attachment-input");
       return;
     }
     if(id==='collection-code'){
@@ -533,14 +534,14 @@ class PrintEase {
       const quote = quoteInput ? Number(quoteInput.value) : null;
       if ((reviewAction === "quote" && (!Number.isSafeInteger(quote) || quote < 1 || quote > MAX_QUOTE)) ||
           (reviewAction === "correction" && !note)) {
-        form.querySelector("[role=alert]").textContent = reviewAction === "quote" ? "Enter a valid price in whole pesos." : "Describe what the student should change.";
+        form.querySelector("[role=alert]").textContent = reviewAction === "quote" ? "Enter a valid price in whole pesos." : "Describe what the customer should change.";
         return;
       }
       return this.action(async () => {
         try {
           await this.backend.reviewOrder(order.id, reviewAction, order.review?.version ?? -1, { quote, note });
           this.closeModal();
-          const savedMessage = reviewAction === "quote" ? "Final price sent for student approval." : "Correction requested.";
+          const savedMessage = reviewAction === "quote" ? "Final price sent for customer approval." : "Correction requested.";
           if (this.s.mode === "live") {
             try {
               const version = (order.review?.version ?? -1) + 1;
@@ -602,11 +603,17 @@ class PrintEase {
       this.s.draftWarning = "This browser could not restore a saved draft. Choose your PDF again.";
     }
   }
-  async saveDraft() {
+  async saveDraft(includeFile = false) {
     if (!this.s.session || !this.s.draft.pdf) return true;
     const { file, ...value } = this.s.draft;
     try {
-      await db.put("settings", { id: this.draftKey, value });
+      const id = this.draftKey;
+      if (includeFile) {
+        await db.transact(["settings", "files"], tx => {
+          tx.objectStore("settings").put({ id, value });
+          tx.objectStore("files").put({ id, blob: file });
+        });
+      } else await db.put("settings", { id, value });
       return true;
     } catch {
       this.s.draftWarning = "A recovery copy could not be saved on this device. Keep this tab open until you submit.";
@@ -627,41 +634,53 @@ class PrintEase {
     }
   }
   pick(file) {
-    if (this.s.busy) return;
-    const key = this.draftKey, uid = this.s.session?.uid, generation = this.generation;
+    return this.pickFiles([file]);
+  }
+  pickFiles(files, append = false) {
+    if (this.s.busy || !files.length) return;
+    const draft = this.s.draft, uid = this.s.session?.uid, generation = this.generation;
+    if (append && !draft.pdf) return;
+    const extras = draft.attachments ?? [];
+    const capacity = this.s.paperSizesAvailable ? MAX_ATTACHMENTS + 1 : 1;
+    const limit = append ? capacity - 1 - extras.length : draft.pdf ? 1 : capacity;
     this.s.fileReading = true;
     return this.action(async () => {
       try {
+        if (files.length > limit) throw new Error(`Choose up to ${limit} ${limit === 1 ? "file" : "files"} in this selection.`);
         const { preparePrintFile } = await import("./print-file.mjs");
-        const { pdf, file: printable } = await preparePrintFile(file);
-        if (generation !== this.generation || uid !== this.s.session?.uid) return;
-        const { selectedPages: ignored, ...oldOptions } = this.s.draft.options;
-        const draft = { ...this.s.draft, id: this.s.draft.revision ? this.s.draft.id : crypto.randomUUID(), pdf, file: printable, options: { ...oldOptions, pages: pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null, rawCopies: this.s.draft.rawCopies };
-        this.s.draft = draft;
-        this.s.draftWarning = null;
-        const { file: blob, ...value } = draft;
-        try {
-          await db.transact(["settings", "files"], (tx) => {
-            tx.objectStore("settings").put({ id: key, value });
-            tx.objectStore("files").put({ id: key, blob });
-          });
-        } catch {
-          this.s.draftWarning = "Your PDF is selected, but a recovery copy could not be saved. Keep this tab open until you submit.";
+        const prepared = [];
+        for (const file of files) {
+          const item = await preparePrintFile(file);
+          prepared.push({ ...item, options: { ...defaults(), pages: item.pdf.pages }, rawCopies: "1" });
         }
+        if (generation !== this.generation || uid !== this.s.session?.uid) return;
+        if (append) draft.attachments = [...extras, ...prepared];
+        else {
+          const [first, ...rest] = prepared;
+          const { selectedPages: ignored, ...oldOptions } = draft.options;
+          this.s.draft = {
+            ...draft, id: draft.revision ? draft.id : crypto.randomUUID(), pdf: first.pdf, file: first.file,
+            attachments: [...extras, ...rest],
+            options: { ...oldOptions, pages: first.pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null
+          };
+        }
+        this.s.draftWarning = null;
+        await this.saveDraft(!append);
       } finally {
         this.s.fileReading = false;
       }
     }, "request");
   }
-  addAttachment(file) {
-    if (!this.s.draft.pdf || !this.s.paperSizesAvailable || (this.s.draft.attachments?.length ?? 0) >= MAX_ATTACHMENTS) return;
-    const uid = this.s.session?.uid;
+  resizeImage(index, percent) {
+    const draft = this.s.draft, uid = this.s.session?.uid;
+    const item = index === 0 ? draft : draft.attachments?.[index - 1];
+    if (!item?.file || !item.pdf || percent === (item.pdf.imagePercent ?? 100)) return;
     return this.action(async () => {
-      const { preparePrintFile } = await import("./print-file.mjs");
-      const { pdf, file: printable } = await preparePrintFile(file);
-      if (uid !== this.s.session?.uid) return;
-      this.s.draft.attachments = [...(this.s.draft.attachments ?? []), { pdf, file: printable, options: { ...defaults(), pages: pdf.pages }, rawCopies: "1" }];
-      await this.saveDraft();
+      const { resizePrintImage } = await import("./print-file.mjs");
+      const resized = await resizePrintImage(item.file, item.pdf, percent);
+      if (this.s.session?.uid !== uid || draft !== this.s.draft) return;
+      Object.assign(item, resized);
+      await this.saveDraft(index === 0);
     }, "request");
   }
   validAttachmentCopies() {
@@ -746,9 +765,9 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     const quote = action === "quote";
     this.openModal(`<form id="review-form" class="dialog-content stack">
       <h2>${quote ? "Set the final price" : "Request a correction"}</h2>
-      <p class="small">${quote ? "Include any confirmed add-ons. The student must approve before you can accept the request." : "Tell the student what needs to change. They can update this same request."}</p>
+      <p class="small">${quote ? "Include any confirmed add-ons. The customer must approve before you can accept the request." : "Tell the customer what needs to change. They can update this same request."}</p>
       ${quote ? `<label>Final price (₱)<input name="quote" type="number" inputmode="numeric" min="1" max="${MAX_QUOTE}" required value="${order.review?.quote ?? ((requiresPaperQuote(order.options.paper) || order.attachments?.length) ? "" : estimate(order.options, order.pricing).total)}"></label>` : ""}
-      <label>${quote ? "Note for the student (optional)" : "What needs to change?"}<textarea name="note" maxlength="500" rows="3" ${quote ? "" : "required"}></textarea></label>
+      <label>${quote ? "Note for the customer (optional)" : "What needs to change?"}<textarea name="note" maxlength="500" rows="3" ${quote ? "" : "required"}></textarea></label>
       <p class="danger-text" role="alert"></p>
       <div class="dialog-actions"><button type="button" class="button outline" data-action="close-modal">Back</button><button class="button" type="submit">${quote ? "Send price" : "Request correction"}</button></div>
     </form>`);
@@ -760,11 +779,11 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     if (!order) return;
     if (next === "Ready for Pickup" && this.s.printToolsAvailable && order.printedFiles?.length !== (order.attachments?.length ?? 0) + 1) return this.toast("Mark each file printed before pickup.");
     if(next==='Completed'){
-      this.openModal(`<div class="dialog-content stack"><h2>Verify collection</h2><p class="small">Ask the student for the six-character code shown on their request before handing over the prints.</p><label>Collection code<input id="collection-code" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter student’s code"></label><div class="dialog-actions"><button class="button outline" data-action="close-modal">Go back</button><button class="button" data-action="collect-confirm" data-id="${e(order.id)}" disabled>Confirm collection</button></div></div>`);return;
+      this.openModal(`<div class="dialog-content stack"><h2>Verify collection</h2><p class="small">Ask the customer for the six-character code shown on their request before handing over the prints.</p><label>Collection code<input id="collection-code" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter student’s code"></label><div class="dialog-actions"><button class="button outline" data-action="close-modal">Go back</button><button class="button" data-action="collect-confirm" data-id="${e(order.id)}" disabled>Confirm collection</button></div></div>`);return;
     }
 
     if (next === "Rejected") {
-      this.openModal(`<div class="dialog-content"><div class="row between"><h2>Why reject this request?</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p class="small">Tell the student what to change before submitting again.</p><label>Reason shown to student<textarea id="reject-reason" maxlength="500" rows="4"></textarea></label><div class="dialog-actions"><button class="button outline" data-action="close-modal">Keep request</button><button class="button danger" data-action="reject-confirm" disabled>Confirm rejection</button></div></div>`);
+      this.openModal(`<div class="dialog-content"><div class="row between"><h2>Why reject this request?</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p class="small">Tell the customer what to change before submitting again.</p><label>Reason shown to the customer<textarea id="reject-reason" maxlength="500" rows="4"></textarea></label><div class="dialog-actions"><button class="button outline" data-action="close-modal">Keep request</button><button class="button danger" data-action="reject-confirm" disabled>Confirm rejection</button></div></div>`);
       return;
     }
     this.confirm(next === "Cancelled" ? "Cancel this request?" : next === "Accepted" ? "Accept this request?" : `Mark as ${next}?`, next === "Cancelled" ? "The shop will no longer process this PDF. You can submit a new request later." : next === "Accepted" ? "Check the PDF, page count and printing preferences. A unique queue number will be assigned." : "Make sure the document is ready for the next step before confirming.", "Confirm", async () => {
@@ -777,7 +796,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
             return;
           }
         } catch {
-          this.toast("Marked ready. Background alerts could not send. The student can still check Orders.");
+          this.toast("Marked ready. Background alerts could not send. The customer can still check Orders.");
           return;
         }
       }
@@ -788,7 +807,7 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
     const order=this.s.orders.find(item=>item.id===this.s.selected);
     if(!this.s.session?.admin||!order||!['Pending','Accepted','Printing'].includes(order.status))return;
     const minutes=order.expectedReadyAt?Math.min(10080,Math.max(1,Math.ceil((order.expectedReadyAt-Date.now())/60000))):30;
-    this.openModal(`<div class="dialog-content stack"><h2>Set pickup estimate</h2><p class="small">Give the student a realistic ready time. You can update it if the workload changes.</p><label>Minutes from now<input id="pickup-minutes" type="number" inputmode="numeric" min="1" max="10080" value="${minutes}"><small>Choose 1 minute to 7 days.</small></label><div class="dialog-actions">${order.expectedReadyAt?`<button class="button ghost" data-action="estimate-clear" data-id="${e(order.id)}">Clear estimate</button>`:''}<button class="button outline" data-action="close-modal">Go back</button><button class="button" data-action="estimate-save" data-id="${e(order.id)}">Save estimate</button></div></div>`);
+    this.openModal(`<div class="dialog-content stack"><h2>Set pickup estimate</h2><p class="small">Give the customer a realistic ready time. You can update it if the workload changes.</p><label>Minutes from now<input id="pickup-minutes" type="number" inputmode="numeric" min="1" max="10080" value="${minutes}"><small>Choose 1 minute to 7 days.</small></label><div class="dialog-actions">${order.expectedReadyAt?`<button class="button ghost" data-action="estimate-clear" data-id="${e(order.id)}">Clear estimate</button>`:''}<button class="button outline" data-action="close-modal">Go back</button><button class="button" data-action="estimate-save" data-id="${e(order.id)}">Save estimate</button></div></div>`);
   }
   reorder(){
     const order=this.s.orders.find(item=>item.id===this.s.selected);
@@ -800,14 +819,16 @@ Pay at pickup. The shop reviews your PDF before assigning a queue number.`, d.re
   async prepareReorder(order, correcting = false){
     const uid=this.s.session?.uid,generation=this.generation,key=this.draftKey;
     const bytes=await this.backend.bytes(order),file=new Blob([bytes],{type:'application/pdf'});file.name=order.fileName;
-    const {inspectPdf}=await import('./pdf.mjs'),pdf=await inspectPdf(file);
+    const { inspectPdf } = await import('./pdf.mjs');
+    const { readImageSize } = await import('./print-file.mjs');
+    const pdf = { ...await inspectPdf(file), imagePercent: await readImageSize(file) };
     if(uid!==this.s.session?.uid||generation!==this.generation)return;
     const options=structuredClone(order.options);delete options.selectedPages;options.pages=pdf.pages;validateOptions(options);
     const revision = correcting ? { id: order.id, version: order.review.version, note: order.review.note } : null;
     const attachments = await Promise.all((order.attachments ?? []).map(async (item,index) => {
       const file = new Blob([await this.backend.bytes(order,index+1)],{type:"application/pdf"});
       file.name = item.fileName;
-      const pdf = await inspectPdf(file);
+      const pdf = { ...await inspectPdf(file), imagePercent: await readImageSize(file) };
       if (pdf.pages !== item.options.pages) throw new Error("A saved PDF no longer matches its page count.");
       return { pdf, file, options: structuredClone(item.options), rawCopies: String(item.options.copies) };
     }));

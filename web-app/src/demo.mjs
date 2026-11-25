@@ -17,7 +17,7 @@ class DemoBackend {
       if (!await db.request(settings.get("demo-seeded"))) {
         const orders = tx.objectStore("orders");
         const now = Date.now();
-        for (const o of [{ id: "sample-1042", fileName: "Research proposal.pdf", options: { paper: "A4", pages: 12, copies: 2, color: false, duplex: true }, estimatedCost: 48, status: "Printing", queue: 1, queueDay: dayKey(), createdAt: now - 15e5 }, { id: "sample-1043", fileName: "Laboratory activity.pdf", options: { paper: "A4", pages: 4, copies: 1, color: true, duplex: false }, estimatedCost: 40, status: "Pending", queue: null, queueDay: null, createdAt: now - 5e5 }]) orders.put({ ...o, ownerId: "demo-student", studentName: "Alex Student", storagePath: "", note: "" });
+        for (const o of [{ id: "sample-1042", fileName: "Research proposal.pdf", options: { paper: "A4", pages: 12, copies: 2, color: false, duplex: true }, estimatedCost: 48, status: "Printing", queue: 1, queueDay: dayKey(), createdAt: now - 15e5 }, { id: "sample-1043", fileName: "Laboratory activity.pdf", options: { paper: "A4", pages: 4, copies: 1, color: true, duplex: false }, estimatedCost: 40, status: "Pending", queue: null, queueDay: null, createdAt: now - 5e5 }]) orders.put({ ...o, ownerId: "demo-student", studentName: "Alex Reyes", storagePath: "", note: "" });
         settings.put({ id: "demo-seeded", value: true });
       }
     });
@@ -26,7 +26,7 @@ class DemoBackend {
     await this.refresh();
   }
   async login(admin) {
-    this.session = admin ? { uid: "demo-admin", name: "Nano Print Alangilan", email: "admin@demo.local", admin: true } : { uid: "demo-student", name: "Alex Student", email: "student@demo.local", admin: false };
+    this.session = admin ? { uid: "demo-admin", name: "Nano Print Alangilan", email: "admin@demo.local", admin: true } : { uid: "demo-student", name: "Alex Reyes", email: "student@demo.local", admin: false };
     await db.put("settings", { id: "demo-role", value: admin ? "admin" : "student" });
     await this.refresh();
   }
@@ -71,9 +71,9 @@ class DemoBackend {
       if (!old || !canTransition(old.status, next)) throw new Error("The order changed. Review its latest status.");
       if (!this.session?.admin && !(old.ownerId === this.session?.uid && next === "Cancelled")) throw new Error("You cannot update this order.");
       if (next === "Ready for Pickup" && old.printedFiles && old.printedFiles.length !== 1 + (old.attachments?.length ?? 0)) throw new Error("Mark every file printed before pickup.");
-      if (next === "Rejected" && !note.trim()) throw new Error("Please give the student a reason.");
+      if (next === "Rejected" && !note.trim()) throw new Error("Please give the customer a reason.");
       if (next === "Accepted") {
-        if (!canAccept(old)) throw new Error("The student must approve the final price first.");
+        if (!canAccept(old)) throw new Error("The customer must approve the final price first.");
         const day = dayKey(), settings = tx.objectStore("settings"), key = "queue-" + day;
         const existing = await db.request(settings.get(key));
         const seeded = (await db.request(orders.getAll())).filter((o) => o.queueDay === day).reduce((max, o) => Math.max(max, o.queue ?? 0), 0);

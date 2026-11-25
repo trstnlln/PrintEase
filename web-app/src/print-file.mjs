@@ -3,6 +3,9 @@ import { inspectPdf } from "./pdf.mjs";
 
 export const printFileTypes = "application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png";
 const encoder = new TextEncoder();
+const decoder = new TextDecoder("latin1");
+const photoHeader = /\/MediaBox \[0 0 (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)\] \/Resources << \/XObject << \/Photo 4 0 R >> >> \/Contents 5 0 R >>\nendobj\n4 0 obj\n<< \/Type \/XObject \/Subtype \/Image \/Width (\d+) \/Height (\d+) \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Filter \/DCTDecode \/Length (\d+) >>\nstream\n/;
+const validPercent = percent => Number.isInteger(percent) && percent >= 1 && percent <= 100;
 
 export function fileKind(bytes) {
   if (bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((byte, index) => bytes[index] === byte)) return "PNG";
@@ -12,8 +15,10 @@ export function fileKind(bytes) {
 }
 
 // A single JPEG XObject on a single PDF page. Offsets are counted in bytes.
-export function imagePdf(jpeg, width, height) {
-  const w = (width * 72 / 150).toFixed(2), h = (height * 72 / 150).toFixed(2);
+export function imagePdf(jpeg, width, height, percent = 100, page = [(width * 72 / 150).toFixed(2), (height * 72 / 150).toFixed(2)]) {
+  const [w, h] = page;
+  const fraction = percent / 100;
+  const drawing = [w * fraction, h * fraction, w * (1 - fraction) / 2, h * (1 - fraction) / 2].map(n => n.toFixed(3));
   const chunks = [], offsets = [0];
   let length = 0;
   const append = data => {
@@ -27,18 +32,45 @@ export function imagePdf(jpeg, width, height) {
     parts.forEach(append);
     append("\nendobj\n");
   };
-  append("%PDF-1.4\n");
+  append("%PDF-1.4\n%PrintEaseImage " + percent + "\n");
   object(1, "<< /Type /Catalog /Pages 2 0 R >>");
   object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
   object(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Photo 4 0 R >> >> /Contents 5 0 R >>`);
   object(4, `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`, jpeg, "\nendstream");
-  const content = `q ${w} 0 0 ${h} 0 0 cm /Photo Do Q\n`;
+  const content = `q ${drawing[0]} 0 0 ${drawing[1]} ${drawing[2]} ${drawing[3]} cm /Photo Do Q\n`;
   object(5, `<< /Length ${content.length} >>\nstream\n${content}endstream`);
   const xref = length;
   append("xref\n0 6\n0000000000 65535 f \n");
   offsets.slice(1).forEach(offset => append(String(offset).padStart(10, "0") + " 00000 n \n"));
   append(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
   return new Blob(chunks, { type: "application/pdf" });
+}
+
+async function readPhotoPage(file) {
+  const header = decoder.decode(await file.slice(0, 1024).arrayBuffer());
+  if (!header.startsWith("%PDF-1.4\n")) return null;
+  const part = photoHeader.exec(header);
+  if (!part) return null;
+  const [, pageWidth, pageHeight, width, height, jpegLength] = part;
+  const offset = part.index + part[0].length, length = Number(jpegLength);
+  const percent = Number(/^%PDF-1.4\n%PrintEaseImage (\d+)\n/.exec(header)?.[1] || 100);
+  if (!validPercent(percent) || length < 4 || offset + length > file.size) return null;
+  return { page: [pageWidth, pageHeight], width: Number(width), height: Number(height), offset, length, percent };
+}
+
+export async function readImageSize(file) {
+  return (await readPhotoPage(file))?.percent;
+}
+
+export async function resizePrintImage(file, metadata, percent) {
+  if (!validPercent(percent)) throw new Error("Enter a whole image size from 1 to 100%.");
+  const photo = await readPhotoPage(file);
+  if (!photo) throw new Error("Choose the original JPG or PNG again to resize this image.");
+  const { page, width, height, offset, length } = photo;
+  const jpeg = new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
+  const printable = new File([imagePdf(jpeg, width, height, percent, page)], metadata.name, { type: "application/pdf" });
+  const pdf = await inspectPdf(printable);
+  return { pdf: { ...metadata, ...pdf, imagePercent: percent }, file: printable };
 }
 
 function dimensions(bytes, kind) {
@@ -100,5 +132,6 @@ export async function preparePrintFile(file) {
   if (!kind) throw new Error("Choose a valid PDF, JPG, or PNG. Export Word, PowerPoint, or Excel files as PDF first.");
   const printable = kind === "PDF" ? file : await convertImage(file, new Uint8Array(await file.arrayBuffer()), kind);
   const pdf = await inspectPdf(printable);
-  return { pdf: { ...pdf, ...(kind === "PDF" ? {} : { sourceKind: kind }) }, file: printable };
+  const imagePercent = kind === "PDF" ? await readImageSize(printable) : 100;
+  return { pdf: { ...pdf, imagePercent, ...(kind === "PDF" ? {} : { sourceKind: kind }) }, file: printable };
 }

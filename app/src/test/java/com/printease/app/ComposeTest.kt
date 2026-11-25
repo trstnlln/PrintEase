@@ -127,7 +127,7 @@ class ComposeTest {
         compose.onRoot().captureRoboImage("build/screenshots/full-student.png")
         compose.onNodeWithText("Account", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Switch to administrator").performScrollTo().performClick()
-        compose.onNodeWithText("A clear queue.\nA smoother day.").assertIsDisplayed()
+        compose.onAllNodesWithText("Print queue").onFirst().assertIsDisplayed()
         compose.onRoot().captureRoboImage("build/screenshots/full-admin.png")
         model.signOut()
     }

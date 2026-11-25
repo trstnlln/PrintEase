@@ -34,7 +34,7 @@ const sheetsMm = {
   A3: [297, 420], A5: [148, 210], B5: [176, 250], Folio: [215.9, 330.2], Tabloid: [279.4, 431.8]
 };
 export const stockPapers = [...standardPapers, ...quotedPapers, "Custom"];
-export const stockLabels = { available: "Available", out: "Out of stock", ask: "Ask the shop" };
+export const stockLabels = { available: "Available", out: "Out of stock", ask: "Stock unconfirmed" };
 export const stockKey = paper => customDimensions(paper) ? "Custom" : paper;
 export function paperStock(shop, paper) {
   const key = stockKey(paper);

@@ -255,7 +255,7 @@ fun ShopSettingsContent(
         Eyebrow("YOUR SHOP, YOUR WAY")
         Text("Shop settings", style = MaterialTheme.typography.headlineLarge)
         Text(
-            "Help students know where to collect, when to visit, and what their prints will cost.",
+            "Help customers know where to collect, when to visit, and what their prints will cost.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Panel(Modifier.fillMaxWidth()) {
@@ -452,7 +452,7 @@ fun ShopSettingsContent(
             Panel(Modifier.fillMaxWidth()) {
                 Text("Paper availability", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Students see these statuses in the paper menu.",
+                    "Customers see these statuses in the paper menu.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 stockPapers.forEach { paper ->

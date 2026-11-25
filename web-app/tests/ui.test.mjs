@@ -9,6 +9,13 @@ globalThis.__PE_TEST__=true;
 const {PrintEase}=await import('../src/app.mjs');
 async function setup(t){const window=new Window({url:'https://test.printease.example/'});for(const name of ['window','document','location','history','localStorage','navigator'])Object.defineProperty(globalThis,name,{configurable:true,value:window[name]});Object.defineProperty(globalThis,'crypto',{configurable:true,value:webcrypto});window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};window.HTMLDialogElement.prototype.close=function(){this.open=false;};document.body.innerHTML='<div id="app"></div><div id="toast"></div><div id="modal-root"></div>';await db.transact(['orders','files','settings'],tx=>{for(const name of ['orders','files','settings'])tx.objectStore(name).clear();});const app=new PrintEase({demo:true});t.after(async()=>{app.close();await window.happyDOM.abort();});await app.start();return app;}
 test('student can navigate from home to a guarded draft',async t=>{const app=await setup(t);await app.backend.login(false);assert.match(document.body.textContent,/Hello, Alex/);await app.onClick({target:document.querySelector('[data-action="new-request"]'),preventDefault(){}});assert.equal(app.s.route,'request');assert.equal(document.querySelector('[data-action="review"]').disabled,true);});
+test('the student greeting reads a surname-first profile without its separating comma',async t=>{
+ const app=await setup(t);await app.backend.login(false);
+ app.s.session.name='Villena, Ana Marie';app.render();
+ assert.equal(document.querySelector('h1').textContent,'Hello, Ana.');
+ app.s.session.name='Ana Villena, Jr.';app.render();
+ assert.equal(document.querySelector('h1').textContent,'Hello, Ana.');
+});
 test('invalid copies disable submission and updates do not replace the focused field',async t=>{const app=await setup(t);await app.backend.login(false);app.s.draft.pdf={name:'Two.pdf',pages:2,bytes:100};app.s.draft.options={...defaults(),pages:2};app.go('request');const input=document.getElementById('copies');input.focus();input.value='0';app.onInput({target:input});assert.equal(document.querySelector('[data-action="review"]').disabled,true);assert.equal(document.getElementById('copies'),input);input.value='2';app.onInput({target:input});assert.equal(document.getElementById('summary-total').textContent,'₱8.00');assert.equal(document.querySelector('[data-action="review"]').disabled,false);});
 test('confirmation submits one request and updates the student list',async t=>{const app=await setup(t);await app.backend.login(false);app.s.draft={id:'ui-order',pdf:{name:'Report.pdf',pages:2,bytes:100},file:new Blob(['%PDF-example']),options:{...defaults(),pages:2},rawCopies:'1'};app.go('request');app.review();assert.match(document.getElementById('modal-root').textContent,/₱4.00/);await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});assert.equal(app.s.route,'orders');assert.equal(app.s.orders.filter(o=>o.id==='ui-order').length,1);assert.match(document.body.textContent,/Report.pdf/);assert.match(document.body.textContent,/Request ID ui-order/);});
 test('admin can reject with a reason and the student sees it',async t=>{const app=await setup(t);await app.backend.login(true);app.go('detail','sample-1043');app.status('Rejected');const reason=document.getElementById('reject-reason');assert.equal(document.querySelector('[data-action="reject-confirm"]').disabled,true);reason.value='Please upload the final PDF.';app.onInput({target:reason});await app.onClick({target:document.querySelector('[data-action="reject-confirm"]'),preventDefault(){}});await app.backend.login(false);app.go('detail','sample-1043');assert.match(document.body.textContent,/Please upload the final PDF/);assert.match(document.body.textContent,/Rejected/);});
@@ -142,7 +149,7 @@ test("custom sizes and additional files use a shop quote and keep separate print
  assert.equal(document.getElementById("summary-total").textContent,"Shop quote");
  const file = await selectedFile(1);
  file.name = "Cover.pdf";
- await app.addAttachment(file);
+ await app.pickFiles([file], true);
  input("file-0-paper","A3");
  input("file-0-copies","0");
  assert.equal(document.querySelector('[data-action="review"]').disabled,true);
@@ -163,10 +170,50 @@ test("shop queue separates orders waiting on the student from work staff can act
  await app.backend.login(true);
  await app.backend.reviewOrder("sample-1043","quote",-1,{quote:42});
  app.go("orders");
- assert.ok(document.querySelector('[aria-label="Waiting for student"] [data-id="sample-1043"]'));
+ assert.ok(document.querySelector('[aria-label="Waiting for response"] [data-id="sample-1043"]'));
  assert.ok(document.querySelector('[aria-label="Printing"] [data-id="sample-1042"]'));
 });
 
+test('customer accounts omit a role badge and shop accounts keep their administrator label',async t=>{
+ const app=await setup(t);await app.backend.login(false);app.go('account');
+ const profile=()=>document.querySelector('.account-grid>section');
+ assert.doesNotMatch(profile().textContent,/\bStudent\b|Shop administrator/);
+ await app.backend.login(true);app.go('account');
+ assert.match(profile().textContent,/Shop administrator/);
+});
+test('the top picker accepts a batch and keeps print settings close to each file',async t=>{
+ const app=await setup(t);await app.backend.login(false);app.go('request');
+ const picker=document.querySelector('#pdf-input');
+ assert.equal(picker.multiple,true);
+ const first=await selectedFile(2),second=await selectedFile(3),third=await selectedFile(1);
+ second.name='Notes.pdf';third.name='Cover.pdf';
+ Object.defineProperty(picker,'files',{value:[first,second]});
+ await app.onInput({target:picker,type:'change'});
+ assert.equal(app.s.draft.attachments[0].pdf.name,'Notes.pdf');
+ const add=document.querySelector('#attachment-input');
+ assert.equal(add.multiple,true);
+ assert.equal(add.closest('.step'),document.querySelector('#pdf-input').closest('.step'));
+ Object.defineProperty(add,'files',{value:[third]});
+ await app.onInput({target:add,type:'change'});
+ assert.equal(app.s.draft.attachments.length,2);
+ assert.equal(document.querySelector('#attachment-input'),null);
+ assert.doesNotMatch(document.querySelector('#main').textContent,/Additional files|Add another file/);
+ app.go('orders');
+ const shortcut=document.querySelector('.compact-action');
+ assert.equal(shortcut.getAttribute('aria-label'),'New print request');
+ assert.equal(shortcut.querySelectorAll('svg').length,1);
+});
+test('applying a custom image size saves the updated file and preserves the draft ID',async t=>{
+ const app=await setup(t);await app.backend.login(false);app.go('request');
+ const {imagePdf}=await import('../src/print-file.mjs');
+ await app.pick(new File([imagePdf(new Uint8Array([255,216,255,217]),600,300)],'Photo.pdf'));
+ const id=app.s.draft.id;
+ document.querySelector('#image-size-0').value='37';
+ await app.onClick({target:document.querySelector('[data-action="resize-image"]'),preventDefault(){}});
+ assert.equal(app.s.draft.id,id);assert.equal(app.s.draft.pdf.imagePercent,37);
+ const stored=await db.get('files',app.draftKey);
+ assert.match(await stored.blob.text(),/%PrintEaseImage 37/);
+});
 test('paper stock is editable and blocks an unavailable size in an existing student draft',async t=>{
  const app=await setup(t);await app.backend.login(true);app.go('settings');
  const folio=document.querySelector('[data-stock="Folio"]');
@@ -178,6 +225,8 @@ test('paper stock is editable and blocks an unavailable size in an existing stud
  app.s.draft.options={...defaults(),paper:'Folio'};
  app.go('request');
  assert.match(document.body.textContent,/Out of stock. Choose another paper size/);
+ assert.equal(document.querySelector('#paper-size option[value="A4"]').textContent,'A4');
+ assert.match(document.querySelector('#paper-size optgroup:nth-child(2)').label,/Quote required/);
  assert.equal(document.querySelector('[data-action="review"]').disabled,true);
  const paper=document.querySelector('#paper-size');paper.value='Legal';app.onInput({target:paper});
  const scale=document.querySelector('#scale');scale.value='actual';app.onInput({target:scale});

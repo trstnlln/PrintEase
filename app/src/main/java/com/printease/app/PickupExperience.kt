@@ -98,7 +98,7 @@ fun PickupTimeDialog(order: PrintOrder, onSave: (Long?) -> Unit, onDismiss: () -
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
-                    "Give the student a realistic ready time. You can update it if your workload changes."
+                    "Give the customer a realistic ready time. You can update it if your workload changes."
                 )
                 OutlinedTextField(
                     minutes,

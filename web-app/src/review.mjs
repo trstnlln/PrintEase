@@ -28,7 +28,7 @@ export function reviewUpdate(order, session, action, version, input = {}) {
   if (session?.admin) {
     if (["approved", "submitted", "revised", "quoted", "declined"].includes(stage) && action === "correction") {
       const note = input.note?.trim();
-      if (!note || note.length > 500) throw new Error("Describe what the student should correct.");
+      if (!note || note.length > 500) throw new Error("Describe what the customer should correct.");
       return { ...current, stage: "correction", version: version + 1, note, quote: null };
     }
     if (["submitted", "revised", "quoted", "declined"].includes(stage) && action === "quote") {
@@ -63,12 +63,12 @@ export function reviewLabel(order) {
   }[order.review?.stage] ?? "Pending";
 }
 
-export const shopQueueGroups = ["Needs review", "Waiting for student", "Ready to print", "Printing", "Ready for pickup", "History"];
+export const shopQueueGroups = ["Needs review", "Waiting for response", "Ready to print", "Printing", "Ready for pickup", "History"];
 
 export function shopQueueGroup(order) {
   switch (order.status) {
     case "Pending":
-      return ["quoted", "correction"].includes(order.review?.stage) ? "Waiting for student" : "Needs review";
+      return ["quoted", "correction"].includes(order.review?.stage) ? "Waiting for response" : "Needs review";
     case "Accepted": return "Ready to print";
     case "Printing": return "Printing";
     case "Ready for Pickup": return "Ready for pickup";

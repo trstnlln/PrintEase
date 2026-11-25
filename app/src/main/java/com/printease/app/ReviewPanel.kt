@@ -49,16 +49,16 @@ fun ReviewPanel(
                 if (admin) "Review the updated PDF and settings before quoting."
                 else "The shop will review your updated request."
             ReviewStage.Quoted ->
-                if (admin) "Waiting for the student to approve this price."
+                if (admin) "Waiting for the customer to approve this price."
                 else "Approve this price so the shop can accept your request."
             ReviewStage.Approved ->
-                if (admin) "The student approved this price. You can accept the request."
+                if (admin) "The customer approved this price. You can accept the request."
                 else "You’ll pay this amount when you collect your prints."
             ReviewStage.Declined ->
-                if (admin) "The student declined this quote. You can send another price."
+                if (admin) "The customer declined this quote. You can send another price."
                 else "The shop can send another quote."
             ReviewStage.Correction ->
-                if (admin) "Waiting for the student to send an update."
+                if (admin) "Waiting for the customer to send an update."
                 else "Update the PDF or print options on this request."
         }
     Card(
@@ -102,7 +102,7 @@ fun ReviewPanel(
                             Modifier.fillMaxWidth(),
                             label = {
                                 Text(
-                                    if (quoting) "Note for the student (optional)"
+                                    if (quoting) "Note for the customer (optional)"
                                     else "What needs to change?"
                                 )
                             },

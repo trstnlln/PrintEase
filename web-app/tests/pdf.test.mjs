@@ -30,3 +30,18 @@ test('file selection uses signatures and image PDFs preserve page proportions',a
  } finally { await doc.destroy(); }
  await assert.rejects(preparePrintFile(new File(['Office bytes'],'Report.docx')),/Export Word, PowerPoint, or Excel/);
 });
+
+test('a custom image size is embedded into the PDF and resizes from the original proportions',async()=>{
+ const {imagePdf,preparePrintFile,readImageSize,resizePrintImage}=await import('../src/print-file.mjs');
+ const original=await preparePrintFile(new File([imagePdf(new Uint8Array([255,216,255,217]),600,300)], 'Photo.pdf'));
+ const smaller=await resizePrintImage(original.file,original.pdf,37);
+ assert.equal(smaller.pdf.imagePercent,37);
+ assert.equal(await readImageSize(smaller.file),37);
+ const bytes=await smaller.file.text();
+ assert.match(bytes,/\/MediaBox \[0 0 288.00 144.00\]/);
+ assert.match(bytes,/q 106.560 0 0 53.280 90.720 45.360 cm \/Photo Do Q/);
+ assert.notEqual(smaller.pdf.sha256,original.pdf.sha256);
+ const restored=await resizePrintImage(smaller.file,smaller.pdf,100);
+ assert.equal(restored.pdf.sha256,original.pdf.sha256);
+ await assert.rejects(resizePrintImage(original.file,original.pdf,101),/1 to 100%/);
+});

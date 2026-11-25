@@ -1,5 +1,12 @@
 import { validateSchedule } from "./pickup-schedule.mjs";
 import { validPaper, validatePaperStock } from "./paper.mjs";
+
+export function greetingName(displayName) {
+  const [firstPart, afterComma] = displayName.split(",", 2).map(part => part.trim());
+  const name = afterComma && !/^(?:jr|sr|ii|iii|iv|v)\.?$/i.test(afterComma) ? afterComma : firstPart;
+  return name.split(/\s+/, 1)[0].replace(/^[.;:]+|[.;:]+$/g, "");
+}
+
 const MAX_BYTES = 5 * 1024 * 1024;
 const statuses = ["Pending", "Accepted", "Printing", "Ready for Pickup", "Completed", "Rejected", "Cancelled"];
 const terminal = ["Completed", "Rejected", "Cancelled"];
@@ -75,7 +82,7 @@ function filterOrders(orders, { filter = "All", search = "", admin = false } = {
 }
 function makeOrder(id, session, pdf, options, rates = defaultRates()) {
   validateOptions(options);
-  if (session.admin) throw new Error("Sign in as a student to submit a request.");
+  if (session.admin) throw new Error("Sign in with a customer account to submit a request.");
   const now = Date.now();
   return { id, ownerId: session.uid, studentName: session.name.slice(0, 200), fileName: pdf.name.slice(0, 255), storagePath: `documents/${session.uid}/${id}.pdf`, options: serializeOptions(options), pricing: { ...rates }, estimatedCost: estimate(options, rates).total, createdAt: now, updatedAt: now, completedAt: null, documentDeletedAt: null, status: "Pending", queue: null, queueDay: null, note: "" };
 }

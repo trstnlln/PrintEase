@@ -110,6 +110,7 @@ class RepositoryTest {
             val pdf = documents.import(android.net.Uri.fromFile(photo))
             assertEquals("Sample.pdf", pdf.name)
             assertEquals(1, pdf.pages)
+            assertEquals(100, pdf.imagePercent)
             val bytes = File(pdf.path).readBytes()
             val content = bytes.toString(Charsets.ISO_8859_1)
             assertTrue(content.startsWith("%PDF-1.4"))
@@ -128,6 +129,12 @@ class RepositoryTest {
             assertEquals(96, embedded.height)
             assertTrue(android.graphics.Color.green(embedded.getPixel(80, 48)) > 230)
             embedded.recycle()
+            val smaller = documents.resizeImage(pdf, 37)
+            assertEquals(37, smaller.imagePercent)
+            val resizedText = File(smaller.path).readBytes().toString(Charsets.ISO_8859_1)
+            assertTrue("/MediaBox [0 0 77 46]" in resizedText)
+            assertTrue("q 28.490 0 0 17.020 24.255 14.490 cm /Photo Do Q" in resizedText)
+            assertEquals(pdf.sha256, documents.resizeImage(smaller, 100).sha256)
         }
         image.recycle()
     }

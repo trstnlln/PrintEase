@@ -131,15 +131,48 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
             )
     }
 
-    fun pickAttachment(uri: Uri) = action {
+    fun addFiles(uris: List<Uri>) = action {
         check(pdf.value != null && shop.value.paperSizesAvailable)
-        check(attachments.value.size < MAX_ATTACHMENTS) { "Choose up to three PDFs per request." }
-        saveAttachments(attachments.value + AttachmentDraft(documents.import(uri)))
+        val slots = MAX_ATTACHMENTS - attachments.value.size
+        require(uris.size in 1..slots) { "Choose up to $slots more files." }
+        saveAttachments(attachments.value + importFiles(uris).map { AttachmentDraft(it) })
+    }
+
+    private suspend fun importFiles(uris: List<Uri>): List<PdfFile> {
+        val imported = mutableListOf<PdfFile>()
+        try {
+            for (uri in uris) imported.add(documents.import(uri))
+            return imported
+        } catch (error: Exception) {
+            imported.forEach { File(it.path).delete() }
+            throw error
+        }
     }
 
     fun changeAttachment(index: Int, value: AttachmentDraft) {
         if (busy.value || attachments.value.getOrNull(index)?.pdf?.path != value.pdf.path) return
         saveAttachments(attachments.value.mapIndexed { i, item -> if (i == index) value else item })
+    }
+
+    fun resizeImage(index: Int, percent: Int) = action {
+        if (index == 0) {
+            val old = requireNotNull(pdf.value)
+            val resized = documents.resizeImage(old, percent)
+            pdf.value = resized
+            saved["pdfPath"] = resized.path
+            saved["pdfName"] = resized.name
+            File(old.path).delete()
+        } else {
+            val files = attachments.value
+            val old = files[index - 1]
+            val resized = documents.resizeImage(old.pdf, percent)
+            saveAttachments(
+                files.mapIndexed { i, item ->
+                    if (i == index - 1) item.copy(pdf = resized) else item
+                }
+            )
+            File(old.pdf.path).delete()
+        }
     }
 
     fun removeAttachment(index: Int) {
@@ -214,14 +247,21 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
             )
         }
 
-    fun pick(uri: Uri) = action {
-        val imported = documents.import(uri)
-        pdf.value?.let { File(it.path).delete() }
+    fun pickFiles(uris: List<Uri>) = action {
+        val capacity =
+            if (pdf.value == null && shop.value.paperSizesAvailable) MAX_ATTACHMENTS + 1 else 1
+        require(uris.size in 1..capacity) { "Choose up to $capacity files in this selection." }
+        val files = importFiles(uris)
+        val imported = files.first()
+        val previous = pdf.value
         pdf.value = imported
         saved["pdfPath"] = imported.path
         saved["pdfName"] = imported.name
+        if (files.size > 1)
+            saveAttachments(attachments.value + files.drop(1).map { AttachmentDraft(it) })
         draftId = UUID.randomUUID().toString()
         setOptions(options.value.copy(pages = imported.pages, pageRanges = emptyList()))
+        previous?.let { File(it.path).delete() }
     }
 
     fun setOptions(value: PrintOptions) {
@@ -322,7 +362,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         repository!!.setPickupTime(id, time)
         events.send(
             if (time == null) "Pickup estimate cleared."
-            else "Pickup estimate saved. The student can see it."
+            else "Pickup estimate saved. The customer can see it."
         )
     }
 
@@ -453,7 +493,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
             require(
                 note.replace(Regex("[^A-Za-z0-9]"), "").uppercase(Locale.ROOT) == collectionCode(id)
             ) {
-                "Ask the student for the matching collection code."
+                "Ask the customer for the matching collection code."
             }
         }
         repository!!.transition(id, status, if (status == OrderStatus.Completed) "" else note)
@@ -462,7 +502,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 val failed = HostedDocuments.notifyReady(id)
                 if (failed) {
                     events.send(
-                        "Marked ready. Some background alerts could not send; the student can still check Orders."
+                        "Marked ready. Some background alerts could not send; the customer can still check Orders."
                     )
                     return@action
                 }
@@ -470,7 +510,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 throw e
             } catch (_: Exception) {
                 events.send(
-                    "Marked ready. Background alerts could not send; the student can still check Orders."
+                    "Marked ready. Background alerts could not send; the customer can still check Orders."
                 )
                 return@action
             }

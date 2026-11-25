@@ -268,3 +268,42 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .preview-settings button { justify-self: start; }
 .preview-settings { flex: 0 0 auto; }
 .preview-pages { min-height: 0; }
+
+.image-size-editor { display: flex; align-items: end; gap: .5rem .75rem; flex-wrap: wrap; }
+.image-size-editor label { flex: 1 1 8rem; }
+.image-size-editor button { flex: 0 1 auto; }
+.image-size-editor small { flex: 1 0 100%; }
+.file-picker-actions { display: flex; justify-content: center; gap: .625rem; flex-wrap: wrap; }
+.selected-print-files { margin-top: .75rem; }
+
+.page-title { align-items: center; }
+.hero { background: linear-gradient(140deg, #123e32, #1b5c47); }
+.hero h2 { margin-top: .65rem; letter-spacing: -.035em; }
+.hero p { max-width: 33ch; }
+.hero .button { margin-top: .25rem; }
+.request-layout .step-head {
+  margin: 0 0 .65rem;
+  color: var(--ink);
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -.015em;
+}
+.request-layout .step + .step { margin-top: 1.5rem; }
+.request-layout .estimate { border-color: var(--line); }
+.file-picker-actions .button { min-height: 48px; }
+.selected-print-files .extra-file { background: var(--paper); }
+@media (max-width: 800px) {
+  .page-title .compact-action {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    gap: 0;
+  }
+  .page-title .compact-action span { display: none; }
+  .page-title .compact-action .icon { display: block; }
+  .request-layout .upload { padding: 1.25rem; }
+}

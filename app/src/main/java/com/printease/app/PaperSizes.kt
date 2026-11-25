@@ -23,7 +23,13 @@ fun paperLabel(paper: String): String =
 
 val stockPapers = standardPaperSizes + quotedPaperSizes + "Custom"
 val stockLabels =
-    mapOf("available" to "Available", "out" to "Out of stock", "ask" to "Ask the shop")
+    mapOf("available" to "Available", "out" to "Out of stock", "ask" to "Stock unconfirmed")
+
+fun PaperStock.menuLabel(paper: String, showStock: Boolean): String {
+    val label = if (paper == "Custom") "Custom size" else paper
+    val state = status(paper)
+    return if (showStock && state != "ask") "$label · ${stockLabels.getValue(state)}" else label
+}
 
 data class PaperStock(
     val available: List<String> = emptyList(),

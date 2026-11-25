@@ -18,6 +18,7 @@ import android.provider.OpenableColumns
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -190,8 +191,8 @@ class Documents(private val context: Context) {
                         jpeg.toByteArray(),
                         opaque.width,
                         opaque.height,
-                        pageWidth,
-                        pageHeight,
+                        pageWidth.toString(),
+                        pageHeight.toString(),
                     )
                 } finally {
                     opaque.recycle()
@@ -210,8 +211,9 @@ class Documents(private val context: Context) {
         jpeg: ByteArray,
         width: Int,
         height: Int,
-        pageWidth: Int,
-        pageHeight: Int,
+        pageWidth: String,
+        pageHeight: String,
+        percent: Int = 100,
     ) {
         target.outputStream().use { stream ->
             val offsets = IntArray(6)
@@ -226,7 +228,7 @@ class Documents(private val context: Context) {
                 append("$id 0 obj\n$dictionary")
             }
             fun endObject() = append("\nendobj\n")
-            append("%PDF-1.4\n")
+            append("%PDF-1.4\n%PrintEaseImage $percent\n")
             startObject(1, "<< /Type /Catalog /Pages 2 0 R >>")
             endObject()
             startObject(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
@@ -247,7 +249,18 @@ class Documents(private val context: Context) {
             position += imageLength
             append("\nendstream")
             endObject()
-            val content = "q $pageWidth 0 0 $pageHeight 0 0 cm /Photo Do Q\n"
+            val fraction = percent / 100.0
+            val w = pageWidth.toDouble()
+            val h = pageHeight.toDouble()
+            val content =
+                String.format(
+                    Locale.ROOT,
+                    "q %.3f 0 0 %.3f %.3f %.3f cm /Photo Do Q\n",
+                    w * fraction,
+                    h * fraction,
+                    w * (1 - fraction) / 2,
+                    h * (1 - fraction) / 2,
+                )
             val contentLength = content.length
             startObject(5, "<< /Length $contentLength >>\nstream\n" + content + "endstream")
             endObject()
@@ -257,6 +270,64 @@ class Documents(private val context: Context) {
             append("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n$xref\n%%EOF\n")
         }
     }
+
+    private data class PhotoPage(
+        val width: Int,
+        val height: Int,
+        val pageWidth: String,
+        val pageHeight: String,
+        val offset: Int,
+        val length: Int,
+        val percent: Int,
+    )
+
+    private fun readPhotoPage(bytes: ByteArray): PhotoPage? {
+        val header = bytes.copyOf(minOf(1024, bytes.size)).toString(Charsets.ISO_8859_1)
+        if (!header.startsWith("%PDF-1.4\n")) return null
+        val part = photoHeader.find(header) ?: return null
+        val (pageWidth, pageHeight, width, height, jpegLength) = part.destructured
+        val offset = part.range.last + 1
+        val length = jpegLength.toIntOrNull() ?: return null
+        val percent = imagePercent.find(header)?.groupValues?.get(1)?.toIntOrNull() ?: 100
+        if (percent !in 1..100 || length < 4 || length > bytes.size - offset) return null
+        return PhotoPage(
+            width.toIntOrNull() ?: return null,
+            height.toIntOrNull() ?: return null,
+            pageWidth,
+            pageHeight,
+            offset,
+            length,
+            percent,
+        )
+    }
+
+    suspend fun resizeImage(pdf: PdfFile, percent: Int): PdfFile =
+        withContext(Dispatchers.IO) {
+            require(percent in 1..100) { "Enter a whole image size from 1 to 100%." }
+            val bytes = File(pdf.path).readBytes()
+            val photo =
+                readPhotoPage(bytes)
+                    ?: error("Choose the original JPG or PNG again to resize this image.")
+            val target = file("draft-" + UUID.randomUUID())
+            try {
+                writeImagePdf(
+                    target,
+                    bytes.copyOfRange(photo.offset, photo.offset + photo.length),
+                    photo.width,
+                    photo.height,
+                    photo.pageWidth,
+                    photo.pageHeight,
+                    percent,
+                )
+                require(target.length() <= MAX_PDF_BYTES) {
+                    "The resized image is larger than 5 MB."
+                }
+                metadata(target, pdf.name, 1)
+            } catch (error: Exception) {
+                target.delete()
+                throw error
+            }
+        }
 
     fun inspect(file: File, name: String): PdfFile {
         require(file.length() in 5..MAX_PDF_BYTES.toLong()) { "Choose a PDF no larger than 5 MB." }
@@ -282,11 +353,27 @@ class Documents(private val context: Context) {
     }
 
     private fun metadata(file: File, name: String, pages: Int): PdfFile {
+        val bytes = file.readBytes()
         val digest =
-            MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") {
+            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
                 "%02x".format(it)
             }
-        return PdfFile(file.absolutePath, name, pages, file.length(), digest)
+        return PdfFile(
+            file.absolutePath,
+            name,
+            pages,
+            file.length(),
+            digest,
+            readPhotoPage(bytes)?.percent,
+        )
+    }
+
+    private companion object {
+        val photoHeader =
+            Regex(
+                """/MediaBox \[0 0 (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)\] /Resources << /XObject << /Photo 4 0 R >> >> /Contents 5 0 R >>\nendobj\n4 0 obj\n<< /Type /XObject /Subtype /Image /Width (\d+) /Height (\d+) /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length (\d+) >>\nstream\n"""
+            )
+        val imagePercent = Regex("""^%PDF-1.4\n%PrintEaseImage (\d+)\n""")
     }
 
     suspend fun render(file: File, page: Int): Bitmap =

@@ -106,7 +106,7 @@ fun PrintOrder.updateReview(
             }
             ReviewAction.RequestCorrection -> {
                 check(current.stage != ReviewStage.Correction && text.isNotBlank()) {
-                    "Describe what the student should correct."
+                    "Describe what the customer should correct."
                 }
                 return current.copy(
                     stage = ReviewStage.Correction,
@@ -155,7 +155,7 @@ fun canRemovePdf(
 
 enum class ShopQueueGroup(val title: String) {
     Review("Needs review"),
-    Waiting("Waiting for student"),
+    Waiting("Waiting for response"),
     Ready("Ready to print"),
     Printing("Printing"),
     Pickup("Ready for pickup"),

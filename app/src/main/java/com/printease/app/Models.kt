@@ -18,6 +18,17 @@ fun formatDate(epoch: Long): String =
 
 fun pesos(value: Long): String = "₱%,d.00".format(Locale.US, value)
 
+private val nameSuffix = Regex("(jr|sr|ii|iii|iv|v)\\.?", RegexOption.IGNORE_CASE)
+
+fun greetingName(displayName: String): String {
+    val parts = displayName.split(',', limit = 3)
+    val afterComma = parts.getOrNull(1)?.trim().orEmpty()
+    val name =
+        if (afterComma.isNotEmpty() && !nameSuffix.matches(afterComma)) afterComma
+        else parts.first().trim()
+    return name.takeWhile { !it.isWhitespace() }.trim('.', ';', ':')
+}
+
 enum class OrderStatus(val label: String) {
     Pending("Pending"),
     Accepted("Accepted"),
@@ -288,6 +299,7 @@ data class PdfFile(
     val pages: Int,
     val bytes: Long,
     val sha256: String,
+    val imagePercent: Int? = null,
 )
 
 data class PrintOrder(

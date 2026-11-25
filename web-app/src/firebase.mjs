@@ -79,7 +79,7 @@ class FirebaseBackend {
       if (generation !== this.generation) return;
       const isAdmin = token.claims.admin === true || consoleAdmin;
       if (!same || previous.session.admin !== isAdmin) this.orders = [];
-      this.session = { uid: user.uid, name: user.displayName || user.email?.split("@")[0] || "Student", email: user.email, admin: isAdmin, photoUrl: user.photoURL || null, provider: user.providerData?.some((p) => p.providerId === "google.com") ? "google" : "email" };
+      this.session = { uid: user.uid, name: user.displayName || user.email?.split("@")[0] || "Customer", email: user.email, admin: isAdmin, photoUrl: user.photoURL || null, provider: user.providerData?.some((p) => p.providerId === "google.com") ? "google" : "email" };
       this.emit();
       timeout(getDocFromServer(doc(this.db, "capabilities", "print-review-v1")), 10000).then(() => {
         if (generation === this.generation) {
@@ -227,11 +227,11 @@ class FirebaseBackend {
       const old = snapshot.data();
       if (!canTransition(old.status, next)) throw new Error("The order changed. Review its latest status.");
       if (!session.admin && !(session.uid === old.ownerId && next === "Cancelled")) throw new Error("You cannot update this order.");
-      if (next === "Rejected" && !note.trim()) throw new Error("Give the student a reason for rejecting the request.");
+      if (next === "Rejected" && !note.trim()) throw new Error("Give the customer a reason for rejecting the request.");
       const updates = { status: next, note: note.trim().slice(0, 500), updatedAt: Date.now() };
       if (next === "Completed") updates.completedAt = Date.now();
       if (next === "Accepted") {
-        if (!canAccept(old)) throw new Error("The student must approve the final price first.");
+        if (!canAccept(old)) throw new Error("The customer must approve the final price first.");
         const day = dayKey(), counter = doc(this.db, "counters", day), current = await tx.get(counter), number = (current.data()?.last ?? 0) + 1;
         tx.set(counter, { last: number, orderId: id });
         updates.queue = number;

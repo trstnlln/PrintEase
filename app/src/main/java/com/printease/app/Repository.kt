@@ -103,7 +103,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 PrintOrder(
                     "sample-1042",
                     "demo-student",
-                    "Alex Student",
+                    "Alex Reyes",
                     "Research proposal.pdf",
                     "",
                     PrintOptions(pages = 12, copies = 2, duplex = true),
@@ -116,7 +116,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 PrintOrder(
                     "sample-1043",
                     "demo-student",
-                    "Alex Student",
+                    "Alex Reyes",
                     "Laboratory activity.pdf",
                     "",
                     PrintOptions(pages = 4, color = true),
@@ -134,7 +134,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
                 session =
                     if (admin)
                         Session("demo-admin", "Nano Print Alangilan", "admin@demo.local", true)
-                    else Session("demo-student", "Alex Student", "student@demo.local", false),
+                    else Session("demo-student", "Alex Reyes", "student@demo.local", false),
                 reviewAvailable = true,
                 paperSizesAvailable = true,
                 printToolsAvailable = true,
@@ -231,7 +231,7 @@ class DemoRepository(context: Context, private val documents: Documents) : ShopR
         check(index >= 0)
         val old = all[index]
         check(next != OrderStatus.Accepted || old.canAccept) {
-            "The student must approve the final price first."
+            "The customer must approve the final price first."
         }
         check(
             next != OrderStatus.Ready ||
@@ -745,7 +745,7 @@ class FirebaseRepository(private val context: Context) : ShopRepository {
                     val old =
                         PrintOrder.fromMap(id, tx.get(ref).data ?: error("Order no longer exists."))
                     check(next != OrderStatus.Accepted || old.canAccept) {
-                        "The student must approve the final price first."
+                        "The customer must approve the final price first."
                     }
                     check(old.status.canMoveTo(next)) { "Order changed. Review its latest status." }
                     check(

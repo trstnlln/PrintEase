@@ -57,7 +57,7 @@ Bookbinding and lamination are optional requests on the print form. Staff includ
 
 Students can choose A4, Letter or Legal at configured rates. For A3, A5, B5, Folio, Tabloid and custom paper (50–1,000 mm for each dimension), staff confirm stock and send the price. The final quote is the price the student approves.
 
-A request may contain up to three PDFs. Each PDF has its own paper, copies, color and sides. Multi-PDF requests print all pages. Use a single-PDF request when selecting a subset of pages. Open each PDF from the same request, then send one quote and use one collection code.
+In **Print files**, select up to three files at once or use **Add files** to fill any remaining slots. Each file has its own paper, copies, color and sides. Multi-PDF requests print all pages. Use a single-PDF request when selecting a subset of pages. Open each PDF from the same request, then send one quote and use one collection code.
 
 The queue groups requests by the next step. Quote and correction alerts open the corresponding student request. Use Account to enable alerts on the student's device.
 
@@ -69,9 +69,11 @@ The new settings and expanded requests require publishing the current Firestore 
 
 Students can choose PDF, JPG or PNG up to 5 MB per file. PrintEase converts each image to a one-page PDF on the device before upload. Export Word, PowerPoint and Excel files as PDFs. A request can mix documents and images.
 
+Set **Image size (%)** for a photo, tap **Apply size**, and preview the result. Any whole percentage from 1–100 scales both dimensions and keeps the photo centered. The resized photo is embedded in the PDF sent to the shop.
+
 Use **Preview print layout** to view the selected paper size and estimated 5 mm margins. **Fit to paper** shrinks oversized pages; **Actual size** preserves the PDF page scale and flags possible cropping. The preview centers the page and follows its orientation. Staff use the saved instructions and their printer’s actual margins when printing.
 
-In **Shop settings → Paper availability**, mark each size **Available**, **Out of stock** or **Ask the shop**. An unconfigured size starts at **Ask the shop**. Students can request a quote for unconfirmed stock; a size marked out of stock is disabled for new requests and corrections.
+In **Shop settings → Paper availability**, mark each size **Available**, **Out of stock** or **Stock unconfirmed**. An unconfigured size starts at **Stock unconfirmed**. Students can request a quote for unconfirmed stock; a size marked out of stock is disabled for new requests and corrections.
 
 In a printing request, **Save PDF** on Android or **Download PDF** on the web opens or saves each printable file next to its instructions. Mark each file printed, then move the request to **Ready for Pickup**. An interrupted upload keeps the draft, and a retry skips files already confirmed in private storage.
 

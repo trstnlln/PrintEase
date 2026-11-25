@@ -6,6 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -19,6 +20,7 @@ fun AttachmentEditor(
     stock: PaperStock,
     printToolsAvailable: Boolean,
     onPreview: () -> Unit,
+    onResize: (Int) -> Unit,
 ) {
     var choosePaper by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -39,14 +41,7 @@ fun AttachmentEditor(
             DropdownMenu(expanded = choosePaper, onDismissRequest = { choosePaper = false }) {
                 (standardPaperSizes + quotedPaperSizes).forEach { size ->
                     DropdownMenuItem(
-                        text = {
-                            Text(
-                                size +
-                                    if (printToolsAvailable)
-                                        " · " + stockLabels.getValue(stock.status(size))
-                                    else ""
-                            )
-                        },
+                        text = { Text(stock.menuLabel(size, printToolsAvailable)) },
                         enabled = stock.status(size) != "out",
                         onClick = {
                             choosePaper = false
@@ -87,6 +82,7 @@ fun AttachmentEditor(
             ) {
                 onChange(item.copy(options = item.options.copy(actualSize = it)))
             }
+        ImageSizeEditor(item.pdf, busy, onResize)
         OutlinedButton(onPreview, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
             Text("Preview print layout")
         }
@@ -97,4 +93,33 @@ fun AttachmentEditor(
             onChange(item.copy(options = item.options.copy(duplex = it)))
         }
     }
+}
+
+@Composable
+fun ImageSizeEditor(pdf: PdfFile, busy: Boolean, onResize: (Int) -> Unit) {
+    val applied = pdf.imagePercent ?: return
+    var value by rememberSaveable(pdf.path) { mutableStateOf(applied.toString()) }
+    val percent = value.toIntOrNull()
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value,
+            { value = it.filter(Char::isDigit).take(3) },
+            modifier = Modifier.weight(1f),
+            label = { Text("Image size (%)") },
+            singleLine = true,
+            enabled = !busy,
+            isError = percent !in 1..100,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
+        TextButton(
+            onClick = { percent?.let(onResize) },
+            enabled = !busy && percent in 1..100 && percent != applied,
+        ) {
+            Text("Apply size")
+        }
+    }
+    Text(
+        "Enter 1–100%. For example, 40% prints at 40% of the original fitted width and height.",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }

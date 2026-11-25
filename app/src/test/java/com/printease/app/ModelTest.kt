@@ -6,6 +6,14 @@ import org.junit.Test
 
 class ModelTest {
     @Test
+    fun greetingSupportsSurnameFirstAccountNames() {
+        assertEquals("Ana", greetingName("Villena, Ana Marie"))
+        assertEquals("Ana", greetingName("Ana Villena, Jr."))
+        assertEquals("Villena", greetingName(" Villena, "))
+        assertEquals("", greetingName(""))
+    }
+
+    @Test
     fun sampleRatesAndDuplexRounding() {
         assertEquals(48L, PrintOptions(pages = 12, copies = 2).total)
         assertEquals(66L, PrintOptions("Legal", 3, 2, true).total)

@@ -193,7 +193,8 @@ fun PrintEase(model: PrintViewModel) {
                         options,
                         busy,
                         progress,
-                        onPick = model::pick,
+                        onPick = { model.pickFiles(listOf(it)) },
+                        onPickFiles = model::pickFiles,
                         onOptions = model::setOptions,
                         onSubmit = model::submit,
                         onPreview = { draftPreview = 0 },
@@ -203,11 +204,12 @@ fun PrintEase(model: PrintViewModel) {
                         paperSizesAvailable = state.paperSizesAvailable,
                         printToolsAvailable = state.printToolsAvailable,
                         onPreviewAttachment = { draftPreview = it + 1 },
+                        onResizeImage = model::resizeImage,
                         requestedAddons = requestedAddons,
                         revisionNote = revisionNote,
                         onAddon = model::toggleAddon,
                         attachments = attachments,
-                        onPickAttachment = model::pickAttachment,
+                        onAddFiles = model::addFiles,
                         onChangeAttachment = model::changeAttachment,
                         onRemoveAttachment = model::removeAttachment,
                         onDiscard = {
@@ -485,7 +487,7 @@ fun AuthContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 PrimaryButton(
-                    "Continue as student",
+                    "Continue as customer",
                     { onDemo(false) },
                     Modifier.fillMaxWidth(),
                     icon = Icons.Default.School,
@@ -508,7 +510,7 @@ fun AuthContent(
         else
             Panel(Modifier.fillMaxWidth()) {
                 Text(
-                    if (register) "Create your student account" else "Welcome back",
+                    if (register) "Create your account" else "Welcome back",
                     style = MaterialTheme.typography.titleLarge,
                 )
                 OutlinedButton(
@@ -663,15 +665,19 @@ fun Dashboard(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow(if (session.admin) "NEARBY PRINT SHOP" else "PRINTING NEAR BSU ALANGILAN")
                 Text(
-                    if (session.admin) "A clear queue.\nA smoother day."
-                    else "Hello, ${session.name.substringBefore(' ')}.",
+                    if (session.admin) "Print queue"
+                    else
+                        greetingName(session.name).let {
+                            if (it.isBlank()) "Hello!" else "Hello, $it."
+                        },
                     style = MaterialTheme.typography.headlineLarge,
                 )
-                Text(
-                    if (session.admin) "Review requests and keep everyone in the loop."
-                    else "Make time for what’s next. We’ll handle the prints.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (!overview)
+                    Text(
+                        if (session.admin) "Review and update incoming requests."
+                        else "Track your requests from submission to pickup.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
             }
         }
         if (overview) {
@@ -695,12 +701,12 @@ fun Dashboard(
                             ) {
                                 Icon(Icons.Default.Description, null, tint = Lime)
                                 Text(
-                                    "Your next print,\njust a tap away.",
+                                    "Send files to print",
                                     style = MaterialTheme.typography.headlineMedium,
                                     color = Color.White,
                                 )
                                 Text(
-                                    "Send a document, photo, or scan. Collect at the shop near campus.",
+                                    "Upload a PDF, JPG, or PNG and collect it at the shop near campus.",
                                     color = Color(0xFFCEE1D3),
                                 )
                                 Button(
@@ -820,7 +826,7 @@ fun Dashboard(
                 Modifier.fillMaxWidth(),
                 placeholder = {
                     Text(
-                        if (session.admin) "Search document, student or queue"
+                        if (session.admin) "Search document, customer or queue"
                         else "Search your documents"
                     )
                 },
@@ -1034,11 +1040,13 @@ fun RequestContent(
     paperSizesAvailable: Boolean = false,
     printToolsAvailable: Boolean = false,
     onPreviewAttachment: (Int) -> Unit = {},
+    onResizeImage: (Int, Int) -> Unit = { _, _ -> },
     requestedAddons: List<String> = emptyList(),
     revisionNote: String? = null,
     onAddon: (String) -> Unit = {},
     attachments: List<AttachmentDraft> = emptyList(),
-    onPickAttachment: (android.net.Uri) -> Unit = {},
+    onPickFiles: (List<android.net.Uri>) -> Unit = {},
+    onAddFiles: (List<android.net.Uri>) -> Unit = {},
     onChangeAttachment: (Int, AttachmentDraft) -> Unit = { _, _ -> },
     onRemoveAttachment: (Int) -> Unit = {},
 ) {
@@ -1046,9 +1054,14 @@ fun RequestContent(
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
             it?.let(onPick)
         }
-    val extraPicker =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
-            it?.let(onPickAttachment)
+    val fileTypes = arrayOf("application/pdf", "image/jpeg", "image/png")
+    val batchPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
+            if (it.isNotEmpty()) onPickFiles(it)
+        }
+    val moreFilesPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
+            if (it.isNotEmpty()) onAddFiles(it)
         }
     var review by rememberSaveable { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
@@ -1128,19 +1141,55 @@ fun RequestContent(
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedButton(
-                        { picker.launch(arrayOf("application/pdf", "image/jpeg", "image/png")) },
+                        {
+                            if (pdf == null && paperSizesAvailable) batchPicker.launch(fileTypes)
+                            else picker.launch(fileTypes)
+                        },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         Icon(Icons.Default.AttachFile, null)
                         Spacer(Modifier.width(8.dp))
-                        Text(if (pdf == null) "Choose a file" else "Replace file")
+                        Text(
+                            if (pdf != null) "Replace first file"
+                            else if (paperSizesAvailable) "Choose files" else "Choose a file"
+                        )
                     }
+                    if (paperSizesAvailable && pdf != null && attachments.size < MAX_ATTACHMENTS)
+                        OutlinedButton(
+                            { moreFilesPicker.launch(fileTypes) },
+                            Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            enabled = !busy,
+                        ) {
+                            Text("Add files")
+                        }
+                    if (paperSizesAvailable)
+                        Text(
+                            if (pdf == null) "Up to three files per request."
+                            else "${attachments.size + 1} of ${MAX_ATTACHMENTS + 1} files selected",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     if (pdf == null)
                         Text(
                             "Export Word, PowerPoint, or Excel as PDF before uploading.",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                }
+            }
+            attachments.forEachIndexed { index, item ->
+                key(item.pdf.path) {
+                    Panel(Modifier.fillMaxWidth()) {
+                        AttachmentEditor(
+                            item,
+                            busy,
+                            { onChangeAttachment(index, it) },
+                            { onRemoveAttachment(index) },
+                            stock = settings.paperStock,
+                            printToolsAvailable = printToolsAvailable,
+                            onPreview = { onPreviewAttachment(index) },
+                            onResize = { onResizeImage(index + 1, it) },
+                        )
+                    }
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1157,11 +1206,18 @@ fun RequestContent(
                         placeholder = { Text("All pages") },
                         supportingText = {
                             Text(
-                                if (validRanges) "Leave blank for all pages, or enter 1-3, 5, 8-10"
-                                else parsedRanges.exceptionOrNull()?.message.orEmpty()
+                                when {
+                                    !validRanges ->
+                                        parsedRanges.exceptionOrNull()?.message.orEmpty()
+                                    !options.batchRangesValid(attachments) ->
+                                        "Multi-file requests print all pages. Clear the ranges or submit this file separately."
+                                    attachments.isNotEmpty() ->
+                                        "Multi-file requests print all pages."
+                                    else -> "Leave blank for all pages, or enter 1-3, 5, 8-10"
+                                }
                             )
                         },
-                        isError = !validRanges,
+                        isError = !validRanges || !options.batchRangesValid(attachments),
                         enabled = !busy && pdf != null,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -1188,13 +1244,7 @@ fun RequestContent(
                                 DropdownMenuItem(
                                     text = {
                                         Text(
-                                            (if (size == "Custom") "Custom size" else size) +
-                                                if (printToolsAvailable)
-                                                    " · " +
-                                                        stockLabels.getValue(
-                                                            settings.paperStock.status(size)
-                                                        )
-                                                else ""
+                                            settings.paperStock.menuLabel(size, printToolsAvailable)
                                         )
                                     },
                                     enabled = settings.paperStock.status(size) != "out",
@@ -1274,7 +1324,8 @@ fun RequestContent(
                             onOptions(options.copy(actualSize = it))
                         }
                     }
-                    if (pdf != null)
+                    if (pdf != null) {
+                        ImageSizeEditor(pdf, busy) { onResizeImage(0, it) }
                         OutlinedButton(
                             onPreview,
                             enabled = !busy && validDimensions,
@@ -1284,6 +1335,7 @@ fun RequestContent(
                             Spacer(Modifier.width(8.dp))
                             Text("Preview print layout")
                         }
+                    }
                     Spacer(Modifier.height(4.dp))
                     OutlinedTextField(
                         copiesText,
@@ -1357,46 +1409,6 @@ fun RequestContent(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-            }
-            if (paperSizesAvailable && pdf != null) {
-                Panel(Modifier.fillMaxWidth()) {
-                    Text("Additional files", style = MaterialTheme.typography.titleLarge)
-                    if (!options.batchRangesValid(attachments))
-                        Text(
-                            "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately.",
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    Text(
-                        "Add up to two more documents or images with their own print settings. The shop sends one quote.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    attachments.forEachIndexed { index, item ->
-                        HorizontalDivider()
-                        key(item.pdf.path) {
-                            AttachmentEditor(
-                                item,
-                                busy,
-                                { onChangeAttachment(index, it) },
-                                { onRemoveAttachment(index) },
-                                stock = settings.paperStock,
-                                printToolsAvailable = printToolsAvailable,
-                                onPreview = { onPreviewAttachment(index) },
-                            )
-                        }
-                    }
-                    if (attachments.size < MAX_ATTACHMENTS)
-                        OutlinedButton(
-                            {
-                                extraPicker.launch(
-                                    arrayOf("application/pdf", "image/jpeg", "image/png")
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !busy,
-                        ) {
-                            Text("Add another file")
-                        }
                 }
             }
             if (reviewAvailable && revisionNote == null) {
@@ -1772,7 +1784,7 @@ fun OrderDetail(
                 Panel(Modifier.fillMaxWidth()) {
                     Text("Verify collection", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "Ask the student for the six-character code shown on their request before handing over the prints."
+                        "Ask the customer for the six-character code shown on their request before handing over the prints."
                     )
                     OutlinedTextField(
                         code,
@@ -1809,12 +1821,12 @@ fun OrderDetail(
             else if (action == OrderStatus.Rejected)
                 Panel(Modifier.fillMaxWidth()) {
                     Text("Why reject this request?", style = MaterialTheme.typography.titleLarge)
-                    Text("Tell the student what to change before submitting again.")
+                    Text("Tell the customer what to change before submitting again.")
                     OutlinedTextField(
                         reason,
                         { reason = it.take(500) },
                         Modifier.fillMaxWidth(),
-                        label = { Text("Reason shown to the student") },
+                        label = { Text("Reason shown to the customer") },
                         minLines = 3,
                         maxLines = 5,
                         supportingText = { Text("${reason.length}/500") },
@@ -2037,10 +2049,7 @@ fun AccountContent(
             UserAvatar(session, size = 88.dp)
             Text(session.name, style = MaterialTheme.typography.titleLarge)
             Text(session.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                if (session.admin) "Shop administrator" else "Student",
-                fontWeight = FontWeight.SemiBold,
-            )
+            if (session.admin) Text("Shop administrator", fontWeight = FontWeight.SemiBold)
         }
         ShopCard(settings, Modifier.fillMaxWidth(), if (session.admin) onSettings else null)
         Panel(Modifier.fillMaxWidth()) {
@@ -2079,7 +2088,7 @@ fun AccountContent(
                 ) {
                     Icon(Icons.Default.SwapHoriz, null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (session.admin) "Switch to student" else "Switch to administrator")
+                    Text(if (session.admin) "Switch to customer" else "Switch to administrator")
                 }
             }
         OutlinedButton(

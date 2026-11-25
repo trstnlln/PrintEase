@@ -14,9 +14,9 @@ export function pickupAlertMessage(result) {
   if (result.untracked) return 'Pickup alert accepted. PrintEase could not record the delivery.';
   return result.sent ? 'Pickup alert sent.' : 'The pickup alert was already sent.';
  }
- if (result.failed) return 'The notification service could not send the alert. The student can still check Orders.';
- if (result.expired || result.invalid) return 'Ask the student to re-enable pickup alerts in Account. They can still check Orders.';
- return 'The student has no device with pickup alerts enabled. They can still check Orders.';
+ if (result.failed) return 'The notification service could not send the alert. The customer can still check Orders.';
+ if (result.expired || result.invalid) return 'Ask the customer to re-enable pickup alerts in Account. They can still check Orders.';
+ return 'The customer has no device with pickup alerts enabled. They can still check Orders.';
 }
 export async function clearLocalAlerts(){
  await db.remove('settings','push-owner');
