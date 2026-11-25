@@ -29,7 +29,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -297,6 +296,7 @@ fun PrintEase(model: PrintViewModel) {
                         onNew = { model.navigate("request") },
                         onOrder = model::openOrder,
                         submittedId = submittedId,
+                        hasDraft = pdf != null,
                     )
             }
         }
@@ -650,6 +650,7 @@ fun Dashboard(
     onNew: () -> Unit,
     onOrder: (String) -> Unit,
     submittedId: String? = null,
+    hasDraft: Boolean = false,
 ) {
     val session = state.session ?: return
     var filter by rememberSaveable { mutableStateOf("All") }
@@ -711,72 +712,56 @@ fun Dashboard(
             if (!session.admin)
                 item {
                     Surface(
-                        color = Forest,
-                        shape = RoundedCornerShape(26.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        shape = RoundedCornerShape(24.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Box(
-                            Modifier.background(
-                                Brush.linearGradient(listOf(Color(0xFF123E32), Color(0xFF1B5C47)))
-                            )
+                        Column(
+                            Modifier.padding(22.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
                         ) {
-                            Icon(
-                                Icons.Default.Description,
-                                null,
-                                Modifier.align(Alignment.TopEnd).padding(22.dp).size(82.dp),
-                                tint = Color.White.copy(alpha = .08f),
-                            )
-                            Column(
-                                Modifier.padding(24.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp),
-                            ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Surface(
-                                    color = Color.White.copy(alpha = .14f),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    contentColor = MaterialTheme.colorScheme.primary,
                                     shape = RoundedCornerShape(14.dp),
                                 ) {
                                     Icon(
                                         Icons.Default.Description,
                                         null,
-                                        Modifier.padding(10.dp).size(22.dp),
-                                        tint = Lime,
+                                        Modifier.padding(11.dp).size(22.dp),
                                     )
                                 }
-                                Text(
-                                    "Send files to print",
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    color = Color.White,
-                                )
-                                Text(
-                                    "Upload a PDF, JPG, or PNG and collect it at the shop near campus.",
-                                    color = Color(0xFFCEE1D3),
-                                )
-                                val interaction = remember { MutableInteractionSource() }
-                                Button(
-                                    onNew,
-                                    interactionSource = interaction,
-                                    enabled =
-                                        state.settings.acceptingOrders &&
-                                            state.settingsError == null,
-                                    colors =
-                                        ButtonDefaults.buttonColors(
-                                            containerColor = Lime,
-                                            contentColor = Ink,
-                                        ),
-                                    modifier =
-                                        Modifier.heightIn(min = 52.dp).pressFeedback(interaction),
-                                    shape = RoundedCornerShape(14.dp),
-                                ) {
-                                    Icon(Icons.Default.Add, null)
-                                    Spacer(Modifier.width(8.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
-                                        if (state.settings.acceptingOrders) "New print request"
-                                        else "Requests paused"
+                                        "Send files to print",
+                                        style = MaterialTheme.typography.titleLarge,
+                                    )
+                                    Text(
+                                        "Upload a PDF, JPG, or PNG for pickup near campus.",
+                                        style = MaterialTheme.typography.bodyMedium,
                                     )
                                 }
                             }
+                            PrimaryButton(
+                                text =
+                                    when {
+                                        !state.settings.acceptingOrders -> "Requests paused"
+                                        hasDraft -> "Continue your draft"
+                                        else -> "New print request"
+                                    },
+                                onClick = onNew,
+                                modifier = Modifier.widthIn(max = 304.dp).fillMaxWidth(),
+                                enabled =
+                                    state.settings.acceptingOrders && state.settingsError == null,
+                                icon = Icons.Default.Add,
+                            )
                         }
                     }
                 }
+            if (!session.admin)
+                state.queueStatus?.let { status -> item { QueueStatusCard(status) } }
             if (!session.admin) {
                 val needsResponse =
                     source.filter {

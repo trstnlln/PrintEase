@@ -9,6 +9,16 @@ globalThis.__PE_TEST__=true;
 const {PrintEase}=await import('../src/app.mjs');
 async function setup(t){const window=new Window({url:'https://test.printease.example/'});for(const name of ['window','document','location','history','localStorage','navigator'])Object.defineProperty(globalThis,name,{configurable:true,value:window[name]});Object.defineProperty(globalThis,'crypto',{configurable:true,value:webcrypto});window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};window.HTMLDialogElement.prototype.close=function(){this.open=false;};document.body.innerHTML='<div id="app"></div><div id="toast"></div><div id="modal-root"></div>';await db.transact(['orders','files','settings'],tx=>{for(const name of ['orders','files','settings'])tx.objectStore(name).clear();});const app=new PrintEase({demo:true});t.after(async()=>{app.close();await window.happyDOM.abort();});await app.start();return app;}
 test('student can navigate from home to a guarded draft',async t=>{const app=await setup(t);await app.backend.login(false);assert.match(document.body.textContent,/Hello, Alex/);await app.onClick({target:document.querySelector('[data-action="new-request"]'),preventDefault(){}});assert.equal(app.s.route,'request');assert.equal(document.querySelector('[data-action="review"]').disabled,true);});
+test('the customer Home puts the print action first and keeps existing drafts reachable',async t=>{
+ const app=await setup(t);await app.backend.login(false);
+ const firstAction=()=>document.querySelector('.customer-home .hero button');
+ assert.equal(firstAction().textContent,'New print request');
+ assert.equal(firstAction().dataset.action,'new-request');
+ app.s.draft.pdf={name:'Draft.pdf',pages:1,bytes:100};
+ app.render();
+ assert.equal(firstAction().textContent,'Continue your draft');
+ assert.equal(document.querySelector('.customer-home .pickup-card [data-action="order"]').textContent,'View request');
+});
 test('the student greeting reads a surname-first profile without its separating comma',async t=>{
  const app=await setup(t);await app.backend.login(false);
  app.s.session.name='Villena, Ana Marie';app.render();
