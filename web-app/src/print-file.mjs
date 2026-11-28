@@ -1,4 +1,4 @@
-import { MAX_BYTES } from "./model.mjs";
+import { MAX_BYTES, MAX_FILE_MB } from "./model.mjs";
 import { inspectPdf } from "./pdf.mjs";
 import { abortable } from "./abort.mjs";
 
@@ -132,7 +132,7 @@ async function convertImage(file, bytes, kind, signal) {
 }
 
 export async function preparePrintFile(file, { signal, onStage = () => {} } = {}) {
-  if (!file?.size || file.size > MAX_BYTES) throw new Error("Choose a PDF, JPG, or PNG file up to 5 MB.");
+  if (!file?.size || file.size > MAX_BYTES) throw new Error(`Choose a PDF, JPG, or PNG file up to ${MAX_FILE_MB} MB.`);
   let bytes;
   try {
     signal?.throwIfAborted();
@@ -141,7 +141,7 @@ export async function preparePrintFile(file, { signal, onStage = () => {} } = {}
     if (signal?.aborted) throw signal.reason;
     throw new Error("This file could not be opened. Download it to your device and choose it again.");
   }
-  if (bytes.length > MAX_BYTES) throw new Error("Choose a PDF, JPG, or PNG file up to 5 MB.");
+  if (bytes.length > MAX_BYTES) throw new Error(`Choose a PDF, JPG, or PNG file up to ${MAX_FILE_MB} MB.`);
   const kind = fileKind(bytes);
   if (!kind) throw new Error("Choose a valid PDF, JPG, or PNG. Export Word, PowerPoint, or Excel files as PDF first.");
   let printable, imagePercent;

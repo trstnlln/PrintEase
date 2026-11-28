@@ -71,7 +71,7 @@ The new settings and expanded requests require publishing the current Firestore 
 
 ## Image uploads, print layout and paper availability
 
-Students can choose PDF, JPG or PNG up to 5 MB per file. PrintEase converts each image to a one-page PDF on the device before upload. Export Word, PowerPoint and Excel files as PDFs. A request can mix documents and images.
+Students can choose PDF, JPG or PNG up to 15 MB per file. PrintEase converts each image to a one-page PDF on the device before upload. Export Word, PowerPoint and Excel files as PDFs. A request can mix documents and images.
 
 Set **Image size (%)** for a photo, tap **Apply size**, and preview the result. Any whole percentage from 1–100 scales both dimensions and keeps the photo centered. The resized photo is embedded in the PDF sent to the shop.
 

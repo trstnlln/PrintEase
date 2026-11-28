@@ -3,7 +3,7 @@ import { clockMinutes } from "./pickup-schedule.mjs";
 import { customPaper, requiresPaperQuote, paperLabel, printScaleLabel } from "./paper.mjs";
 import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
-import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, pageLabel, collectionCode, terminal } from "./model.mjs";
+import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, defaultShop, validateShop, parsePageRanges, rangeText, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
 import { ServiceDesk, serviceView } from "./service-desk.mjs";
 import * as db from "./db.mjs";

@@ -1279,7 +1279,7 @@ fun RequestContent(
                         style = MaterialTheme.typography.titleLarge,
                     )
                     Text(
-                        if (pdf == null) "PDF, JPG, or PNG · Up to 5 MB per file"
+                        if (pdf == null) "PDF, JPG, or PNG · Up to $MAX_FILE_MB MB per file"
                         else "${pdf.pages} pages · ${(pdf.bytes + 1023) / 1024} KB · Saved draft",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
@@ -2130,7 +2130,7 @@ fun AccountContent(
             Text("Sign out")
         }
         Text(
-            "PrintEase ${BuildConfig.VERSION_NAME} · Native Android\nPDF, JPG, and PNG, up to 5 MB per file. Keep your queue number for pickup.",
+            "PrintEase ${BuildConfig.VERSION_NAME} · Native Android\nPDF, JPG, and PNG, up to $MAX_FILE_MB MB per file. Keep your queue number for pickup.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

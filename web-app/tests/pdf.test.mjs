@@ -49,7 +49,25 @@ test('PDF preparation reads a cloud-backed file once and keeps local bytes for u
 });
 test('corrupt PDF bytes and oversized files cannot become a selected draft',async()=>{
  const file=new Blob(['%PDF-this is corrupt']);file.name='Broken.pdf';await assert.rejects(inspectPdf(file),/could not be read/);
- await assert.rejects(inspectPdf({size:5*1024*1024+1}),/no larger than 5 MB/);
+ await assert.rejects(inspectPdf({size:15*1024*1024+1}),/no larger than 15 MB/);
+});
+
+test('a PDF at the 15 MB limit can be selected and previewed', async () => {
+ const { preparePrintFile } = await import('../src/print-file.mjs');
+ const { openPdf } = await import('../src/pdf.mjs');
+ const sample = samplePDF(1);
+ const start = new TextDecoder().decode(sample).lastIndexOf('startxref');
+ const end = sample.subarray(start);
+ const bytes = new Uint8Array(15 * 1024 * 1024);
+ bytes.fill(32);
+ bytes.set(sample.subarray(0, start));
+ bytes.set(end, bytes.length - end.length);
+ const prepared = await preparePrintFile(new File([bytes], 'Large design.pdf', { type: 'application/pdf' }));
+ assert.equal(prepared.pdf.bytes, bytes.byteLength);
+ assert.equal(prepared.pdf.pages, 1);
+ const doc = await openPdf(new Uint8Array(await prepared.file.arrayBuffer()));
+ try { assert.equal(doc.numPages, 1); }
+ finally { await doc.destroy(); }
 });
 
 test('file selection uses signatures and image PDFs preserve page proportions',async()=>{

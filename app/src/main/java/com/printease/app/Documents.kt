@@ -42,7 +42,9 @@ class Documents(private val context: Context) {
                             val count = input.read(buffer)
                             if (count < 0) break
                             total += count
-                            require(total <= MAX_PDF_BYTES) { "Choose a PDF no larger than 5 MB." }
+                            require(total <= MAX_PDF_BYTES) {
+                                "Choose a PDF no larger than $MAX_FILE_MB MB."
+                            }
                             output.write(buffer, 0, count)
                         }
                     }
@@ -73,7 +75,7 @@ class Documents(private val context: Context) {
                             if (count == -1) break
                             total += count
                             require(total <= MAX_PDF_BYTES) {
-                                "Choose a PDF, JPG, or PNG file up to 5 MB."
+                                "Choose a PDF, JPG, or PNG file up to $MAX_FILE_MB MB."
                             }
                             output.write(buffer, 0, count)
                         }
@@ -202,7 +204,7 @@ class Documents(private val context: Context) {
             }
             if (target.length() in 5..MAX_PDF_BYTES.toLong()) return
         }
-        error("This image produces a PDF larger than 5 MB. Choose a smaller image.")
+        error("This image produces a PDF larger than $MAX_FILE_MB MB. Choose a smaller image.")
     }
 
     // A single JPEG XObject on a single page. The cross-reference records byte offsets.
@@ -281,7 +283,7 @@ class Documents(private val context: Context) {
         val percent: Int,
     )
 
-    private fun readPhotoPage(bytes: ByteArray): PhotoPage? {
+    private fun readPhotoPage(bytes: ByteArray, fileSize: Long = bytes.size.toLong()): PhotoPage? {
         val header = bytes.copyOf(minOf(1024, bytes.size)).toString(Charsets.ISO_8859_1)
         if (!header.startsWith("%PDF-1.4\n")) return null
         val part = photoHeader.find(header) ?: return null
@@ -289,7 +291,7 @@ class Documents(private val context: Context) {
         val offset = part.range.last + 1
         val length = jpegLength.toIntOrNull() ?: return null
         val percent = imagePercent.find(header)?.groupValues?.get(1)?.toIntOrNull() ?: 100
-        if (percent !in 1..100 || length < 4 || length > bytes.size - offset) return null
+        if (percent !in 1..100 || length < 4 || length > fileSize - offset) return null
         return PhotoPage(
             width.toIntOrNull() ?: return null,
             height.toIntOrNull() ?: return null,
@@ -320,7 +322,7 @@ class Documents(private val context: Context) {
                     percent,
                 )
                 require(target.length() <= MAX_PDF_BYTES) {
-                    "The resized image is larger than 5 MB."
+                    "The resized image is larger than $MAX_FILE_MB MB."
                 }
                 metadata(target, pdf.name, 1)
             } catch (error: Exception) {
@@ -330,7 +332,9 @@ class Documents(private val context: Context) {
         }
 
     fun inspect(file: File, name: String): PdfFile {
-        require(file.length() in 5..MAX_PDF_BYTES.toLong()) { "Choose a PDF no larger than 5 MB." }
+        require(file.length() in 5..MAX_PDF_BYTES.toLong()) {
+            "Choose a PDF no larger than $MAX_FILE_MB MB."
+        }
         require(
             file.inputStream().use {
                 String(
@@ -353,18 +357,27 @@ class Documents(private val context: Context) {
     }
 
     private fun metadata(file: File, name: String, pages: Int): PdfFile {
-        val bytes = file.readBytes()
-        val digest =
-            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") {
-                "%02x".format(it)
+        val length = file.length()
+        val header = ByteArray(minOf(1024L, length).toInt())
+        val sha = MessageDigest.getInstance("SHA-256")
+        java.io.DataInputStream(file.inputStream().buffered()).use { input ->
+            input.readFully(header)
+            sha.update(header)
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count == -1) break
+                sha.update(buffer, 0, count)
             }
+        }
+        val digest = sha.digest().joinToString("") { "%02x".format(it) }
         return PdfFile(
             file.absolutePath,
             name,
             pages,
-            file.length(),
+            length,
             digest,
-            readPhotoPage(bytes)?.percent,
+            readPhotoPage(header, length)?.percent,
         )
     }
 
@@ -403,7 +416,7 @@ class Documents(private val context: Context) {
                 com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context.applicationContext)
                 writeHandout(pdf, options, target)
                 require(target.length() <= MAX_PDF_BYTES) {
-                    "The arranged PDF exceeds 5 MB. Use fewer selected slides or a smaller PDF."
+                    "The arranged PDF exceeds $MAX_FILE_MB MB. Use fewer selected slides or a smaller PDF."
                 }
                 inspect(target, name).also {
                     check(it.pages == options.printedSides) { "The handout page count changed." }

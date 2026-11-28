@@ -1,4 +1,4 @@
-import {MAX_BYTES,validatePdf} from './model.mjs';
+import {MAX_BYTES,MAX_FILE_MB,validatePdf} from './model.mjs';
 import { abortable } from './abort.mjs';
 let library;
 async function engine(){
@@ -19,7 +19,7 @@ export async function inspectPdf(file, { signal, data } = {}) {
   if (signal?.aborted) throw signal.reason;
   throw new Error('The PDF could not be opened from Files. Download it to your device, then choose it again.');
  }
- if(bytes.length>MAX_BYTES)throw new Error('Choose a PDF no larger than 5 MB.');
+ if(bytes.length>MAX_BYTES)throw new Error(`Choose a PDF no larger than ${MAX_FILE_MB} MB.`);
  if(new TextDecoder().decode(bytes.subarray(0,5))!=='%PDF-')throw new Error('Choose a valid PDF document.');
  const digest = await abortable(crypto.subtle.digest('SHA-256', bytes), signal);
  const sha = Array.from(new Uint8Array(digest), n => n.toString(16).padStart(2,'0')).join('');
@@ -42,7 +42,7 @@ export async function inspectPdf(file, { signal, data } = {}) {
   }
  }
 }
-export async function openPdf(bytes){if(bytes.byteLength>MAX_BYTES)throw new Error('This PDF exceeds 5 MB.');return(await engine()).getDocument({data:bytes.slice(),isEvalSupported:false}).promise;}
+export async function openPdf(bytes){if(bytes.byteLength>MAX_BYTES)throw new Error(`This PDF exceeds ${MAX_FILE_MB} MB.`);return(await engine()).getDocument({data:bytes.slice(),isEvalSupported:false}).promise;}
 export async function renderPage(doc,page,canvas){const pdfPage=await doc.getPage(page),base=pdfPage.getViewport({scale:1}),scale=Math.min(2,900/base.width),viewport=pdfPage.getViewport({scale});canvas.width=viewport.width;canvas.height=viewport.height;await pdfPage.render({canvasContext:canvas.getContext('2d'),viewport}).promise;}
 
 export async function renderPrintPage(doc, number, canvas, options, {

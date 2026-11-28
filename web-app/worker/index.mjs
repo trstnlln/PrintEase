@@ -1,6 +1,7 @@
 import {createPushApi} from './push.mjs';
 import {firebaseConfig} from '../src/config.mjs';
-const LIMIT=5*1024*1024, SITE='https://printease-campus.consideratefennel8.chatgpt.site';
+import {MAX_BYTES as LIMIT, MAX_FILE_MB} from '../src/model.mjs';
+const SITE='https://printease-campus.consideratefennel8.chatgpt.site';
 class HttpError extends Error{constructor(status,code,message){super(message);this.status=status;this.code=code;}}
 const fail=(status,code,message)=>{throw new HttpError(status,code,message);};
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
@@ -76,15 +77,54 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   return json({ removed: true });
  }
 
- async function boundedPdf(request){
-  if(request.headers.get('Content-Length')&&Number(request.headers.get('Content-Length'))>LIMIT)fail(413,'document/too-large','Choose a PDF no larger than 5 MB.');
-  if((request.headers.get('Content-Type')||'').split(';')[0]!=='application/pdf')fail(415,'document/not-pdf','Choose a PDF document.');
-  if(!request.body)fail(400,'document/empty','Choose a PDF document.');
-  const reader=request.body.getReader(),parts=[];let length=0;
-  try{while(true){const item=await reader.read();if(item.done)break;length+=item.value.length;if(length>LIMIT){await reader.cancel();fail(413,'document/too-large','Choose a PDF no larger than 5 MB.');}parts.push(item.value);}}finally{reader.releaseLock();}
-  if(length<5)fail(400,'document/empty','Choose a valid PDF document.');
-  const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
-  if(new TextDecoder().decode(bytes.subarray(0,5))!=='%PDF-')fail(415,'document/not-pdf','Choose a valid PDF document.');
+ async function boundedPdf(request) {
+  const expected = Number(request.headers.get('Content-Length') ?? NaN);
+  const tooLarge = () => fail(413, 'document/too-large', `Choose a PDF no larger than ${MAX_FILE_MB} MB.`);
+  if (expected > LIMIT) tooLarge();
+  if ((request.headers.get('Content-Type') || '').split(';')[0] !== 'application/pdf') {
+   fail(415, 'document/not-pdf', 'Choose a PDF document.');
+  }
+  if (!request.body) fail(400, 'document/empty', 'Choose a PDF document.');
+
+  // Read directly into a bounded buffer when the HTTP body length is known.
+  let bytes = Number.isSafeInteger(expected) && expected > 0 ? new Uint8Array(expected) : null;
+  const reader = request.body.getReader(), parts = [];
+  let length = 0;
+  try {
+   for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const end = length + value.byteLength;
+    if (end > LIMIT) {
+     await reader.cancel();
+     tooLarge();
+    }
+    if (bytes && end > bytes.byteLength) {
+     await reader.cancel();
+     fail(400, 'document/invalid-length', 'The PDF size changed. Choose it again and retry.');
+    }
+    if (bytes) bytes.set(value, length);
+    else parts.push(value);
+    length = end;
+   }
+  } finally {
+   reader.releaseLock();
+  }
+  if (bytes && length !== bytes.byteLength) {
+   fail(400, 'document/invalid-length', 'The PDF upload was incomplete. Try again.');
+  }
+  if (length < 5) fail(400, 'document/empty', 'Choose a valid PDF document.');
+  if (!bytes) {
+   bytes = new Uint8Array(length);
+   let offset = 0;
+   for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.byteLength;
+   }
+  }
+  if (new TextDecoder().decode(bytes.subarray(0, 5)) !== '%PDF-') {
+   fail(415, 'document/not-pdf', 'Choose a valid PDF document.');
+  }
   return bytes;
  }
  async function download(env,key){

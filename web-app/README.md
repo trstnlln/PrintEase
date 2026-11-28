@@ -30,7 +30,7 @@ Administrators use a console-created `admins/<uid>` document with boolean `enabl
 | Endpoint | Purpose |
 | --- | --- |
 | GET `/api/status` | Public readiness and size limit |
-| PUT `/api/uploads/<sha256>` | Upload up to 5 MB to the authenticated user's namespace |
+| PUT `/api/uploads/<sha256>` | Upload up to 15 MB to the authenticated user's namespace |
 | GET `/api/uploads/<sha256>` | Read the signed-in user's own upload |
 | GET `/api/documents/<order-id>` | Read a saved order's PDF as its owner or shop administrator |
 

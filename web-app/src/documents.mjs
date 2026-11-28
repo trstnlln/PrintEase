@@ -1,4 +1,5 @@
-import {MAX_BYTES,timeout} from './model.mjs';
+import {MAX_BYTES,MAX_FILE_MB,timeout} from './model.mjs';
+const UPLOAD_TIMEOUT_MS = 150000;
 export const DOCUMENT_ORIGIN='https://printease-campus.consideratefennel8.chatgpt.site';
 export class HostedDocuments {
  constructor({baseUrl=globalThis.location?.origin||DOCUMENT_ORIGIN,request=globalThis.fetch?.bind(globalThis),xhr=globalThis.XMLHttpRequest}={}){this.baseUrl=baseUrl;this.request=request;this.XHR=xhr;}
@@ -19,13 +20,13 @@ export class HostedDocuments {
    if (prior?.status === 204) { progress(.97); return stored; }
   }
   if(this.XHR)await new Promise((resolve,reject)=>{
-   const xhr=new this.XHR();xhr.open('PUT',url);xhr.timeout=90000;xhr.setRequestHeader('Authorization',headers.Authorization);xhr.setRequestHeader('Content-Type','application/pdf');
+   const xhr=new this.XHR();xhr.open('PUT',url);xhr.timeout=UPLOAD_TIMEOUT_MS;xhr.setRequestHeader('Authorization',headers.Authorization);xhr.setRequestHeader('Content-Type','application/pdf');
    xhr.upload.onprogress=event=>{if(event.lengthComputable)progress(Math.min(.95,event.loaded/event.total*.95));};
    xhr.onload=async()=>{try{await this.response(new Response(xhr.responseText,{status:xhr.status||502,headers:{'Content-Type':'application/json'}}));resolve();}catch(error){reject(error);}};
    xhr.onerror=()=>reject(new Error('The PDF could not upload. Check your connection and retry this draft.'));
    xhr.ontimeout=()=>reject(new Error('The upload timed out. Keep this draft and retry; it uses the same request ID.'));
    xhr.onabort=()=>reject(new Error('The upload stopped. Your PDF is still selected.'));xhr.send(draft.file);
-  });else await this.response(await timeout(this.request(url,{method:'PUT',headers:{...headers,'Content-Type':'application/pdf'},body:draft.file}),90000));
+  });else await this.response(await timeout(this.request(url,{method:'PUT',headers:{...headers,'Content-Type':'application/pdf'},body:draft.file}),UPLOAD_TIMEOUT_MS));
   progress(.97);return stored;
  }
  async cleanup(user,id){
@@ -39,11 +40,11 @@ export class HostedDocuments {
    headers:await this.headers(user),cache:'no-store'
   }),60000));
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if(bytes.length>MAX_BYTES)throw new Error('The document exceeds 5 MB.');
+  if(bytes.length>MAX_BYTES)throw new Error(`The document exceeds ${MAX_FILE_MB} MB.`);
   return bytes;
  }
  async bytes(user,order,index=0){
   const response=await this.response(await timeout(this.request(this.baseUrl+'/api/documents/'+encodeURIComponent(order.id)+(index ? '?file='+index : ''),{headers:await this.headers(user),cache:'no-store'}),60000));
-  const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>MAX_BYTES)throw new Error('The document exceeds 5 MB.');return bytes;
+  const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>MAX_BYTES)throw new Error(`The document exceeds ${MAX_FILE_MB} MB.`);return bytes;
  }
 }

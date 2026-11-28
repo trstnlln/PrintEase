@@ -5,7 +5,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-const val MAX_PDF_BYTES = 5 * 1024 * 1024
+const val MAX_FILE_MB = 15
+const val MAX_PDF_BYTES = MAX_FILE_MB * 1024 * 1024
 val campusZone: ZoneId = ZoneId.of("Asia/Manila")
 
 fun queueDay(epoch: Long = System.currentTimeMillis()): String =

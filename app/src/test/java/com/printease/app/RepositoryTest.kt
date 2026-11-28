@@ -190,6 +190,25 @@ class RepositoryTest {
     }
 
     @Test
+    fun imageAtTheNewLimitCanBeImportedAsPdf() = runBlocking {
+        val source = File(context.cacheDir, "large-design.png")
+        val image =
+            android.graphics.Bitmap.createBitmap(160, 96, android.graphics.Bitmap.Config.ARGB_8888)
+        try {
+            image.eraseColor(android.graphics.Color.GREEN)
+            source.outputStream().use {
+                assertTrue(image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+            }
+        } finally {
+            image.recycle()
+        }
+        java.io.RandomAccessFile(source, "rw").use { it.setLength(15L * 1024 * 1024) }
+        val imported = documents.import(android.net.Uri.fromFile(source))
+        assertEquals("large-design.pdf", imported.name)
+        assertEquals(1, imported.pages)
+    }
+
+    @Test
     fun jpegAndPngImportsBecomeOnePagePdfs() = runBlocking {
         val image =
             android.graphics.Bitmap.createBitmap(160, 96, android.graphics.Bitmap.Config.ARGB_8888)

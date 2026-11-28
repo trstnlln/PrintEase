@@ -16,7 +16,8 @@ export function queueStatus(orders, checkedAt = Date.now()) {
   return { waiting, printing, checkedAt };
 }
 
-const MAX_BYTES = 5 * 1024 * 1024;
+export const MAX_FILE_MB = 15;
+const MAX_BYTES = MAX_FILE_MB * 1024 * 1024;
 const statuses = ["Pending", "Accepted", "Printing", "Ready for Pickup", "Completed", "Rejected", "Cancelled"];
 const terminal = ["Completed", "Rejected", "Cancelled"];
 const defaultRates = () => ({ bw: 2, color: 10, legalExtra: 1 });
@@ -96,7 +97,7 @@ function makeOrder(id, session, pdf, options, rates = defaultRates()) {
   return { id, ownerId: session.uid, studentName: session.name.slice(0, 200), fileName: pdf.name.slice(0, 255), storagePath: `documents/${session.uid}/${id}.pdf`, options: serializeOptions(options), pricing: { ...rates }, estimatedCost: estimate(options, rates).total, createdAt: now, updatedAt: now, completedAt: null, documentDeletedAt: null, status: "Pending", queue: null, queueDay: null, note: "" };
 }
 function validatePdf(file) {
-  if (!file || file.size < 5 || file.size > MAX_BYTES) throw new Error("Choose a PDF no larger than 5 MB.");
+  if (!file || file.size < 5 || file.size > MAX_BYTES) throw new Error(`Choose a PDF no larger than ${MAX_FILE_MB} MB.`);
 }
 function errorMessage(error) {
   const code = error?.code ?? "";

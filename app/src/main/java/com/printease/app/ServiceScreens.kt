@@ -289,7 +289,7 @@ private fun ServiceForm(
         ) {
             Text(if (design == null) "Attach design (optional)" else "Replace design")
         }
-        Text(design?.name ?: "One PDF, JPG, or PNG up to 5 MB.")
+        Text(design?.name ?: "One PDF, JPG, or PNG up to $MAX_FILE_MB MB.")
         if (design != null) {
             PressOutlinedButton(onClick = { preview = true }, enabled = !busy) {
                 Text("Preview design")

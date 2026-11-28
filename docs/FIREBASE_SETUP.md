@@ -87,6 +87,6 @@ The separate **demoDebug** build never writes live orders. Demo mode works witho
 - **Storage is not ready:** the hosted Worker or BUCKET binding has not been deployed. Enabling Firebase Storage is not the fix for these new clients.
 - **No matching client found:** download Android JSON for `com.printease.printease`; the demo package has a separate `.demo` suffix.
 - **No shop workspace:** check the exact account UID and `admins/<uid>.enabled`, then refresh.
-- **iPhone file cannot be read:** download the PDF from iCloud to Files first, then select it again. Valid files must be unencrypted PDFs, at most 5 MB and 1,000 pages.
+- **iPhone file cannot be read:** download the PDF from iCloud to Files first, then select it again. Valid files must be unencrypted PDFs, at most 15 MB and 1,000 pages.
 
 Page selections support up to five separate ranges, or all pages. Both clients reject larger selections before submission; the rule tests cover the same limit.

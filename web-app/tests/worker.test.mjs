@@ -38,10 +38,32 @@ test('upload hashes are verified and retries do not overwrite immutable PDF byte
 });
 test('upload size, MIME type and PDF signature are bounded at the server',async()=>{
  const s=await setup(),path='/api/uploads/'+s.hash;
- assert.equal((await s.call(path,{method:'PUT',body:new Uint8Array(5*1024*1024+1)})).status,413);
+ assert.equal((await s.call(path,{method:'PUT',body:new Uint8Array(15*1024*1024+1)})).status,413);
+ assert.equal((await s.call(path,{method:'PUT',body:s.bytes,headers:{'Content-Length':String(15*1024*1024+1)}})).status,413);
+ assert.equal((await s.call(path,{method:'PUT',body:s.bytes,headers:{'Content-Length':String(s.bytes.length+1)}})).status,400);
  assert.equal((await s.call(path,{method:'PUT',body:s.bytes,headers:{'Content-Type':'text/plain'}})).status,415);
  assert.equal((await s.call(path,{method:'PUT',body:new TextEncoder().encode('not a PDF')})).status,415);
  assert.equal(s.bucket.objects.size,0);
+});
+test('the hosted service accepts and returns a private 15 MB PDF', async () => {
+ const s = await setup(), bytes = new Uint8Array(15 * 1024 * 1024);
+ bytes.set(s.bytes);
+ const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
+ const id = 'service-12345678-1234-1234-1234-123456789012';
+ const upload = await s.call('/api/uploads/' + id + '/' + hash, {
+  method: 'PUT', body: bytes, headers: { 'Content-Length': String(bytes.length) }
+ });
+ assert.equal(upload.status, 200);
+ assert.equal((await upload.json()).bytes, bytes.length);
+ s.state.service = { fields: {
+  ownerId: { stringValue: 'student' },
+  design: { mapValue: { fields: { fileHash: { stringValue: hash } } } },
+ } };
+ const download = await s.call('/api/service-documents/' + id);
+ assert.equal(download.status, 200);
+ const downloaded = new Uint8Array(await download.arrayBuffer());
+ assert.equal(downloaded.byteLength, bytes.length);
+ assert.equal(Buffer.from(await crypto.subtle.digest('SHA-256', downloaded)).toString('hex'), hash);
 });
 test('order PDFs are private even if the upstream database returns another student record',async()=>{
  const s=await setup();await s.call('/api/uploads/'+s.hash,{method:'PUT',body:s.bytes});s.state.order=s.order('student');
@@ -57,7 +79,7 @@ test('the PDF API never deletes uploaded bytes, including after an uncertain ord
 });
 test('public status does not expose PDFs and cross-origin access is rejected',async()=>{
  const s=await setup();
- const status=await s.worker.fetch(new Request(SITE+'/api/status'),{});assert.deepEqual(await status.json(),{ready:false,documentStore:'hosted',maxBytes:5*1024*1024});
+ const status=await s.worker.fetch(new Request(SITE+'/api/status'),{});assert.deepEqual(await status.json(),{ready:false,documentStore:'hosted',maxBytes:15*1024*1024});
  assert.equal((await s.call('/api/uploads/'+s.hash,{headers:{Origin:'https://another.example'}})).status,403);
 });
 

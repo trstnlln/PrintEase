@@ -1,5 +1,5 @@
 import { PDFDocument, degrees } from "pdf-lib";
-import { MAX_BYTES } from "./model.mjs";
+import { MAX_BYTES, MAX_FILE_MB } from "./model.mjs";
 import { inspectPdf } from "./pdf.mjs";
 import { printGeometry } from "./paper.mjs";
 import { handoutName, handoutOptions, slidesPerSide } from "./handout.mjs";
@@ -60,7 +60,7 @@ export async function prepareHandout(item) {
     throw new Error(`Could not arrange slides for ${item.pdf.name}. Try re-exporting the PowerPoint as a PDF.`);
   }
   if (bytes.byteLength > MAX_BYTES) {
-    throw new Error(`The arranged PDF for ${item.pdf.name} exceeds 5 MB. Use fewer selected slides or a smaller PDF.`);
+    throw new Error(`The arranged PDF for ${item.pdf.name} exceeds ${MAX_FILE_MB} MB. Use fewer selected slides or a smaller PDF.`);
   }
   const file = new Blob([bytes], { type: "application/pdf" });
   file.name = handoutName(item.pdf.name, count);

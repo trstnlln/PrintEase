@@ -64,7 +64,7 @@ object HostedDocuments {
             }
             val source = File(pdf.path)
             require(source.length() in 5..MAX_PDF_BYTES.toLong()) {
-                "Choose a PDF no larger than 5 MB."
+                "Choose a PDF no larger than $MAX_FILE_MB MB."
             }
             val (uid, token) = identity()
             check(uid == ownerId) { "Your account changed. Sign in again before sending." }
@@ -188,7 +188,7 @@ object HostedDocuments {
                             val count = input.read(buffer)
                             if (count < 0) break
                             size += count
-                            require(size <= MAX_PDF_BYTES) { "The PDF exceeds 5 MB." }
+                            require(size <= MAX_PDF_BYTES) { "The PDF exceeds $MAX_FILE_MB MB." }
                             output.write(buffer, 0, count)
                         }
                         require(size >= 5) { "The PDF is unavailable. Contact the shop." }
