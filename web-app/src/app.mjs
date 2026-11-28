@@ -9,6 +9,8 @@ import * as db from "./db.mjs";
 import { mountPreviewPages } from "./pdf-preview.mjs";
 import { handoutName, handoutOptions, printedSides, slideLayouts, slidesPerSide } from "./handout.mjs";
 import {pushState,reconcilePushUser,enablePush,disablePush,pushRequest,pickupAlertMessage} from "./push.mjs";
+const FILE_PREPARATION_MS = 20_000;
+const DRAFT_SAVE_MS = 5_000;
 const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, options: defaults(), rawCopies: "1", rawRanges: "", rangeError: null });
 class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
@@ -16,6 +18,7 @@ class PrintEase {
     this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, queueStatus: null, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
     this.modal = null;
     this.preview = null;
+    this.preparation = null;
     this.generation = 0;
     this.imageError = (event) => {
       if (event.target?.matches?.("img.profile-photo")) event.target.remove();
@@ -50,6 +53,7 @@ class PrintEase {
     this.registerWorker();
   }
   async setBackend(mode) {
+    this.preparation?.abort();
     this.backend?.close();
     const generation = ++this.generation;
     this.closeModal();
@@ -186,8 +190,11 @@ class PrintEase {
     if (!node || node.disabled) return;
     const action = node.dataset.action;
     event.preventDefault();
-    if (this.s.busy && !["close-modal"].includes(action)) return;
+    if (this.s.busy && !["close-modal", "cancel-preparation"].includes(action)) return;
     switch (action) {
+      case "cancel-preparation":
+        this.preparation?.abort();
+        return;
       case "push-enable": {
         const pending=enablePush(this.backend.auth?.currentUser);
         return this.action(async()=>{try{this.s.push={...await pending,message:"Alerts enabled on this device. Delivery depends on your connection and device settings."};}catch(error){this.s.push.message=error.message;}},"push");
@@ -600,20 +607,24 @@ class PrintEase {
   async saveDraft(includeFile = false) {
     if (!this.s.session || !this.s.draft.pdf) return true;
     const { file, ...value } = this.s.draft;
+    const id = this.draftKey;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DRAFT_SAVE_MS);
     try {
-      const id = this.draftKey;
-      if (includeFile) {
-        await db.transact(["settings", "files"], tx => {
-          tx.objectStore("settings").put({ id, value });
-          tx.objectStore("files").put({ id, blob: file });
-        });
-      } else await db.put("settings", { id, value });
+      const stores = includeFile ? ["settings", "files"] : ["settings"];
+      await db.transact(stores, tx => {
+        tx.objectStore("settings").put({ id, value });
+        if (includeFile) tx.objectStore("files").put({ id, blob: file });
+      }, "readwrite", controller.signal);
       return true;
     } catch {
-      this.s.draftWarning = "A recovery copy could not be saved on this device. Keep this tab open until you submit.";
+      if (id === this.draftKey) this.s.draftWarning = "A recovery copy could not be saved on this device. Keep this tab open until you submit.";
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
+
   async removePrintFile(index) {
     if (this.s.busy || !Number.isInteger(index) || index < 0) return;
     const draft = this.s.draft;
@@ -663,16 +674,37 @@ class PrintEase {
     const extras = draft.attachments ?? [];
     const capacity = this.s.paperSizesAvailable ? MAX_ATTACHMENTS + 1 : 1;
     const limit = append ? capacity - 1 - extras.length : draft.pdf ? 1 : capacity;
-    this.s.fileReading = true;
+    const controller = new AbortController();
+    this.preparation = controller;
+    this.s.fileReading = { position: 1, total: files.length, name: files[0].name, stage: "Reading file" };
     return this.action(async () => {
       try {
         if (files.length > limit) throw new Error(`Choose up to ${limit} ${limit === 1 ? "file" : "files"} in this selection.`);
         const { preparePrintFile } = await import("./print-file.mjs");
         const prepared = [];
-        for (const file of files) {
-          const item = await preparePrintFile(file);
-          prepared.push({ ...item, options: { ...defaults(), pages: item.pdf.pages }, rawCopies: "1" });
+        for (const [index, file] of files.entries()) {
+          let stage = "Reading file";
+          const onStage = value => {
+            stage = value;
+            this.s.fileReading = { position: index + 1, total: files.length, name: file.name, stage };
+            this.render();
+          };
+          controller.signal.throwIfAborted();
+          onStage(stage);
+          const timer = setTimeout(() => {
+            const hint = stage === "Reading file"
+              ? "Download it to your device, then choose it again."
+              : "Try opening it first, then choose it again or export a fresh copy.";
+            controller.abort(new Error(`File ${index + 1} of ${files.length} took too long while ${stage.toLowerCase()}. ${hint}`));
+          }, FILE_PREPARATION_MS);
+          try {
+            const item = await preparePrintFile(file, { signal: controller.signal, onStage });
+            prepared.push({ ...item, options: { ...defaults(), pages: item.pdf.pages }, rawCopies: "1" });
+          } finally {
+            clearTimeout(timer);
+          }
         }
+        controller.signal.throwIfAborted();
         if (generation !== this.generation || uid !== this.s.session?.uid) return;
         if (append) draft.attachments = [...extras, ...prepared];
         else {
@@ -685,9 +717,15 @@ class PrintEase {
           };
         }
         this.s.draftWarning = null;
+        this.s.fileReading = false;
+        this.render();
         await this.saveDraft(!append);
+      } catch (error) {
+        if (controller.signal.aborted && error?.name === "AbortError") return;
+        throw error;
       } finally {
         this.s.fileReading = false;
+        this.preparation = null;
       }
     }, "request");
   }
@@ -999,6 +1037,7 @@ class PrintEase {
     }
   }
   close() {
+    this.preparation?.abort();
     document.removeEventListener("error", this.imageError, true);
     this.backend?.close();
     this.closeModal();

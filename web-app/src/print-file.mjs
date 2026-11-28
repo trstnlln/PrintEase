@@ -1,5 +1,6 @@
 import { MAX_BYTES } from "./model.mjs";
 import { inspectPdf } from "./pdf.mjs";
+import { abortable } from "./abort.mjs";
 
 export const printFileTypes = "application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png";
 const encoder = new TextEncoder();
@@ -46,16 +47,20 @@ export function imagePdf(jpeg, width, height, percent = 100, page = [(width * 72
   return new Blob(chunks, { type: "application/pdf" });
 }
 
-async function readPhotoPage(file) {
-  const header = decoder.decode(await file.slice(0, 1024).arrayBuffer());
+function photoPage(bytes, size) {
+  const header = decoder.decode(bytes);
   if (!header.startsWith("%PDF-1.4\n")) return null;
   const part = photoHeader.exec(header);
   if (!part) return null;
   const [, pageWidth, pageHeight, width, height, jpegLength] = part;
   const offset = part.index + part[0].length, length = Number(jpegLength);
   const percent = Number(/^%PDF-1.4\n%PrintEaseImage (\d+)\n/.exec(header)?.[1] || 100);
-  if (!validPercent(percent) || length < 4 || offset + length > file.size) return null;
+  if (!validPercent(percent) || length < 4 || offset + length > size) return null;
   return { page: [pageWidth, pageHeight], width: Number(width), height: Number(height), offset, length, percent };
+}
+
+async function readPhotoPage(file) {
+  return photoPage(await file.slice(0, 1024).arrayBuffer(), file.size);
 }
 
 export async function readImageSize(file) {
@@ -93,17 +98,17 @@ function dimensions(bytes, kind) {
   return [0, 0];
 }
 
-async function convertImage(file, bytes, kind) {
+async function convertImage(file, bytes, kind, signal) {
   const [width, height] = dimensions(bytes, kind);
   if (!width || !height || width * height > 40_000_000) throw new Error("Choose a readable image under 40 megapixels.");
   const url = URL.createObjectURL(new Blob([bytes], { type: kind === "PNG" ? "image/png" : "image/jpeg" }));
+  const image = new Image();
   try {
-    const image = new Image();
-    await new Promise((resolve, reject) => {
+    await abortable(new Promise((resolve, reject) => {
       image.onload = resolve;
       image.onerror = () => reject(new Error("This image could not be opened. Try exporting it as JPG or PNG."));
       image.src = url;
-    });
+    }), signal);
     const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -113,25 +118,44 @@ async function convertImage(file, bytes, kind) {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const jpeg = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", .92));
+    const jpeg = await abortable(new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", .92)), signal);
     if (!jpeg || jpeg.type !== "image/jpeg") throw new Error("This image could not be converted. Try a smaller image.");
-    const pdf = imagePdf(new Uint8Array(await jpeg.arrayBuffer()), canvas.width, canvas.height);
+    const pdf = imagePdf(new Uint8Array(await abortable(jpeg.arrayBuffer(), signal)), canvas.width, canvas.height);
     const name = (file.name.replace(/\.[^.]+$/, "").slice(0, 250) || "Image") + ".pdf";
     return new File([pdf], name, { type: "application/pdf" });
   } finally {
+    image.onload = null;
+    image.onerror = null;
+    if (signal?.aborted) image.removeAttribute("src");
     URL.revokeObjectURL(url);
   }
 }
 
-export async function preparePrintFile(file) {
+export async function preparePrintFile(file, { signal, onStage = () => {} } = {}) {
   if (!file?.size || file.size > MAX_BYTES) throw new Error("Choose a PDF, JPG, or PNG file up to 5 MB.");
-  let header;
-  try { header = new Uint8Array(await file.slice(0, 8).arrayBuffer()); }
-  catch { throw new Error("This file could not be opened. Download it to your device and choose it again."); }
-  const kind = fileKind(header);
+  let bytes;
+  try {
+    signal?.throwIfAborted();
+    bytes = new Uint8Array(await abortable(file.arrayBuffer(), signal));
+  } catch {
+    if (signal?.aborted) throw signal.reason;
+    throw new Error("This file could not be opened. Download it to your device and choose it again.");
+  }
+  if (bytes.length > MAX_BYTES) throw new Error("Choose a PDF, JPG, or PNG file up to 5 MB.");
+  const kind = fileKind(bytes);
   if (!kind) throw new Error("Choose a valid PDF, JPG, or PNG. Export Word, PowerPoint, or Excel files as PDF first.");
-  const printable = kind === "PDF" ? file : await convertImage(file, new Uint8Array(await file.arrayBuffer()), kind);
-  const pdf = await inspectPdf(printable);
-  const imagePercent = kind === "PDF" ? await readImageSize(printable) : 100;
+  let printable, imagePercent;
+  if (kind === "PDF") {
+    // Keep a local snapshot so we never reopen a cloud-backed Files item for preview or upload.
+    printable = new Blob([bytes], { type: "application/pdf" });
+    printable.name = file.name;
+    imagePercent = photoPage(bytes.subarray(0, 1024), bytes.length)?.percent;
+  } else {
+    onStage("Converting image");
+    printable = await convertImage(file, bytes, kind, signal);
+    imagePercent = 100;
+  }
+  onStage("Checking PDF");
+  const pdf = await inspectPdf(printable, { signal, data: kind === "PDF" ? bytes : undefined });
   return { pdf: { ...pdf, imagePercent, ...(kind === "PDF" ? {} : { sourceKind: kind }) }, file: printable };
 }

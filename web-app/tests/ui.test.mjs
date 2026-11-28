@@ -119,6 +119,75 @@ test('an invalid PDF displays a persistent message and keeps the previous valid 
  const invalid=new Blob(['not a PDF file']);invalid.name='wrong.pdf';await app.pick(invalid);
  assert.equal(app.s.draft.id,id);assert.match(document.querySelector('.request-error').textContent,/valid PDF/);assert.equal(app.s.fileReading,false);
 });
+test('a stalled file read times out and lets the customer choose a file again', async t => {
+ const app = await setup(t);
+ await app.backend.login(false);
+ app.go('request');
+ t.mock.timers.enable({apis: ['setTimeout']});
+ let reading;
+ const started = new Promise(resolve => { reading = resolve; });
+ const stalled = await selectedFile();
+ stalled.name = 'Cloud slides.pdf';
+ stalled.arrayBuffer = () => { reading(); return new Promise(() => {}); };
+ const prepared = app.pick(stalled);
+ await started;
+ assert.match(document.querySelector('.upload [role="status"]').textContent, /Reading file · File 1 of 1/);
+ t.mock.timers.tick(20_000);
+ await prepared;
+ assert.equal(app.s.busy, false);
+ assert.match(document.querySelector('.request-error').textContent, /took too long.*Download it to your device/);
+ assert.equal(document.getElementById('pdf-input').disabled, false);
+ await app.pick(await selectedFile(2));
+ assert.equal(app.s.draft.pdf.pages, 2);
+});
+test('canceling a slow replacement preserves the previous PDF even if the read finishes later', async t => {
+ const app = await setup(t);
+ await app.backend.login(false);
+ app.go('request');
+ await app.pick(await selectedFile(2));
+ const initial = app.s.draft;
+ const replacement = await selectedFile(4);
+ const bytes = await replacement.arrayBuffer();
+ let finish, reading;
+ const started = new Promise(resolve => { reading = resolve; });
+ replacement.arrayBuffer = () => new Promise(resolve => { finish = resolve; reading(); });
+ const prepared = app.pick(replacement);
+ await started;
+ await app.onClick({target: document.querySelector('[data-action="cancel-preparation"]'), preventDefault() {}});
+ await prepared;
+ assert.equal(app.s.busy, false);
+ assert.equal(app.s.draft, initial);
+ assert.equal(document.querySelector('.request-error'), null);
+ finish(bytes);
+ await new Promise(resolve => setImmediate(resolve));
+ assert.equal(app.s.draft, initial);
+});
+test('a stalled draft backup does not keep a ready PDF locked', async t => {
+ const app = await setup(t);
+ await app.backend.login(false);
+ app.go('request');
+ const database = await db.database();
+ const original = database.transaction;
+ t.mock.timers.enable({apis: ['setTimeout']});
+ let saving, aborted = false;
+ const started = new Promise(resolve => { saving = resolve; });
+ database.transaction = function(stores, mode) {
+  if (!stores.includes('files') || mode !== 'readwrite') return original.call(this, stores, mode);
+  return {
+   objectStore: () => ({put: saving}),
+   abort() { aborted = true; this.onabort(); }
+  };
+ };
+ t.after(() => { database.transaction = original; });
+ const prepared = app.pick(await selectedFile());
+ await started;
+ t.mock.timers.tick(5_000);
+ await prepared;
+ assert.equal(aborted, true);
+ assert.equal(app.s.busy, false);
+ assert.match(document.querySelector('.draft-warning').textContent, /Keep this tab open/);
+ assert.equal(document.querySelector('[data-action="review"]').disabled, false);
+});
 test('a local storage failure keeps a valid PDF selected in memory',async t=>{
  const app=await setup(t);await app.backend.login(false);app.go('request');const database=await db.database(),original=database.transaction;
  database.transaction=function(stores,...rest){if(Array.isArray(stores)&&stores.includes('files'))throw new Error('Quota exceeded');return original.call(this,stores,...rest);};

@@ -30,7 +30,22 @@ test('handouts arrange selected slides in order and produce stable PDF bytes', a
  } finally { await output.destroy(); }
 });
 test('an unreadable iCloud file gives an actionable error',async()=>{
- await assert.rejects(inspectPdf({size:100,name:'Cloud.pdf',arrayBuffer:async()=>{throw new Error('not downloaded');}}),/Download it to your iPhone/);
+ await assert.rejects(inspectPdf({size:100,name:'Cloud.pdf',arrayBuffer:async()=>{throw new Error('not downloaded');}}),/Download it to your device/);
+});
+test('PDF preparation reads a cloud-backed file once and keeps local bytes for upload', async () => {
+ const { preparePrintFile } = await import('../src/print-file.mjs');
+ const file = new File([samplePDF(3)], 'Cloud slides.pdf', {type:'application/pdf'});
+ const bytes = await file.arrayBuffer();
+ let reads = 0;
+ file.arrayBuffer = async () => {
+  assert.equal(++reads, 1);
+  return bytes;
+ };
+ file.slice = () => assert.fail('The source should not be reopened');
+ const prepared = await preparePrintFile(file);
+ assert.equal(prepared.pdf.pages, 3);
+ assert.equal(prepared.pdf.name, file.name);
+ assert.deepEqual(new Uint8Array(await prepared.file.arrayBuffer()), samplePDF(3));
 });
 test('corrupt PDF bytes and oversized files cannot become a selected draft',async()=>{
  const file=new Blob(['%PDF-this is corrupt']);file.name='Broken.pdf';await assert.rejects(inspectPdf(file),/could not be read/);

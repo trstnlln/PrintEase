@@ -127,9 +127,14 @@ function printFilesPicker(s) {
   const count = (pdf ? 1 : 0) + (draft.attachments?.length ?? 0);
   const capacity = s.paperSizesAvailable ? MAX_ATTACHMENTS + 1 : 1;
   const disabled = s.busy ? "disabled" : "";
+  const reading = s.fileReading;
   return `<section class="step"><h2 class="step-head">Print files</h2>
     <div class="card upload ${pdf ? "selected" : ""}">
-      ${s.fileReading ? '<p class="file-status" role="status">Preparing your files…</p>' : pdf ? '<p class="file-status" role="status">File ready to preview.</p>' : ""}
+      ${reading ? `<div role="status">
+        <p class="file-status">${e(reading.stage)} · File ${reading.position} of ${reading.total}</p>
+        <p class="small text-wrap">${e(reading.name)}</p>
+      </div>${button("Cancel preparation", "cancel-preparation", { cls: "outline" })}`
+      : pdf ? '<p class="file-status" role="status">File ready to preview.</p>' : ""}
       <span class="upload-icon">${icon(pdf ? "pdf" : "upload", "big")}</span>
       <h3>${pdf ? e(pdf.name) : "Add documents or images"}</h3>
       <p class="small">${pdf ? `${pdf.pages} pages · ${Math.ceil(pdf.bytes / 1024)} KB${pdf.sourceKind ? " · " + e(pdf.sourceKind) + " converted to PDF" : ""}`
