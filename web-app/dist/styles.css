@@ -517,3 +517,13 @@ a.service-row { color: var(--ink); text-decoration: none; }
 }
 .service-messages { max-height: min(45vh, 440px); overflow-y: auto; }
 .service-messages:focus-visible { outline: 3px solid #99c85b; outline-offset: 3px; }
+.service-attachment {
+  min-inline-size: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.service-attachment legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 600; }
+.service-attachment .file-picker-actions { justify-content: flex-start; }

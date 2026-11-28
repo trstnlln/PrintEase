@@ -247,9 +247,16 @@ export function serviceView(s, desk) {
       ${f.service === "tarpaulin" ? field("service-size", "Dimensions and unit", `<input id="service-size" maxlength="120" required placeholder="e.g. 3 × 4 ft" value="${e(f.size)}">`) : ""}
       ${isIdService(f.service) ? field("service-sides", "Print sides", `<select id="service-sides">${["Single-sided","Double-sided"].map(side => `<option${side === f.sides ? " selected" : ""}>${side}</option>`).join("")}</select>`) : ""}
       ${field("service-details", "Instructions (optional)", `<textarea id="service-details" rows="3" maxlength="1000" placeholder="${["photocopy","scan"].includes(f.service) ? "Number of pages and when you can bring the original" : "Materials, color, layout, or other preferences"}">${e(f.details)}</textarea>`)}
-      ${field("service-file", "Design or reference (optional)", '<input id="service-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png">')}
-      <p class="muted">${desk.file ? e(desk.file.name) : "One PDF, JPG, or PNG up to 5 MB."}</p>
-      ${desk.file ? '<button class="button" type="button" data-action="service-remove-file">Remove attachment</button>' : ""}
+      <fieldset class="service-attachment">
+        <legend>Design or reference (optional)</legend>
+        <p id="service-file-summary" class="muted text-wrap">${desk.file ? `Selected file · ${e(desk.file.name)}` : "One PDF, JPG, or PNG up to 5 MB."}</p>
+        <div class="file-picker-actions">
+          <button type="button" id="service-file-picker" class="button outline" data-action="service-pick-file"
+            aria-describedby="service-file-summary" ${disabled(s)}>${desk.file ? "Replace design file" : "Choose design file"}</button>
+          <input id="service-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" hidden>
+          ${desk.file ? `<button class="button outline" type="button" data-action="service-remove-file" ${disabled(s)}>Remove attachment</button>` : ""}
+        </div>
+      </fieldset>
       <button class="button" ${disabled(s)}>${s.busy ? "Sending…" : "Send request"}</button>
     </form>`;
   }

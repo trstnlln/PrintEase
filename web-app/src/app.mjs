@@ -200,9 +200,14 @@ class PrintEase {
     event.preventDefault();
     if (this.s.busy && !["close-modal", "cancel-preparation"].includes(action)) return;
     switch (action) {
+      case "service-pick-file":
+        document.getElementById("service-file")?.click();
+        return;
       case "service-remove-file":
         this.services.file = null;
-        return this.render();
+        this.render();
+        document.getElementById("service-file-picker")?.focus({ preventScroll: true });
+        return;
       case "service-download":
         return this.action(() => this.services.download());
       case "service-update":
@@ -431,8 +436,12 @@ class PrintEase {
       return;
     }
     if (id === "service-file" && event.type === "change") {
-      this.services.file = target.files[0] ?? null;
-      return this.render();
+      const file = target.files[0];
+      if (file) {
+        this.services.file = file;
+        this.render();
+      }
+      return;
     }
     if (id === "service-message") {
       this.services.text = target.value;
