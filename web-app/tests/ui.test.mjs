@@ -107,6 +107,32 @@ test('Safari autofilled credentials are read from the form before it is re-rende
  await app.onSubmit({target:document.getElementById('auth-form'),preventDefault(){}});
  assert.deepEqual(received,['safari@example.com','good-password-123','Safari Student']);
 });
+test('Google sign-in stays readable in light and dark themes while connecting', async t => {
+ const app = await setup(t);
+ const stylesheet = document.createElement('style');
+ stylesheet.textContent = await readFile(new URL('../dist/styles.css', import.meta.url), 'utf8');
+ document.head.append(stylesheet);
+ app.s.mode = 'live';
+ for (const theme of ['light', 'dark']) {
+  document.documentElement.dataset.theme = theme;
+  for (const ready of [false, true]) {
+   app.s.ready = ready;
+   app.render();
+   const button = document.querySelector('[data-action="google"]');
+   assert.equal(button.textContent.trim(), 'Continue with Google');
+   assert.equal(button.disabled, !ready);
+   const style = window.getComputedStyle(button);
+   const rgb = value => {
+    if (!value.startsWith('#')) return value.match(/\d+/g)?.map(Number);
+    const hex = value.slice(1);
+    const channels = hex.length === 3 ? [...hex].map(digit => digit + digit) : hex.match(/../g);
+    return channels.map(channel => parseInt(channel, 16));
+   };
+   assert.deepEqual(rgb(style.color), ready ? [31,31,31] : [70,77,73]);
+   assert.deepEqual(rgb(style.backgroundColor), ready ? [255,255,255] : [244,246,244]);
+  }
+ }
+});
 test('registration errors stay visible in the form and preserve the entered account details',async t=>{
  const app=await setup(t);app.s.mode='live';app.s.auth.register=true;app.render();
  app.backend.email=async()=>{throw Object.assign(new Error('disabled'),{code:'auth/operation-not-allowed'});};
