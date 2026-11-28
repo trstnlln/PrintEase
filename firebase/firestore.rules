@@ -149,7 +149,7 @@ service cloud.firestore {
     }
     // A permitted read of this fixed path lets clients detect the published rule version.
     match /capabilities/{capability} {
-      allow get: if signedIn() && capability in ['print-review-v1','paper-sizes-v1','print-tools-v1','service-requests-v1'];
+      allow get: if signedIn() && capability in ['print-review-v1','paper-sizes-v1','print-tools-v1','service-requests-v1','service-desk-v2'];
     }
     function validOrder(d,orderId) {
       // All required fields are accessed below; a missing field rejects the write.
@@ -223,16 +223,19 @@ service cloud.firestore {
             && request.resource.data.expectedReadyAt <= request.time.toMillis() + 604800000));
       allow update: if admin()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documentDeletedAt'])
-        && resource.data.status == 'Completed'
+        && resource.data.status in ['Completed','Cancelled']
         && resource.data.get('documentDeletedAt',null) == null
         && resource.data.documentStore == 'hosted'
         && resource.data.storagePath == 'hosted/' + resource.data.ownerId + '/' + orderId + '/' + resource.data.fileHash + '.pdf'
-        && resource.data.get('completedAt',null) is int
+        && orderClosedAt(resource.data) is int
         && get(/databases/$(database)/documents/shopSettings/current).data.retentionDays in [7,14,30]
-        && resource.data.completedAt <= request.time.toMillis() -
+        && orderClosedAt(resource.data) <= request.time.toMillis() -
           get(/databases/$(database)/documents/shopSettings/current).data.retentionDays * 86400000
         && recent(request.resource.data.documentDeletedAt);
       allow delete: if false;
+    }
+    function orderClosedAt(d) {
+      return d.status == 'Cancelled' ? d.get('updatedAt',null) : d.get('completedAt',null);
     }
     function participant(ownerId) {
       return signedIn() && (ownerId == request.auth.uid || admin());
@@ -252,10 +255,48 @@ service cloud.firestore {
         && request.resource.data.text.matches('(?s).*[^[:space:]].*')
         && request.resource.data.createdAt == request.time;
     }
+    match /threadActivity/{key} {
+      function validActivity(d) {
+        return d.keys().hasOnly(['kind','id','ownerId','shopAt','customerAt'])
+          && d.kind in ['orders','serviceRequests'] && key == d.kind + '--' + d.id
+          && d.ownerId == get(/databases/$(database)/documents/$(d.kind)/$(d.id)).data.ownerId
+          && participant(d.ownerId);
+      }
+      function validRoleChange(d, keys) {
+        return (admin() && keys.hasOnly(['shopAt']) && d.shopAt == request.time
+          || !admin() && keys.hasOnly(['customerAt']) && d.customerAt == request.time);
+      }
+      allow read: if participant(resource.data.ownerId);
+      allow create: if validActivity(request.resource.data)
+        && validRoleChange(request.resource.data, request.resource.data.keys().toSet().difference(['kind','id','ownerId'].toSet()));
+      allow update: if validActivity(request.resource.data)
+        && validRoleChange(request.resource.data, request.resource.data.diff(resource.data).affectedKeys());
+    }
+    match /users/{uid}/threadReads/{key} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['seenAt'])
+        && request.resource.data.seenAt == request.time;
+    }
     match /serviceRequests/{id} {
+      function designFile(d) {
+        return d is map && d.keys().hasOnly(['fileName','fileHash'])
+          && d.fileName is string && d.fileName.size() >= 1 && d.fileName.size() <= 255
+          && d.fileHash is string && d.fileHash.matches('^[a-f0-9]{64}$');
+      }
+      function validQuoteDetails(d) {
+        let breakdown = d.get('quoteDetails', null);
+        return breakdown == null || (breakdown is map
+          && breakdown.keys().hasOnly(['serviceFee','extrasFee','pickupAt'])
+          && breakdown.serviceFee is int && breakdown.serviceFee > 0
+          && breakdown.extrasFee is int && breakdown.extrasFee >= 0
+          && breakdown.serviceFee + breakdown.extrasFee == d.quote
+          && breakdown.pickupAt is int && breakdown.pickupAt > request.time.toMillis()
+          && breakdown.pickupAt <= request.time.toMillis() + 15552000000);
+      }
       function validService(d) {
         return d.keys().hasOnly(['ownerId','customerName','service','quantity','details','size',
-          'sides','design','status','quote','pickup','createdAt','updatedAt','version'])
+          'sides','design','designBack','status','quote','pickup','createdAt','updatedAt','version'])
           && d.ownerId == request.auth.uid
           && d.customerName is string && d.customerName.size() >= 1 && d.customerName.size() <= 200
           && d['service'] in ['pvc-id','print-edit','photocopy','bookbind','scan','tarpapel',
@@ -266,20 +307,21 @@ service cloud.firestore {
           && (d['service'] != 'tarpaulin' || d.size.size() > 0)
           && (d['service'] in ['pvc-id','rush-id'] && d.sides in ['Single-sided','Double-sided']
             || !(d['service'] in ['pvc-id','rush-id']) && d.sides == '')
-          && (d.design == null || (d.design is map && d.design.keys().hasOnly(['fileName','fileHash'])
-            && d.design.fileName is string && d.design.fileName.size() >= 1 && d.design.fileName.size() <= 255
-            && d.design.fileHash is string && d.design.fileHash.matches('^[a-f0-9]{64}$')))
+          && (d.design == null || designFile(d.design))
+          && (d.get('designBack', null) == null
+            || (d.sides == 'Double-sided' && designFile(d.designBack)))
           && d.createdAt == request.time && d.updatedAt == request.time
           && d.version == 0 && d.status == 'Submitted' && d.quote == null && d.pickup == '';
       }
       function quoteChange(before, after) {
-        return before.status in ['Submitted','Quoted','Declined'] && after.status == 'Quoted'
+        return before.status in ['Submitted','Quoted','Declined','Approved'] && after.status == 'Quoted'
           && after.quote is int && after.quote >= 1 && after.quote <= 200000000
           && after.pickup is string && after.pickup.size() <= 250
-          && after.pickup.matches('(?s).*[^[:space:]].*');
+          && after.pickup.matches('(?s).*[^[:space:]].*') && validQuoteDetails(after);
       }
       function sameQuote(before, after) {
-        return before.quote == after.quote && before.pickup == after.pickup;
+        return before.quote == after.quote && before.pickup == after.pickup
+          && before.get('quoteDetails',null) == after.get('quoteDetails',null);
       }
       function progressChange(before, after) {
         return ([before.status, after.status] in [
@@ -292,11 +334,26 @@ service cloud.firestore {
       allow create: if signedIn() && !admin() && accepting()
         && id.matches('^service-[a-f0-9-]{36}$') && validService(request.resource.data);
       allow update: if participant(resource.data.ownerId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','quote','pickup','updatedAt','version'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','quote','pickup','quoteDetails','updatedAt','version'])
         && request.resource.data.updatedAt == request.time && request.resource.data.version == resource.data.version + 1
         && (admin() && (quoteChange(resource.data, request.resource.data) || progressChange(resource.data, request.resource.data))
-          || !admin() && resource.data.status == 'Quoted' && request.resource.data.status in ['Approved','Declined']
-            && sameQuote(resource.data, request.resource.data));
+          || !admin() && sameQuote(resource.data, request.resource.data)
+            && ((resource.data.status == 'Quoted' && request.resource.data.status in ['Approved','Declined'])
+              || (resource.data.status in ['Submitted','Quoted','Declined'] && request.resource.data.status == 'Cancelled')));
+      allow update: if admin() && resource.data.status in ['Completed','Cancelled']
+        && resource.data.get('documentDeletedAt',null) == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documentDeletedAt'])
+        && resource.data.updatedAt is timestamp
+        && get(/databases/$(database)/documents/shopSettings/current).data.retentionDays in [7,14,30]
+        && resource.data.updatedAt.toMillis() <= request.time.toMillis() -
+          get(/databases/$(database)/documents/shopSettings/current).data.retentionDays * 86400000
+        && recent(request.resource.data.documentDeletedAt);
+      match /pushDeliveries/{deviceId} {
+        allow read: if admin();
+        allow create, update: if admin() && deviceId.matches('^[a-f0-9]{64}$')
+          && request.resource.data.keys().hasOnly(['state','updatedAt'])
+          && request.resource.data.state == 'sent' && recent(request.resource.data.updatedAt);
+      }
     }
     match /admins/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;

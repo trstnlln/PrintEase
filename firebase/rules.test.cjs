@@ -366,3 +366,49 @@ test('service requests enforce ownership, valid details and the quote workflow',
     await assertFails(updateDoc(doc(customer, thread, 'first'), { text: 'Changed' }));
   }
 });
+
+test('service desk binds unread activity to participants and protects quotes and retention', async () => {
+  const { serverTimestamp, Timestamp, collection, getDocs, query, where } = require('firebase/firestore');
+  const id = 'service-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const path = 'serviceRequests/' + id;
+  const activity = 'threadActivity/serviceRequests--' + id;
+  const customer = student().firestore();
+  const staff = admin().firestore();
+  const stranger = env.authenticatedContext('other').firestore();
+  await env.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), 'shopSettings/current'), { retentionDays: 7, acceptingOrders: true }, { merge: true }));
+  const fields = {
+    ownerId: 'student', customerName: 'Alex', service: 'pvc-id', quantity: 2, size: '', details: '',
+    sides: 'Double-sided', design: null, designBack: { fileName: 'Back.pdf', fileHash: 'b'.repeat(64) },
+    status: 'Submitted', version: 0, quote: null, pickup: '', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  };
+  await assertSucceeds(getDoc(doc(customer, 'capabilities/service-desk-v2')));
+  await assertFails(setDoc(doc(customer, path), { ...fields, sides: 'Single-sided' }));
+  await assertSucceeds(setDoc(doc(customer, path), fields));
+  const participant = { kind: 'serviceRequests', id, ownerId: 'student' };
+  await assertFails(setDoc(doc(stranger, activity), { ...participant, customerAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(customer, activity), { ...participant, shopAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(customer, activity), { ...participant, customerAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(staff, activity), { ...participant, shopAt: serverTimestamp() }, { merge: true }));
+  await assertFails(setDoc(doc(customer, activity), { ...participant, shopAt: serverTimestamp() }, { merge: true }));
+  await assertFails(getDoc(doc(stranger, activity)));
+  await assertSucceeds(getDocs(query(collection(customer, 'threadActivity'), where('ownerId', '==', 'student'))));
+  const receipt = 'users/student/threadReads/serviceRequests--' + id;
+  await assertSucceeds(setDoc(doc(customer, receipt), { seenAt: serverTimestamp() }));
+  await assertFails(getDoc(doc(staff, receipt)));
+  await assertFails(setDoc(doc(stranger, receipt), { seenAt: serverTimestamp() }));
+  const quote = { status: 'Quoted', quote: 150, pickup: 'Show the order number.', version: 1, updatedAt: serverTimestamp(),
+    quoteDetails: { serviceFee: 120, extrasFee: 30, pickupAt: Date.now() + 86400000 } };
+  await assertFails(updateDoc(doc(staff, path), { ...quote, quote: 149 }));
+  await assertSucceeds(updateDoc(doc(staff, path), quote));
+  await assertFails(updateDoc(doc(customer, path), {
+    status: 'Approved', version: 2, updatedAt: serverTimestamp(),
+    quoteDetails: { ...quote.quoteDetails, serviceFee: 1 },
+  }));
+  await assertSucceeds(updateDoc(doc(customer, path), { status: 'Cancelled', version: 2, updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(staff, path), { ...quote, version: 3 }));
+  await assertFails(updateDoc(doc(staff, path), { documentDeletedAt: Date.now() }));
+  await env.withSecurityRulesDisabled(ctx => updateDoc(doc(ctx.firestore(), path), { updatedAt: Timestamp.fromMillis(Date.now() - 8 * 86400000) }));
+  await assertFails(updateDoc(doc(customer, path), { documentDeletedAt: Date.now() }));
+  await assertSucceeds(updateDoc(doc(staff, path), { documentDeletedAt: Date.now() }));
+  await assertSucceeds(getDoc(doc(customer, path)));
+});

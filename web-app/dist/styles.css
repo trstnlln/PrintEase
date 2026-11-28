@@ -531,3 +531,11 @@ a.service-row { color: var(--ink); text-decoration: none; }
 .service-attachment .file-picker-actions, .service-design-actions { justify-content: flex-start; }
 
 .service-messages strong { overflow-wrap: anywhere; }
+
+.service-inbox { margin: 0 0 18px; }
+.service-inbox .text-action { width: fit-content; min-height: 44px; display: inline-flex; align-items: center; }
+.service-workspace { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
+.service-workspace > section { align-content: start; }
+.service-workspace h2 { font-size: 1.125rem; }
+.service-priorities { margin: 0 0 18px; }
+.service-inbox-list { max-height: 17rem; overflow-y: auto; }

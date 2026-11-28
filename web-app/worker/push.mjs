@@ -160,10 +160,12 @@ export function createPushApi({authorize,administrator,firestore,json,fail,origi
   }
   const ready = /^\/api\/push\/notify\/([A-Za-z0-9_-]{1,128})$/.exec(path);
   const review = /^\/api\/push\/review\/([A-Za-z0-9_-]{1,128})\/(0|[1-9][0-9]{0,9})$/.exec(path);
-  if ((ready || review) && request.method === 'POST') {
+  const service = /^\/api\/push\/service\/(service-[a-f0-9-]{36})\/(0|[1-9][0-9]{0,9})$/.exec(path);
+  if ((ready || review || service) && request.method === 'POST') {
    if (!await administrator(user)) fail(403, 'push/access-denied', 'Only the shop can send order alerts.');
-   const orderId = (ready || review)[1];
-   const {response,data} = await firestore(user, 'orders/' + orderId);
+   const orderId = (ready || review || service)[1];
+   const collection = service ? 'serviceRequests' : 'orders';
+   const {response,data} = await firestore(user, collection + '/' + orderId);
    if (!response.ok) fail(404, 'push/order-missing', 'The request is unavailable. Refresh the queue.');
    const order = documentValue(data);
    if (typeof order.ownerId !== 'string' || !order.ownerId || /[\/\\]/.test(order.ownerId)) {
@@ -180,11 +182,18 @@ export function createPushApi({authorize,administrator,firestore,json,fail,origi
     }
     type = stage === 'quoted' ? 'quote' : 'correction';
    }
+   if (service) {
+    if (order.version !== Number(service[2]) || !['Quoted','Ready for pickup'].includes(order.status)) {
+     fail(409, 'push/not-ready', 'This service request no longer has an alert to send.');
+    }
+    type = order.status === 'Quoted' ? 'service-quote' : 'service-ready';
+   }
    const devices = await subscriptions(user, order.ownerId);
    const message = { type, ownerId: order.ownerId, orderId };
    const results = await Promise.all(devices.map(async item => {
-    const key = review ? await hash(item.id + ':' + type + ':' + review[2]) : item.id;
-    return send(user, env, item, message, 'orders/' + orderId + '/pushDeliveries/' + key);
+    const version = (review || service)?.[2];
+    const key = version ? await hash(item.id + ':' + type + ':' + version) : item.id;
+    return send(user, env, item, message, collection + '/' + orderId + '/pushDeliveries/' + key);
    }));
    return json(summarize(results));
   }

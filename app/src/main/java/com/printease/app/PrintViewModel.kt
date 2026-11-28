@@ -44,6 +44,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
     val progress = MutableStateFlow(0f)
     val route = saved.getStateFlow("route", "home")
     val selectedId = saved.getStateFlow("selected", "")
+    internal val selectedService = saved.getStateFlow("selectedService", "")
     val pdf = MutableStateFlow(restorePdf())
     val attachments = MutableStateFlow(restoreAttachments())
     val options =
@@ -217,6 +218,23 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
 
     fun navigate(value: String) {
         if (!busy.value) saved["route"] = value
+    }
+
+    internal fun openDeskAlert(alert: DeskAlert) {
+        if (busy.value) return
+        if (alert.kind == "orders") {
+            saved["selected"] = alert.id
+            saved["route"] = "order-messages"
+        } else {
+            saved["selectedService"] = alert.id
+            saved["route"] = "services"
+        }
+    }
+
+    internal fun openServices() {
+        if (busy.value) return
+        saved["selectedService"] = ""
+        saved["route"] = "services"
     }
 
     fun openOrder(id: String) {

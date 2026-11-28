@@ -9,6 +9,7 @@ import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
@@ -187,6 +188,72 @@ class RepositoryTest {
         val huge =
             File(context.cacheDir, "huge.pdf").apply { writeBytes(ByteArray(MAX_PDF_BYTES + 1)) }
         assertTrue(runCatching { documents.inspect(huge, "huge.pdf") }.isFailure)
+    }
+
+    @Test
+    fun serviceDeskRestoresBothFilesAndTracksUnreadAndQuoteRevisions() = runBlocking {
+        val customer = Session("desk-test-customer", "Customer", "customer@example.test", false)
+        val staff = Session("desk-test-staff", "Shop", "shop@example.test", true)
+        val desk = ServiceDesk(context, documents)
+        fun design(name: String): PdfFile {
+            val pdf = File(context.cacheDir, name).apply { writeText(name) }
+            return PdfFile(pdf.path, name, 1, pdf.length(), "a".repeat(64))
+        }
+        val draft =
+            ServiceDraft(
+                sides = "Double-sided",
+                front = design("Front.pdf"),
+                back = design("Back.pdf"),
+            )
+        desk.saveDraft(customer.uid, draft)
+        assertEquals(draft, ServiceDesk(context, documents).restoreDraft(customer.uid))
+        desk.submit(
+            customer,
+            draft.id,
+            draft.service,
+            1,
+            "",
+            "",
+            draft.sides,
+            draft.front,
+            draft.back,
+        )
+        desk.clearDraft(customer.uid)
+        assertNull(desk.restoreDraft(customer.uid).front)
+        assertEquals("Back.pdf", desk.loadDesign(draft.id, true).readText())
+        desk.send(customer, "serviceRequests", draft.id, "Is the front clear?", customer.uid, true)
+        assertTrue(desk.alerts(staff).first().any { it.id == draft.id })
+        desk.markRead(staff, "serviceRequests", draft.id)
+        assertFalse(desk.alerts(staff).first().any { it.id == draft.id })
+        suspend fun request() = desk.requests(customer).first().first { it.id == draft.id }
+        val date = System.currentTimeMillis() + 86400000
+        desk.update(
+            staff,
+            request(),
+            "quote",
+            150,
+            "At the counter",
+            ServiceQuote(120, 30, date),
+            true,
+        )
+        assertTrue(desk.alerts(customer).first().any { it.id == draft.id })
+        val first = request()
+        desk.update(customer, first, "Approved", enhanced = true)
+        desk.update(
+            staff,
+            request(),
+            "quote",
+            155,
+            "At the counter",
+            ServiceQuote(125, 30, date),
+            true,
+        )
+        assertEquals("Quoted", request().status)
+        assertTrue(
+            runCatching { desk.update(customer, first, "Approved", enhanced = true) }.isFailure
+        )
+        desk.update(customer, request(), "Cancelled", enhanced = true)
+        assertEquals("Cancelled", request().status)
     }
 
     @Test

@@ -12,6 +12,8 @@ self.addEventListener('push',event=>event.waitUntil((async()=>{
   ready: ['Your prints are ready', 'Open PrintEase for pickup details.'],
   quote: ['Approve your print quote', 'Open PrintEase to review the shop’s price.'],
   correction: ['The shop requested a correction', 'Open PrintEase to see what needs to change.'],
+  'service-quote': ['Review your service quote', 'Open PrintEase to see the price and pickup time.'],
+  'service-ready': ['Your service request is ready', 'Open PrintEase for pickup details.'],
   test: ['PrintEase alerts are on', 'You can receive order updates on this device.']
  };
  if(!Object.hasOwn(content,message.type)||typeof message.ownerId!=='string'||await pushOwner()!==message.ownerId)return;
@@ -20,13 +22,13 @@ self.addEventListener('push',event=>event.waitUntil((async()=>{
  await self.registration.showNotification(title,{
   body,
   icon:'/assets/touch-icon.png',badge:'/assets/touch-icon.png',tag:message.type==='test'?'printease-test':'printease-'+message.type+'-'+message.orderId,
-  data:{path:message.type==='test'?'/#account':'/#detail/'+encodeURIComponent(message.orderId)}
+  data:{path:message.type==='test'?'/#account':'/#'+(message.type.startsWith('service-')?'service-detail':'detail')+'/'+encodeURIComponent(message.orderId)}
  });
 })()));
 self.addEventListener('notificationclick',event=>{
  event.notification.close();
  const path=event.notification.data?.path;
- if(typeof path!=='string'||!/^\/#(?:account|detail\/[A-Za-z0-9_-]{1,128})$/.test(path))return;
+ if(typeof path!=='string'||!/^\/#(?:account|(?:detail|service-detail)\/[A-Za-z0-9_-]{1,128})$/.test(path))return;
  event.waitUntil((async()=>{
   const url=new URL(path,self.location.origin).href;
   const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});

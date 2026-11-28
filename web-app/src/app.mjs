@@ -3,9 +3,9 @@ import { clockMinutes } from "./pickup-schedule.mjs";
 import { customPaper, requiresPaperQuote, paperLabel, printScaleLabel } from "./paper.mjs";
 import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
-import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, defaultShop, validateShop, parsePageRanges, rangeText, pageLabel, collectionCode, terminal } from "./model.mjs";
+import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, MAX_FILE_MB, defaultShop, validateShop, parsePageRanges, rangeText, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
-import { ServiceDesk, serviceView } from "./service-desk.mjs";
+import { ServiceDesk, serviceView, inboxView, adminPriorities } from "./service-desk.mjs";
 import * as db from "./db.mjs";
 import { mountPreviewPages } from "./pdf-preview.mjs";
 import { handoutName, handoutOptions, printedSides, slideLayouts, slidesPerSide } from "./handout.mjs";
@@ -18,6 +18,12 @@ class PrintEase {
     this.root = root;
     this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, queueStatus: null, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
     this.services = new ServiceDesk(() => this.render());
+    this.retentionTimer = setInterval(() => this.s.online && this.services.runRetention(this.s.settings), 15 * 60000);
+    this.deskVisibility = () => {
+      this.services.markRead();
+      if (document.visibilityState === "visible" && this.s.online) this.services.runRetention(this.s.settings);
+    };
+    document.addEventListener("visibilitychange", this.deskVisibility);
     this.modal = null;
     this.preview = null;
     this.preparation = null;
@@ -139,12 +145,18 @@ class PrintEase {
     } catch {
     }
     const s = this.s;
+    this.services.syncAccount(s, this.backend);
     this.services.sync(s, this.backend);
+    const retentionKey = s.session?.admin && this.services.enhanced && s.online ? [s.session.uid, s.settings?.retentionDays].join("/") : "";
+    if (this.retentionKey !== retentionKey) {
+      this.retentionKey = retentionKey;
+      if (retentionKey) this.services.runRetention(s.settings);
+    }
     const isService = ["services", "service-new", "service-detail", "order-messages"].includes(s.route);
     const oldThread = this.root.querySelector(".service-messages");
     const threadScroll = oldThread && oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop > 24 ? oldThread.scrollTop : null;
     const servicesWereOpen = this.root.querySelector(".shop-services[open]") !== null;
-    this.root.innerHTML = s.session ? shell(s, isService ? serviceView(s, this.services) : s.route === "request" ? requestView(s) : s.route === "detail" ? detailView(s) : s.route === "account" ? accountView(s) : s.route === "settings" && s.session.admin ? settingsView(s) : dashboard(s)) : authView(s);
+    this.root.innerHTML = s.session ? shell(s, isService ? serviceView(s, this.services) : s.route === "request" ? requestView(s) : s.route === "detail" ? detailView(s) : s.route === "account" ? accountView(s) : s.route === "settings" && s.session.admin ? settingsView(s) : dashboard(s, inboxView(s, this.services) + adminPriorities(s, this.services))) : authView(s);
     const thread = this.root.querySelector(".service-messages");
     if (thread) thread.scrollTop = threadScroll ?? thread.scrollHeight;
     const services = this.root.querySelector(".shop-services");
@@ -201,15 +213,18 @@ class PrintEase {
     if (this.s.busy && !["close-modal", "cancel-preparation"].includes(action)) return;
     switch (action) {
       case "service-pick-file":
-        document.getElementById("service-file")?.click();
+        document.getElementById(node.dataset.side === "back" ? "service-file-back" : "service-file")?.click();
         return;
+      case "service-discard-draft":
+        return this.confirm("Discard this draft?", "This clears the service details and attachments saved on this device.", "Discard draft", () => this.services.discardDraft());
       case "service-remove-file":
-        this.services.selectDesign(null);
+        this.services.selectDesign(null, node.dataset.side);
+        this.services.saveDraft().catch(() => this.toast("This browser could not save your draft. Keep this tab open."));
         this.render();
-        document.getElementById("service-file-picker")?.focus({ preventScroll: true });
+        document.getElementById(node.dataset.side === "back" ? "service-file-picker-back" : "service-file-picker")?.focus({ preventScroll: true });
         return;
       case "service-preview-draft": {
-        const file = this.services.file;
+        const file = node.dataset.side === "back" ? this.services.backFile : this.services.file;
         if (file) return this.previewPdf(file.name, async () => {
           const { file: pdf } = await this.services.prepareDesign(file);
           return new Uint8Array(await pdf.arrayBuffer());
@@ -217,14 +232,20 @@ class PrintEase {
         return;
       }
       case "service-preview": {
-        const design = this.services.request?.design;
-        if (design) return this.previewPdf(design.fileName, () => this.services.designBytes());
+        const side = node.dataset.side;
+        const design = side === "back" ? this.services.request?.designBack : this.services.request?.design;
+        if (design) return this.previewPdf(design.fileName, () => this.services.designBytes(side));
         return;
       }
       case "service-download":
-        return this.action(() => this.services.download());
-      case "service-update":
-        return this.action(() => this.services.update(node.dataset.next, Number(node.dataset.version)));
+        return this.action(() => this.services.download(node.dataset.side));
+      case "service-update": {
+        const next = node.dataset.next;
+        const version = Number(node.dataset.version);
+        const update = () => this.updateService(next, version);
+        if (next === "Cancelled") return this.confirm("Cancel this service request?", "The shop will see that you cancelled.", "Cancel request", update);
+        return this.action(update);
+      }
       case "cancel-preparation":
         this.preparation?.abort();
         return;
@@ -445,13 +466,16 @@ class PrintEase {
     const serviceFields = { "service-choice": "service", "service-quantity": "quantity", "service-details": "details", "service-size": "size", "service-sides": "sides" };
     if (serviceFields[id]) {
       this.services.form[serviceFields[id]] = target.value;
-      if (id === "service-choice") this.render();
+      this.services.saveDraft().catch(() => this.toast("This browser could not save your draft. Keep this tab open."));
+      if (id === "service-choice" || id === "service-sides") this.render();
       return;
     }
-    if (id === "service-file" && event.type === "change") {
+    if (["service-file", "service-file-back"].includes(id) && event.type === "change") {
       const file = target.files[0];
       if (file) {
-        this.services.selectDesign(file);
+        if (!file.size || file.size > MAX_BYTES) return this.toast(`Choose a PDF, JPG, or PNG up to ${MAX_FILE_MB} MB.`);
+        this.services.selectDesign(file, id.endsWith("-back") ? "back" : "front");
+        this.services.saveDraft().catch(() => this.toast("This browser could not save your draft. Keep this tab open."));
         this.render();
       }
       return;
@@ -460,11 +484,16 @@ class PrintEase {
       this.services.text = target.value;
       return;
     }
-    if (id === "service-quote" || id === "service-pickup") {
+    if (["service-quote","service-pickup","service-extras","service-pickup-at"].includes(id)) {
       this.services.quoteDraft = {
+        version: this.services.request?.version,
         quote: document.getElementById("service-quote").value,
-        pickup: document.getElementById("service-pickup").value
+        pickup: document.getElementById("service-pickup").value,
+        extras: document.getElementById("service-extras")?.value || "",
+        pickupAt: document.getElementById("service-pickup-at")?.value || ""
       };
+      const total = document.getElementById("service-quote-total");
+      if (total) total.textContent = "Total " + pesos(Number(this.services.quoteDraft.quote || 0) + Number(this.services.quoteDraft.extras || 0));
       return;
     }
     if (id?.startsWith("auth-")) {
@@ -583,6 +612,15 @@ class PrintEase {
     this.updateEstimate();
     this.saveDraft().catch(error => this.toast(errorMessage(error)));
   }
+  async updateService(action, version, input) {
+    const { id, request, enhanced, local } = this.services;
+    const alert = action === "quote" || (action === "progress" && request?.status === "In progress");
+    await this.services.update(action, version, input);
+    if (alert && enhanced && !local) {
+      pushRequest(this.backend.auth?.currentUser, "service/" + encodeURIComponent(id) + "/" + (version + 1)).catch(() => {});
+    }
+  }
+
   async onSubmit(event) {
     const serviceForm = event.target;
     if (["service-request-form", "service-message-form", "service-quote-form"].includes(serviceForm.id)) {
@@ -590,11 +628,15 @@ class PrintEase {
       if (this.s.busy) return;
       if (serviceForm.id === "service-message-form") return this.action(() => this.services.send());
       if (serviceForm.id === "service-quote-form") {
-        const input = {
-          quote: serviceForm.querySelector("#service-quote").valueAsNumber,
-          pickup: serviceForm.querySelector("#service-pickup").value
-        };
-        return this.action(() => this.services.update("quote", Number(serviceForm.dataset.version), input));
+        const serviceFee = serviceForm.querySelector("#service-quote").valueAsNumber;
+        const pickup = serviceForm.querySelector("#service-pickup").value;
+        const pickupAt = serviceForm.querySelector("#service-pickup-at")?.value;
+        const extrasFee = Number(serviceForm.querySelector("#service-extras")?.value || 0);
+        if (this.services.enhanced && !pickupAt) return this.toast("Choose the pickup date and time.");
+        const quoteDetails = pickupAt ? { serviceFee, extrasFee, pickupAt: Date.parse(pickupAt + "+08:00") } : null;
+        const input = { quote: serviceFee + extrasFee, pickup: pickup || (quoteDetails ? "Collect and pay at the shop." : ""), quoteDetails };
+        const version = Number(serviceForm.dataset.version);
+        return this.action(() => this.updateService("quote", version, input));
       }
       let id;
       await this.action(async () => { id = await this.services.submit(); });
@@ -1167,6 +1209,9 @@ class PrintEase {
   }
   close() {
     this.services.stop();
+    this.services.stopAccount?.();
+    clearInterval(this.retentionTimer);
+    document.removeEventListener("visibilitychange", this.deskVisibility);
     this.preparation?.abort();
     document.removeEventListener("error", this.imageError, true);
     this.backend?.close();

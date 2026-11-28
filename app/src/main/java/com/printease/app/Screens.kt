@@ -47,6 +47,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -97,6 +98,16 @@ fun PrintEase(
         model.messages.collect { snackbar.showSnackbar(it, duration = SnackbarDuration.Long) }
     }
     val session = state.session
+    val selectedService by model.selectedService.collectAsStateWithLifecycle()
+    var deskEnhanced by remember(session?.uid, session?.admin) { mutableStateOf(BuildConfig.DEMO) }
+    var deskAlerts by
+        remember(session?.uid, session?.admin) { mutableStateOf(emptyList<DeskAlert>()) }
+    LaunchedEffect(session?.uid, session?.admin) {
+        if (session != null) {
+            deskEnhanced = model.serviceDesk.enhancements()
+            if (deskEnhanced) model.serviceDesk.alerts(session).catch {}.collect { deskAlerts = it }
+        }
+    }
     val mainRoute = route in listOf("home", "orders", "account")
     val backRoute =
         when (route) {
@@ -255,6 +266,9 @@ fun PrintEase(
                         session,
                         state.settings.acceptingOrders,
                         state.settings.name,
+                        deskEnhanced,
+                        deskAlerts,
+                        selectedService,
                     )
                 route == "order-messages" -> {
                     val order = state.orders.find { it.id == selected }
@@ -272,6 +286,9 @@ fun PrintEase(
                                 selected,
                                 order.studentName,
                                 state.settings.name,
+                                order.ownerId,
+                                deskEnhanced,
+                                deskAlerts.find { it.kind == "orders" && it.id == selected },
                             )
                         }
                     else EmptyPanel("Order unavailable", "Return to Orders to open your request.")
@@ -343,7 +360,30 @@ fun PrintEase(
                         route == "home",
                         onNew = { model.navigate("request") },
                         onOrder = model::openOrder,
-                        onServices = { model.navigate("services") },
+                        onServices = model::openServices,
+                        inbox = {
+                            if (deskAlerts.isNotEmpty())
+                                Panel(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        if (session.admin) "Needs reply · ${deskAlerts.size}"
+                                        else "Unread updates · ${deskAlerts.size}",
+                                        style = MaterialTheme.typography.titleLarge,
+                                    )
+                                    for (alert in deskAlerts) {
+                                        val order =
+                                            state.orders.find {
+                                                alert.kind == "orders" && it.id == alert.id
+                                            }
+                                        val label =
+                                            order?.fileName
+                                                ?: if (alert.kind == "orders") "Print request"
+                                                else "Service request"
+                                        PressTextButton({ model.openDeskAlert(alert) }) {
+                                            Text("$label · ${alert.id.takeLast(6).uppercase()}")
+                                        }
+                                    }
+                                }
+                        },
                         submittedId = submittedId,
                         hasDraft = pdf != null,
                     )
@@ -727,6 +767,7 @@ fun Dashboard(
     submittedId: String? = null,
     hasDraft: Boolean = false,
     onServices: (() -> Unit)? = null,
+    inbox: @Composable () -> Unit = {},
 ) {
     val session = state.session ?: return
     var filter by rememberSaveable { mutableStateOf("All") }
@@ -906,6 +947,7 @@ fun Dashboard(
                 }
             }
         }
+        item { inbox() }
         onServices?.let { open ->
             item {
                 Panel(Modifier.fillMaxWidth()) {

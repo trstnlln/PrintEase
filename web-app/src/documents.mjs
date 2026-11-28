@@ -35,8 +35,15 @@ export class HostedDocuments {
   }),30000));
   return (await response.json()).removed === true;
  }
- async serviceBytes(user,id){
-  const response = await this.response(await timeout(this.request(this.baseUrl+'/api/service-documents/'+encodeURIComponent(id),{
+ async sweepRetention(user,kind,after){
+  const url=new URL(this.baseUrl+'/api/document-retention');
+  url.searchParams.set('kind',kind);
+  if(after)url.searchParams.set('after',after);
+  const response=await this.response(await timeout(this.request(url,{method:'POST',headers:await this.headers(user),cache:'no-store'}),90000));
+  return response.json();
+ }
+ async serviceBytes(user,id,side='front'){
+  const response = await this.response(await timeout(this.request(this.baseUrl+'/api/service-documents/'+encodeURIComponent(id)+(side==='back'?'?side=back':''),{
    headers:await this.headers(user),cache:'no-store'
   }),60000));
   const bytes = new Uint8Array(await response.arrayBuffer());

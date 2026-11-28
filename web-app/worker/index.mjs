@@ -40,24 +40,27 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
  const validHash = /^[a-f0-9]{64}$/;
  const scopedKey = (owner, id, hash) => `hosted/${owner}/${id}/${hash}.pdf`;
 
- async function removeCompletedPdf(user, env, id) {
+ async function removeCompletedPdf(user, env, id, kind = 'orders', scanned = null, configuredDays = null) {
   if (!await administrator(user)) fail(403, 'document/access-denied', 'Only the shop can remove expired PDFs.');
-  const { response, data: order } = await firestore(user, 'orders/' + id);
+  const { response, data: order } = scanned ? { response: { ok: true }, data: scanned } : await firestore(user, kind + '/' + id);
   if (!response.ok) fail(404, 'document/order-missing', 'Refresh Orders to find this request.');
   const owner = value(order, 'ownerId')?.stringValue;
   const hash = value(order, 'fileHash')?.stringValue;
-  const key = value(order, 'storagePath')?.stringValue;
-  if (!owner || /[\/\\]/.test(owner) || !validHash.test(hash || '') ||
-      value(order, 'documentStore')?.stringValue !== 'hosted' || key !== scopedKey(owner, id, hash)) {
-   fail(409, 'document/ineligible', 'This PDF uses shared storage and cannot be removed from this request.');
+  const service = kind === 'serviceRequests';
+  const key = service ? null : value(order, 'storagePath')?.stringValue;
+  if (!owner || /[\/\\]/.test(owner) ||
+      (service ? !['design','designBack'].some(field => validHash.test(value(order, field)?.mapValue?.fields?.fileHash?.stringValue || ''))
+        : !validHash.test(hash || '') || value(order, 'documentStore')?.stringValue !== 'hosted' || key !== scopedKey(owner, id, hash))) {
+   fail(409, 'document/ineligible', 'No private PDF is eligible for removal.');
   }
   if (value(order, 'documentDeletedAt')?.integerValue) return json({ removed: true });
-  const settings = await firestore(user, 'shopSettings/current');
-  const days = Number(value(settings.data, 'retentionDays')?.integerValue);
-  const completedAt = Number(value(order, 'completedAt')?.integerValue);
-  if (!settings.response.ok || ![7, 14, 30].includes(days) ||
-      value(order, 'status')?.stringValue !== 'Completed' || !Number.isSafeInteger(completedAt) ||
-      completedAt <= 0 || completedAt + days * 86400000 > now()) {
+  const settings = configuredDays == null ? await firestore(user, 'shopSettings/current') : null;
+  const days = configuredDays ?? Number(value(settings?.data, 'retentionDays')?.integerValue);
+  const status = value(order, 'status')?.stringValue;
+  const closedAt = service ? Date.parse(value(order, 'updatedAt')?.timestampValue || '')
+    : Number(value(order, status === 'Cancelled' ? 'updatedAt' : 'completedAt')?.integerValue);
+  if (![7,14,30].includes(days) || !['Completed','Cancelled'].includes(status) ||
+      !Number.isSafeInteger(closedAt) || closedAt <= 0 || closedAt + days * 86400000 > now()) {
    fail(409, 'document/ineligible', 'This PDF has not reached the shop’s retention period.');
   }
   const prefix = `hosted/${owner}/${id}/`;
@@ -65,16 +68,56 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   const older = files.objects.filter(object => object.key !== key).map(object => object.key);
   if (older.length) await env.BUCKET.delete(older);
   if (files.truncated) return json({ removed: false });
-  await env.BUCKET.delete(key);
-  const saved = await firestore(user, 'orders/' + id + '?updateMask.fieldPaths=documentDeletedAt', {
+  if (key) await env.BUCKET.delete(key);
+  const saved = await firestore(user, kind + '/' + id + '?updateMask.fieldPaths=documentDeletedAt', {
    method: 'PATCH', body: JSON.stringify({ fields: { documentDeletedAt: { integerValue: String(now()) } } })
   });
   if (!saved.response.ok) {
-   const latest = await firestore(user, 'orders/' + id);
+   const latest = await firestore(user, kind + '/' + id);
    if (!latest.response.ok || !value(latest.data, 'documentDeletedAt')?.integerValue)
     fail(503, 'document/cleanup-incomplete', 'The PDF was removed. Try again to update the order history.');
   }
   return json({ removed: true });
+ }
+
+ async function sweepExpired(user, env, request) {
+  if (!await administrator(user)) fail(403, 'document/access-denied', 'Only the shop can remove expired PDFs.');
+  const query = new URL(request.url).searchParams;
+  const kind = query.get('kind');
+  const cursor = query.get('after');
+  if (!['orders','serviceRequests'].includes(kind) || (cursor && !validRequestId.test(cursor))) {
+   fail(400, 'document/invalid-query', 'Invalid retention request.');
+  }
+  const settings = await firestore(user, 'shopSettings/current');
+  const days = Number(value(settings.data, 'retentionDays')?.integerValue);
+  if (!settings.response.ok || ![7,14,30].includes(days)) return json({ removed: 0, next: null });
+  const limit = 15;
+  const documentsPath = `projects/${projectId}/databases/(default)/documents/${kind}/`;
+  const structuredQuery = {
+   from: [{ collectionId: kind }],
+   where: { fieldFilter: { field: { fieldPath: 'status' }, op: 'IN', value: {
+    arrayValue: { values: [{ stringValue: 'Completed' }, { stringValue: 'Cancelled' }] }
+   } } },
+   orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit,
+   ...(cursor ? { startAt: { before: false, values: [{ referenceValue: documentsPath + cursor }] } } : {}),
+  };
+  const page = await firestore(user, ':runQuery', { method: 'POST', body: JSON.stringify({ structuredQuery }) });
+  if (!page.response.ok || !Array.isArray(page.data)) fail(503, 'document/cleanup-unavailable', 'The file cleanup could not run.');
+  const rows = page.data.map(row => row.document).filter(Boolean);
+  let removed = 0;
+  let retry = false;
+  for (const row of rows) {
+   const id = row.name?.startsWith(documentsPath) ? row.name.slice(documentsPath.length) : '';
+   if (!validRequestId.test(id) || value(row, 'documentDeletedAt')?.integerValue) continue;
+   try {
+    const result = await removeCompletedPdf(user, env, id, kind, row, days);
+    if ((await result.json()).removed) removed++;
+    else retry = true;
+   } catch (error) {
+    if (error.status !== 409) retry = true;
+   }
+  }
+  return json({ removed, retry, next: rows.length === limit ? rows.at(-1).name.slice(documentsPath.length) : null });
  }
 
  async function boundedPdf(request) {
@@ -172,6 +215,7 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
    }
    if (request.method === 'GET' && !orderId) return download(env, key);
   }
+  if (path === '/api/document-retention' && request.method === 'POST') return sweepExpired(user, env, request);
   const cleanupId = path.startsWith('/api/document-cleanup/') ? path.slice('/api/document-cleanup/'.length) : '';
   if (request.method === 'POST' && validRequestId.test(cleanupId)) return removeCompletedPdf(user, env, cleanupId);
   const service=/^\/api\/service-documents\/(service-[a-f0-9-]{36})$/.exec(path);
@@ -182,7 +226,10 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
    if(!owner || (owner!==user.uid && !await administrator(user))) {
     fail(403,'document/access-denied','You do not have access to this design.');
    }
-   const hash=value(data,'design')?.mapValue?.fields?.fileHash?.stringValue;
+   if (value(data, 'documentDeletedAt')?.integerValue) fail(410, 'document/removed', 'The shop’s retention period has ended for this design.');
+   const side = new URL(request.url).searchParams.get('side') ?? 'front';
+   if (!['front','back'].includes(side)) fail(404,'document/not-found','This design is unavailable.');
+   const hash=value(data,side === 'back' ? 'designBack' : 'design')?.mapValue?.fields?.fileHash?.stringValue;
    if(!validHash.test(hash||'')) fail(404,'document/not-found','This design is unavailable.');
    return download(env,scopedKey(owner,service[1],hash));
   }

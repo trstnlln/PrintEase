@@ -1,5 +1,5 @@
 // Only public application assets are cached. Private API requests are never cached.
-const CACHE='printease-bed513bbec044d2c',ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/nano-print-alangilan.jpg","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/theme.js","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
+const CACHE='printease-5ea6e168f0a0f127',ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/nano-print-alangilan.jpg","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/theme.js","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('printease-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{
@@ -22,6 +22,8 @@ self.addEventListener('push',event=>event.waitUntil((async()=>{
   ready: ['Your prints are ready', 'Open PrintEase for pickup details.'],
   quote: ['Approve your print quote', 'Open PrintEase to review the shop’s price.'],
   correction: ['The shop requested a correction', 'Open PrintEase to see what needs to change.'],
+  'service-quote': ['Review your service quote', 'Open PrintEase to see the price and pickup time.'],
+  'service-ready': ['Your service request is ready', 'Open PrintEase for pickup details.'],
   test: ['PrintEase alerts are on', 'You can receive order updates on this device.']
  };
  if(!Object.hasOwn(content,message.type)||typeof message.ownerId!=='string'||await pushOwner()!==message.ownerId)return;
@@ -30,13 +32,13 @@ self.addEventListener('push',event=>event.waitUntil((async()=>{
  await self.registration.showNotification(title,{
   body,
   icon:'/assets/touch-icon.png',badge:'/assets/touch-icon.png',tag:message.type==='test'?'printease-test':'printease-'+message.type+'-'+message.orderId,
-  data:{path:message.type==='test'?'/#account':'/#detail/'+encodeURIComponent(message.orderId)}
+  data:{path:message.type==='test'?'/#account':'/#'+(message.type.startsWith('service-')?'service-detail':'detail')+'/'+encodeURIComponent(message.orderId)}
  });
 })()));
 self.addEventListener('notificationclick',event=>{
  event.notification.close();
  const path=event.notification.data?.path;
- if(typeof path!=='string'||!/^\/#(?:account|detail\/[A-Za-z0-9_-]{1,128})$/.test(path))return;
+ if(typeof path!=='string'||!/^\/#(?:account|(?:detail|service-detail)\/[A-Za-z0-9_-]{1,128})$/.test(path))return;
  event.waitUntil((async()=>{
   const url=new URL(path,self.location.origin).href;
   const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});

@@ -167,9 +167,9 @@ object HostedDocuments {
         return download("/api/documents/${order.id}$query", target)
     }
 
-    suspend fun downloadService(id: String, target: File): File {
+    suspend fun downloadService(id: String, target: File, back: Boolean = false): File {
         require(Regex("service-[a-f0-9-]{36}").matches(id))
-        return download("/api/service-documents/$id", target)
+        return download("/api/service-documents/$id" + if (back) "?side=back" else "", target)
     }
 
     private suspend fun download(path: String, target: File): File =

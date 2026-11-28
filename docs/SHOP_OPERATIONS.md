@@ -81,11 +81,17 @@ In **Shop settings → Paper availability**, mark each size **Available**, **Out
 
 In a printing request, **Save PDF** on Android or **Download PDF** on the web opens or saves each printable file next to its instructions. Mark each file printed, then move the request to **Ready for Pickup**. An interrupted upload keeps the draft, and a retry skips files already confirmed in private storage.
 
-## Completed PDF cleanup
+## Service requests and alerts
 
-Shop administrators can select **Keep files**, **7 days**, **14 days** or **30 days** in shop settings. The default is Keep files. Once a completed order reaches the selected period, choose **Remove expired PDF** in its details and confirm. The app removes the current PDF and earlier uploads stored specifically for that order. Print options, pricing, status and the request ID remain in order history. This action does not affect copies someone already saved elsewhere.
+Customers can keep a draft on their device and add separate front and back files to a double-sided ID request. Shop staff can enter a service fee, optional extras, a pickup date and time in the Philippines, and pickup instructions. Updating an approved quote before work starts sends it back for customer approval. Customers can cancel while a request is awaiting a quote or approval.
 
-Legacy uploads shared by multiple orders are excluded from this workflow. Staff initiate cleanup from the order screen. There is no scheduled cleanup or automatic orphan removal in the hosted deployment. The legacy Firebase Functions retention job applies only to Firebase Storage if deployed separately.
+The shop's web dashboard displays **Needs reply**, **Needs quote**, and **Ready for pickup**. Opening an unread request marks it as read for your account. Customers with browser alerts enabled can also receive service quote and pickup notifications. Android displays the same in-app updates.
+
+## PDF retention
+
+In **Shop settings**, choose **Keep files**, **7 days**, **14 days**, or **30 days**. The default is **Keep files**. When an administrator opens the connected web app, PrintEase checks for expired files from completed and cancelled requests. The check repeats every 15 minutes while the shop keeps the web app open. The hosted environment has no scheduled trigger for cleanup while the shop is signed out.
+
+Cleanup removes private PDF attachments, including both sides of a service design, and preserves the request history. It excludes legacy uploads shared across multiple requests and copies already downloaded by staff. Staff can also remove an expired completed PDF from its print order.
 
 ## Acceptance checks on the real project
 

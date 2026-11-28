@@ -122,6 +122,21 @@ test('quote alerts require the current review version and have separate delivery
  assert.equal(f.state.sent.length,3);
 });
 
+test('only the shop can alert the customer about a current service quote', async () => {
+ const f = await fixture();
+ const id = 'service-12345678-1234-1234-1234-123456789012';
+ await f.call('subscriptions', {body:f.subscription});
+ f.state.documents.set('serviceRequests/' + id, {fields:{
+  ownerId: {stringValue:'student'}, status: {stringValue:'Quoted'}, version: {integerValue:'2'}
+ }});
+ const route = 'service/' + id + '/2';
+ assert.equal((await f.call(route)).status, 403);
+ assert.equal((await f.call('service/' + id + '/1',{uid:'admin'})).status, 409);
+ assert.equal((await (await f.call(route,{uid:'admin'})).json()).sent, 1);
+ assert.equal((await (await f.call(route,{uid:'admin'})).json()).already, 1);
+ assert.ok([...f.state.documents.keys()].some(path => path.startsWith('serviceRequests/' + id + '/pushDeliveries/')));
+});
+
 test('service worker displays generic alerts only for the current opted-in account',async()=>{
  const listeners={},shown=[];const self={addEventListener:(type,fn)=>listeners[type]=fn,location:{origin},registration:{showNotification:async(...args)=>shown.push(args)}};
  vm.runInNewContext(await readFile(new URL('../src/push-worker.js',import.meta.url),'utf8'),{self,indexedDB,URL});
@@ -132,7 +147,9 @@ test('service worker displays generic alerts only for the current opted-in accou
  await push({type:'quote',ownerId:'student',orderId:'quote-job'});
  assert.equal(shown[1][0],'Approve your print quote');
  assert.equal(shown[1][1].data.path,'/#detail/quote-job');
- await db.remove('settings','push-owner');await push({type:'ready',ownerId:'student',orderId:'job'});assert.equal(shown.length,2);
+ await push({type:'service-quote',ownerId:'student',orderId:'service-12345678-1234-1234-1234-123456789012'});
+ assert.match(shown[2][1].data.path, /^\/#service-detail\//);
+ await db.remove('settings','push-owner');await push({type:'ready',ownerId:'student',orderId:'job'});assert.equal(shown.length,3);
 });
 
 test('browser permission starts from the user gesture and account switching removes local alerts',async t=>{
