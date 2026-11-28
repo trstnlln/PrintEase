@@ -5,6 +5,7 @@ package com.printease.app
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -86,6 +87,15 @@ fun PrintEase(
             downloadOrder = null
             if (id != null && uri != null) model.savePrintFile(id, downloadIndex, uri)
         }
+    fun downloadPdf(order: PrintOrder, index: Int) {
+        val name =
+            (if (index == 0) order.fileName else order.attachments[index - 1].fileName)
+                .replace('/', '_')
+                .replace('\\', '_')
+        downloadOrder = order.id
+        downloadIndex = index
+        fileSaver.launch(if (name.endsWith(".pdf", true)) name else "$name.pdf")
+    }
     LaunchedEffect(model) {
         model.messages.collect { snackbar.showSnackbar(it, duration = SnackbarDuration.Long) }
     }
@@ -253,18 +263,7 @@ fun PrintEase(
                             },
                             onEdit = { model.editCorrection(order) },
                             onCleanup = { model.cleanupPdf(order.id) },
-                            onSaveFile = { index ->
-                                val name =
-                                    (if (index == 0) order.fileName
-                                        else order.attachments[index - 1].fileName)
-                                        .replace('/', '_')
-                                        .replace('\\', '_')
-                                downloadOrder = order.id
-                                downloadIndex = index
-                                fileSaver.launch(
-                                    if (name.endsWith(".pdf", true)) name else "$name.pdf"
-                                )
-                            },
+                            onSaveFile = { index -> downloadPdf(order, index) },
                             printToolsAvailable = state.printToolsAvailable,
                             onPrinted = { index, checked ->
                                 model.markPrinted(order.id, index, checked)
@@ -341,6 +340,10 @@ fun PrintEase(
             load = { model.loadDocument(order, previewIndex) },
             printOptions = order.attachments.getOrNull(previewIndex - 1)?.options ?: order.options,
             onClose = { preview = null },
+            onDownload =
+                if (session?.admin == true) {
+                    { downloadPdf(order, previewIndex) }
+                } else null,
         )
     }
     if (draftPreview >= 0) {
@@ -1661,7 +1664,7 @@ fun OrderDetail(
                 Text("View PDF")
             }
             if (admin && order.documentDeletedAt == null)
-                TextButton({ onSaveFile(0) }, enabled = !busy) { Text("Save PDF") }
+                TextButton({ onSaveFile(0) }, enabled = !busy) { Text("Download PDF") }
             if (checklistActive) {
                 Text(
                     "Print checklist · ${order.printedFiles.size} of ${order.attachments.size + 1} printed",
@@ -1694,7 +1697,7 @@ fun OrderDetail(
                         Text("View PDF")
                     }
                 if (admin && order.documentDeletedAt == null)
-                    TextButton({ onSaveFile(index + 1) }, enabled = !busy) { Text("Save PDF") }
+                    TextButton({ onSaveFile(index + 1) }, enabled = !busy) { Text("Download PDF") }
                 if (checklistActive)
                     PrintChecklistToggle(
                         item.fileName,
@@ -2087,8 +2090,12 @@ fun PreviewDialog(
     onClose: () -> Unit,
     printOptions: PrintOptions? = null,
     deleteLoadedFile: Boolean = false,
+    onDownload: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val activity = LocalActivity.current
+    var preparingPrint by remember { mutableStateOf(false) }
+    var printError by remember { mutableStateOf<String?>(null) }
     var file by remember { mutableStateOf<File?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
@@ -2222,6 +2229,74 @@ fun PreviewDialog(
                                         Text(
                                             if (printLayout) "View original PDF"
                                             else "View print layout"
+                                        )
+                                    }
+                                }
+                            }
+                            if (onDownload != null && printOptions != null) {
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                preparingPrint = true
+                                                printError = null
+                                                scope.launch {
+                                                    try {
+                                                        printOrderFile(
+                                                            activity
+                                                                ?: error(
+                                                                    "Printing is unavailable."
+                                                                ),
+                                                            name,
+                                                            source,
+                                                            printOptions,
+                                                        )
+                                                    } catch (error: Exception) {
+                                                        if (
+                                                            error
+                                                                is
+                                                                kotlinx.coroutines.CancellationException
+                                                        )
+                                                            throw error
+                                                        printError = friendlyError(error)
+                                                    } finally {
+                                                        preparingPrint = false
+                                                    }
+                                                }
+                                            },
+                                            enabled = !preparingPrint,
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Icon(Icons.Default.Print, null, Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(if (preparingPrint) "Preparing…" else "Print")
+                                        }
+                                        OutlinedButton(
+                                            onClick = onDownload,
+                                            enabled = !preparingPrint,
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text("Download PDF")
+                                        }
+                                    }
+                                    if (printOptions.copies > 1)
+                                        Text(
+                                            "Set ${printOptions.copies} copies in the print dialog.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    printError?.let {
+                                        Text(
+                                            it,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier =
+                                                Modifier.semantics {
+                                                    liveRegion = LiveRegionMode.Polite
+                                                },
                                         )
                                     }
                                 }

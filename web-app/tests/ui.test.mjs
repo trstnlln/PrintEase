@@ -503,6 +503,58 @@ test('PDF preview scrolls through pages, jumps to a page, and releases distant c
  area.dispatchEvent(new window.Event('scroll'));
  assert.equal(current.page, 8);
 });
+test('shop print opens the PC print dialog with selected pages and keeps Download PDF available', async t => {
+ const app = await setup(t);
+ await app.backend.login(true);
+ const order = app.s.orders[0];
+ order.options = {
+  ...order.options, paper: 'Letter', pages: 6, copies: 2, color: false, duplex: true,
+  pageRanges: [{start:2,end:3},{start:5,end:5}]
+ };
+ app.go('detail', order.id);
+ let release;
+ app.backend.bytes = () => new Promise(resolve => { release = resolve; });
+ const rendered = [];
+ const context = {
+  fillRect() {}, save() {}, beginPath() {}, rect() {}, clip() {}, restore() {},
+  strokeRect() { assert.fail('Margin guides should not print'); }
+ };
+ window.HTMLCanvasElement.prototype.getContext = () => context;
+ window.HTMLCanvasElement.prototype.toBlob = callback => callback(new Blob(['page'], {type:'image/jpeg'}));
+ window.HTMLImageElement.prototype.decode = async () => {};
+ let printCalls = 0;
+ window.print = () => {
+  printCalls++;
+  const job = document.getElementById('print-job');
+  assert.deepEqual([...job.querySelectorAll('img')].map(image => image.alt), ['PDF page 2','PDF page 3','PDF page 5']);
+  assert.match(document.head.querySelector('style[media="print"]').textContent, /size: 612pt 792pt/);
+  window.dispatchEvent(new window.Event('afterprint'));
+ };
+ const loading = app.onClick({target:document.querySelector('[data-action="order-preview"]'),preventDefault(){}});
+ const print = document.querySelector('[data-action="preview-print"]');
+ assert.equal(print.disabled, true);
+ assert.equal(document.getElementById('pdf-download').textContent.trim(), 'Download PDF');
+ app.preview.doc = {
+  numPages: 6,
+  async getPage(number) {
+   return {
+    getViewport: () => ({width: 612, height: 792}),
+    render() { rendered.push(number); return {promise: Promise.resolve(), cancel() {}}; }
+   };
+  },
+  async destroy() {}
+ };
+ print.disabled = false;
+ await app.onClick({target:print,preventDefault(){}});
+ assert.equal(printCalls, 1);
+ assert.deepEqual(rendered, [2,3,5]);
+ assert.match(document.getElementById('print-job-status').textContent, /2 copies/);
+ assert.equal(document.getElementById('print-job'), null);
+ assert.equal(order.printedFiles?.length ?? 0, 0);
+ app.closeModal();
+ release(new Uint8Array());
+ await loading;
+});
 test('paper stock is editable and blocks an unavailable size in an existing student draft',async t=>{
  const app=await setup(t);await app.backend.login(true);app.go('settings');
  const folio=document.querySelector('[data-stock="Folio"]');

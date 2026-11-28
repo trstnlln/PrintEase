@@ -1,11 +1,13 @@
 package com.printease.app
 
 import android.content.Context
+import android.print.PrintAttributes
 import androidx.test.core.app.ApplicationProvider
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -32,6 +34,56 @@ class RepositoryTest {
             .clear()
             .commit()
         documents = Documents(context)
+    }
+
+    @Test
+    fun androidPrintUsesTheOrderDefaultsAndOnlyTheRequestedPdfPages() {
+        val source = File(context.cacheDir, "order-print.pdf")
+        PDDocument().use { document ->
+            repeat(5) { index ->
+                val page = PDPage(PDRectangle(550f + index, 750f))
+                document.addPage(page)
+                PDPageContentStream(document, page).use {
+                    it.addRect(40f, 40f, 50f, 50f)
+                    it.fill()
+                }
+            }
+            document.save(source)
+        }
+        val options =
+            PrintOptions(
+                paper = "Letter",
+                pages = 5,
+                duplex = true,
+                pageRanges = listOf(PageRange(2, 2), PageRange(5, 5)),
+            )
+        val attributes = printAttributes(options, landscape = false)
+        assertEquals(PrintAttributes.MediaSize.NA_LETTER, attributes.mediaSize)
+        assertEquals(PrintAttributes.COLOR_MODE_MONOCHROME, attributes.colorMode)
+        assertEquals(PrintAttributes.DUPLEX_MODE_LONG_EDGE, attributes.duplexMode)
+        val output = ByteArrayOutputStream()
+        writeOrderPrintPdf(
+            source,
+            options,
+            options.sourcePages(),
+            requireNotNull(attributes.mediaSize),
+            null,
+            output,
+        )
+        PDDocument.load(output.toByteArray()).use { document ->
+            assertEquals(2, document.numberOfPages)
+            assertEquals(612f, document.getPage(0).mediaBox.width, .1f)
+            assertEquals(792f, document.getPage(0).mediaBox.height, .1f)
+            val sourceWidths =
+                document.pages.map { page ->
+                    val resources = page.resources
+                    val form =
+                        resources.getXObject(resources.xObjectNames.single())
+                            as com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
+                    form.bBox.width
+                }
+            assertEquals(listOf(551f, 554f), sourceWidths)
+        }
     }
 
     @Test

@@ -275,6 +275,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .preview-settings { display: grid; gap: .3rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); }
 .preview-settings button { justify-self: start; }
 .preview-settings { flex: 0 0 auto; }
+.preview-file-actions { flex: none; padding: .5rem 1rem; border-bottom: 1px solid var(--line); }
+.preview-file-actions .row { flex-wrap: wrap; }
+.preview-file-actions .button { min-height: 44px; }
+.preview-file-actions [role="status"]:not(:empty) { margin-top: .375rem; }
+#print-job { display: none; }
 .preview-pages { min-height: 0; }
 .preview-pages:focus-visible { outline: 3px solid var(--green); outline-offset: -3px; }
 

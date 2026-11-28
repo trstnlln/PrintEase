@@ -18,7 +18,7 @@ fun PrintOptions.handoutOptions(): PrintOptions =
     if (slidesPerSide == 1) this
     else copy(pages = printedSides, pageRanges = emptyList(), actualSize = false, slidesPerSide = 1)
 
-private data class SlidePage(val box: PDRectangle, val rotation: Int) {
+internal data class PdfPageBounds(val box: PDRectangle, val rotation: Int) {
     constructor(page: PDPage) : this(page.cropBox, page.rotation)
 
     val sideways = rotation == 90 || rotation == 270
@@ -69,18 +69,33 @@ private data class SlidePage(val box: PDRectangle, val rotation: Int) {
     }
 }
 
+internal fun PrintOptions.sourcePages(): List<Int> =
+    pageRanges.ifEmpty { listOf(PageRange(1, pages)) }.flatMap { it.start - 1 until it.end }
+
+internal fun PDPageContentStream.drawPdfPage(
+    layers: LayerUtility,
+    source: PDDocument,
+    page: PDPage,
+    placement: Matrix,
+) {
+    if (!page.hasContents()) return
+    val form = layers.importPageAsForm(source, page)
+    form.setMatrix(Matrix().createAffineTransform())
+    saveGraphicsState()
+    transform(placement)
+    drawForm(form)
+    restoreGraphicsState()
+}
+
 internal fun writeHandout(pdf: PdfFile, options: PrintOptions, target: File) {
     val (columns, rows) = grids.getValue(options.slidesPerSide)
-    val selected =
-        options.pageRanges
-            .ifEmpty { listOf(PageRange(1, options.pages)) }
-            .flatMap { it.start..it.end }
+    val selected = options.sourcePages()
     PDDocument.load(File(pdf.path)).use { source ->
         require(source.numberOfPages == options.pages) { "The PDF page count changed." }
         PDDocument().use { output ->
             // A retry must upload the same bytes for the same request and settings.
             output.documentId = pdf.sha256.take(15).toLong(16)
-            val first = SlidePage(source.getPage(selected.first() - 1))
+            val first = PdfPageBounds(source.getPage(selected.first()))
             val paper =
                 printGeometry(
                     options.paper,
@@ -97,9 +112,9 @@ internal fun writeHandout(pdf: PdfFile, options: PrintOptions, target: File) {
                 output.addPage(sheet)
                 PDPageContentStream(output, sheet).use { stream ->
                     pages.forEachIndexed { index, pageNumber ->
-                        val original = source.getPage(pageNumber - 1)
+                        val original = source.getPage(pageNumber)
                         if (original.hasContents()) {
-                            val slide = SlidePage(original)
+                            val slide = PdfPageBounds(original)
                             val scale = minOf(cellWidth / slide.width, cellHeight / slide.height)
                             val column = index % columns
                             val row = index / columns
@@ -110,12 +125,12 @@ internal fun writeHandout(pdf: PdfFile, options: PrintOptions, target: File) {
                             val y =
                                 paper.height - paper.margin - (row + 1) * cellHeight - row * gap +
                                     (cellHeight - slide.height * scale) / 2
-                            val form = layers.importPageAsForm(source, original)
-                            form.setMatrix(Matrix().createAffineTransform())
-                            stream.saveGraphicsState()
-                            stream.transform(slide.placement(x, y, scale))
-                            stream.drawForm(form)
-                            stream.restoreGraphicsState()
+                            stream.drawPdfPage(
+                                layers,
+                                source,
+                                original,
+                                slide.placement(x, y, scale),
+                            )
                         }
                     }
                 }

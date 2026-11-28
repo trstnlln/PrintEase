@@ -71,19 +71,21 @@ data class PrintGeometry(
     val clipped: Boolean,
 )
 
+internal fun paperSizeMm(paper: String): Pair<Float, Float> =
+    customPaperDimensions(paper)?.let { it.first.toFloat() to it.second.toFloat() }
+        ?: when (paper) {
+            "Letter" -> 215.9f to 279.4f
+            "Legal" -> 215.9f to 355.6f
+            "A3" -> 297f to 420f
+            "A5" -> 148f to 210f
+            "B5" -> 176f to 250f
+            "Folio" -> 215.9f to 330.2f
+            "Tabloid" -> 279.4f to 431.8f
+            else -> 210f to 297f
+        }
+
 fun printGeometry(paper: String, width: Int, height: Int, actualSize: Boolean): PrintGeometry {
-    val size =
-        customPaperDimensions(paper)?.let { it.first.toFloat() to it.second.toFloat() }
-            ?: when (paper) {
-                "Letter" -> 215.9f to 279.4f
-                "Legal" -> 215.9f to 355.6f
-                "A3" -> 297f to 420f
-                "A5" -> 148f to 210f
-                "B5" -> 176f to 250f
-                "Folio" -> 215.9f to 330.2f
-                "Tabloid" -> 279.4f to 431.8f
-                else -> 210f to 297f
-            }
+    val size = paperSizeMm(paper)
     val short = minOf(size.first, size.second) * 72f / 25.4f
     val long = maxOf(size.first, size.second) * 72f / 25.4f
     val (sheetW, sheetH) = if (width > height) long to short else short to long

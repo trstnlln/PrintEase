@@ -43,10 +43,10 @@ export function paperStock(shop, paper) {
 }
 export const printScaleLabel = options => options.actualSize ? "Actual size" : "Fit to paper";
 
-export function printGeometry(paper, width, height, actualSize) {
+export function printGeometry(paper, width, height, actualSize, landscape = width > height) {
   const millimeters = customDimensions(paper) ?? sheetsMm[paper] ?? sheetsMm.A4;
   const [short, long] = millimeters.map(mm => mm * 72 / 25.4).sort((a, b) => a - b);
-  const [sheetW, sheetH] = width > height ? [long, short] : [short, long];
+  const [sheetW, sheetH] = landscape ? [long, short] : [short, long];
   const margin = Math.min(5 * 72 / 25.4, sheetW / 8, sheetH / 8);
   const fit = Math.min(1, (sheetW - 2 * margin) / width, (sheetH - 2 * margin) / height);
   const scale = actualSize ? 1 : fit;

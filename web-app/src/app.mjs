@@ -340,7 +340,7 @@ class PrintEase {
         const position = Number(node.dataset.index);
         const attachment = order?.attachments?.[position-1];
         if (!attachment) return;
-        return this.previewPdf(attachment.fileName, () => this.backend.bytes(order, position), attachment.options);
+        return this.previewPdf(attachment.fileName, () => this.backend.bytes(order, position), attachment.options, this.s.session?.admin);
       }
       case "estimate": return this.pickupEstimateDialog();
       case "estimate-save": {
@@ -384,9 +384,11 @@ class PrintEase {
       }
       case "order-preview": {
         const order = this.s.orders.find((o) => o.id === this.s.selected);
-        if (order) return this.previewPdf(order.fileName, () => this.backend.bytes(order), order.options);
+        if (order) return this.previewPdf(order.fileName, () => this.backend.bytes(order), order.options, this.s.session?.admin);
         return;
       }
+      case "preview-print":
+        return this.printPreview(node);
       case "preview-layout":
         if (this.preview?.doc) {
           this.preview.layout = !this.preview.layout;
@@ -951,6 +953,8 @@ class PrintEase {
   closeModal() {
     if (this.preview) {
       this.preview.pages?.dispose();
+      this.preview.printController?.abort();
+      this.preview.printJob?.dispose();
       this.preview.doc?.destroy().catch(() => {
       });
       if (this.preview.url) URL.revokeObjectURL(this.preview.url);
@@ -966,9 +970,55 @@ class PrintEase {
   installHelp() {
     this.openModal(`<div class="dialog-content"><div class="row between"><h2>PrintEase on your iPhone</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>Open this link in <b>Safari</b>, then:</p><ol class="install-steps"><li>Tap <b>Share</b> ${icon("share")}.</li><li>Scroll down and select <b>Add to Home Screen</b>.</li><li>Keep the name <b>PrintEase</b> and tap <b>Add</b>.</li></ol><p class="small">PrintEase’s Firebase sign-in is separate from your browser account. Live orders require internet.</p><button class="button" data-action="close-modal">Got it</button></div>`);
   }
-  async previewPdf(name, load, options) {
-    this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header>${options ? `<div class="preview-settings"><p><strong>${e(paperLabel(options.paper))}</strong> · ${e(printScaleLabel(options))}</p><p class="small">Dashed lines show estimated printer margins.</p><p class="danger-text" id="preview-clipped" role="status" hidden></p><button class="text-action" data-action="preview-layout">View original PDF</button></div>` : ""}<div class="preview-pages" id="preview-pages" role="region" aria-label="Scrollable PDF pages" tabindex="0"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button><a id="pdf-download" class="icon-button hidden" download="${e(name)}" aria-label="Download PDF">${icon("download")}</a></footer></div>`, null, true);
-    const current = { doc: null, page: options?.pageRanges?.[0]?.start ?? 1, url: null, pages: null, options, layout: !!options };
+  async printPreview(button) {
+    const preview = this.preview;
+    if (!preview?.doc || !preview.canPrint || !this.s.session?.admin || preview.printController) return;
+    const status = this.modal.dialog.querySelector("#print-job-status");
+    try {
+      if (preview.printJob) {
+        preview.printJob.print();
+        return;
+      }
+      const controller = new AbortController();
+      preview.printController = controller;
+      button.disabled = true;
+      button.textContent = "Preparing…";
+      const { prepareBrowserPrint } = await import("./browser-print.mjs");
+      const job = await prepareBrowserPrint(document, preview.doc, preview.options, controller.signal,
+        (page, count) => { status.textContent = `Preparing side ${page} of ${count}…`; });
+      if (this.preview !== preview || !this.s.session?.admin) {
+        job.dispose();
+        return;
+      }
+      preview.printJob = job;
+      const { copies, color, duplex } = preview.options;
+      status.textContent = `Set ${copies} ${copies === 1 ? "copy" : "copies"} · ${color ? "Color" : "Black & white"} · ${duplex ? "Double-sided" : "Single-sided"} in the print dialog.`;
+      button.textContent = "Open print dialog";
+      job.print();
+    } catch {
+      if (this.preview === preview) {
+        status.textContent = "Print preview is unavailable. Use Download PDF to print from your PDF viewer.";
+        button.textContent = preview.printJob ? "Open print dialog" : "Print";
+      }
+    } finally {
+      if (this.preview === preview) {
+        preview.printController = null;
+        button.disabled = false;
+      }
+    }
+  }
+  async previewPdf(name, load, options, adminPrint = false) {
+    const canPrint = !!options && adminPrint && typeof window.print === "function";
+    const downloadName = /\.pdf$/i.test(name) ? name : name + ".pdf";
+    const printSettings = canPrint
+      ? `${e(paperLabel(options.paper))} · ${options.copies} ${options.copies === 1 ? "copy" : "copies"} · ${options.color ? "Color" : "Black & white"} · ${options.duplex ? "Double-sided" : "Single-sided"}`
+      : "";
+    const actions = `<div class="preview-file-actions"><div class="row">
+      ${canPrint ? `<button class="button" type="button" data-action="preview-print" disabled>${icon("printer")}Print</button>` : ""}
+      <a id="pdf-download" class="button outline hidden" download="${e(downloadName)}">${icon("download")} Download PDF</a></div>
+      ${canPrint ? `<p class="small" id="print-job-status" role="status">${printSettings}</p>` : ""}</div>`;
+    this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header>${options ? `<div class="preview-settings"><p><strong>${e(paperLabel(options.paper))}</strong> · ${e(printScaleLabel(options))}</p><p class="small">Dashed lines show estimated printer margins.</p><p class="danger-text" id="preview-clipped" role="status" hidden></p><button class="text-action" data-action="preview-layout">View original PDF</button></div>` : ""}${actions}<div class="preview-pages" id="preview-pages" role="region" aria-label="Scrollable PDF pages" tabindex="0"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button></footer></div>`, null, true);
+    const current = { doc: null, page: options?.pageRanges?.[0]?.start ?? 1, url: null, pages: null, options, layout: !!options, canPrint, printJob: null, printController: null };
     this.preview = current;
     try {
       const bytes = await load();
@@ -984,6 +1034,8 @@ class PrintEase {
         return;
       }
       current.doc = doc;
+      const print = this.modal.dialog.querySelector('[data-action="preview-print"]');
+      if (print) print.disabled = false;
       await this.showPreviewPages();
     } catch (error) {
       if (this.preview === current) {
