@@ -41,6 +41,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.9.0")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")

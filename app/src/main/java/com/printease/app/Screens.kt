@@ -346,14 +346,22 @@ fun PrintEase(
     if (draftPreview >= 0) {
         val extra = attachments.getOrNull(draftPreview - 1)
         val file = if (draftPreview == 0) pdf else extra?.pdf
-        if (file != null)
+        if (file != null) {
+            val selected = extra?.options ?: options
+            val handout = selected.slidesPerSide > 1
             PreviewDialog(
-                file.name,
+                if (handout) "${file.name} · ${selected.slidesPerSide} slides per side"
+                else file.name,
                 model.documents,
-                load = { File(file.path) },
+                load = {
+                    if (handout) File(model.documents.handout(file, selected).path)
+                    else File(file.path)
+                },
                 onClose = { draftPreview = -1 },
-                printOptions = extra?.options ?: options,
+                printOptions = selected.takeUnless { handout },
+                deleteLoadedFile = handout,
             )
+        }
     }
 }
 
@@ -1334,7 +1342,7 @@ fun RequestContent(
                     }
                     if (pdf != null && !quoteOnly)
                         Text(
-                            "${options.selectedPages} selected pages × ${options.copies} copies × ${pesos(options.rate(settings.rates))} per printed side\n${options.sheets} sheets · Payment at pickup",
+                            "${options.printedSides} printed sides × ${options.copies} copies × ${pesos(options.rate(settings.rates))} per printed side\n${options.sheets} sheets · Payment at pickup",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1430,10 +1438,14 @@ fun RequestContent(
                     files.forEachIndexed { index, (name, details) ->
                         if (index > 0) HorizontalDivider()
                         FileOptionsHeading(name, index + 1, files.size)
+                        val layout =
+                            if (details.slidesPerSide > 1)
+                                "${details.slidesPerSide} slides per side · ${details.printedSides} printed sides per copy"
+                            else details.scaleLabel
                         Text(
                             "${details.pageLabel} · ${paperLabel(details.paper)} · ${details.copies} copies\n" +
                                 "${if (details.color) "Color" else "Black & white"} · " +
-                                "${if (details.duplex) "Double-sided" else "Single-sided"} · ${details.scaleLabel}"
+                                "${if (details.duplex) "Double-sided" else "Single-sided"} · $layout"
                         )
                     }
                     Text(
@@ -2074,6 +2086,7 @@ fun PreviewDialog(
     load: suspend () -> File,
     onClose: () -> Unit,
     printOptions: PrintOptions? = null,
+    deleteLoadedFile: Boolean = false,
 ) {
     val context = LocalContext.current
     var file by remember { mutableStateOf<File?>(null) }
@@ -2086,13 +2099,18 @@ fun PreviewDialog(
     var pages by remember { mutableIntStateOf(0) }
     LaunchedEffect(retry) {
         error = null
+        var owned: File? = null
         try {
             val result = load()
+            if (deleteLoadedFile) owned = result
             pages = withContext(Dispatchers.IO) { documents.inspect(result, name).pages }
             file = result
+            if (deleteLoadedFile) kotlinx.coroutines.awaitCancellation()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             error = friendlyError(e)
+        } finally {
+            owned?.delete()
         }
     }
     Dialog(

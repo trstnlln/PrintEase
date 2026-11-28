@@ -3,10 +3,11 @@ import { clockMinutes } from "./pickup-schedule.mjs";
 import { customPaper, requiresPaperQuote, paperLabel, printScaleLabel } from "./paper.mjs";
 import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
-import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, selectedPages, pageLabel, collectionCode, terminal } from "./model.mjs";
+import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
 import * as db from "./db.mjs";
 import { mountPreviewPages } from "./pdf-preview.mjs";
+import { handoutName, handoutOptions, printedSides, slideLayouts, slidesPerSide } from "./handout.mjs";
 import {pushState,reconcilePushUser,enablePush,disablePush,pushRequest,pickupAlertMessage} from "./push.mjs";
 const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, options: defaults(), rawCopies: "1", rawRanges: "", rangeError: null });
 class PrintEase {
@@ -365,6 +366,13 @@ class PrintEase {
         const index = Number(node.dataset.index);
         const item = index === 0 ? this.s.draft : this.s.draft.attachments?.[index - 1];
         if (!item?.pdf || item.paperError || item.rangeError) return;
+        const perSide = slidesPerSide(item.options);
+        if (perSide > 1) {
+          return this.previewPdf(handoutName(item.pdf.name, perSide), async () => {
+            const { prepareHandout } = await import("./handout-pdf.mjs");
+            return new Uint8Array(await (await prepareHandout(item)).file.arrayBuffer());
+          });
+        }
         return this.previewPdf(item.pdf.name, async () => new Uint8Array(await item.file.arrayBuffer()), item.options);
       }
       case "order-preview": {
@@ -492,6 +500,11 @@ class PrintEase {
         const value = customPaper(card.querySelector('[data-print-field="paperWidth"]').value, card.querySelector('[data-print-field="paperHeight"]').value);
         item.paperError = value ? null : "Enter whole millimeters from 50 to 1,000.";
         if (value) item.options.paper = value;
+      } else if (field === "slidesPerSide") {
+        const value = Number(target.value);
+        if (!slideLayouts.includes(value) || !item.pdf || item.pdf.pages < 2) return;
+        item.options.slidesPerSide = value;
+        this.render();
       } else if (field === "actualSize") item.options.actualSize = target.value === "actual";
       else if (field === "color" || field === "duplex") item.options[field] = target.checked;
     } else if (target.dataset.addon && !d.revision) {
@@ -668,7 +681,7 @@ class PrintEase {
           this.s.draft = {
             ...draft, id: draft.revision ? draft.id : crypto.randomUUID(), pdf: first.pdf, file: first.file,
             attachments: [...extras, ...rest],
-            options: { ...oldOptions, pages: first.pdf.pages, pageRanges: [] }, rawRanges: "", rangeError: null
+            options: { ...oldOptions, pages: first.pdf.pages, pageRanges: [], slidesPerSide: 1 }, rawRanges: "", rangeError: null
           };
         }
         this.s.draftWarning = null;
@@ -691,7 +704,7 @@ class PrintEase {
     }, "request");
   }
   updateEstimate() {
-    const d = this.s.draft, o = d.options, cost = estimate(o, this.s.settings.rates);
+    const d = this.s.draft, o = d.options, cost = estimate(handoutOptions(o), this.s.settings.rates);
     const files = [d, ...(d.attachments ?? [])];
     const rangesAvailable = files.length === 1;
     const valid = files.every(validFileOptions) && batchRangesValid(d);
@@ -703,12 +716,12 @@ class PrintEase {
     set("summary-mode", o.color ? "Color" : "Black & white");
     set("summary-sides", o.duplex ? "Double-sided" : "Single-sided");
     set("summary-paper", paperLabel(o.paper));
-    set("summary-scale", printScaleLabel(o));
+    set("summary-scale", slidesPerSide(o) > 1 ? `${slidesPerSide(o)} slides per side` : printScaleLabel(o));
     const quoteOnly = requiresPaperQuote(o.paper) || !!d.attachments?.length;
     set("summary-price-label", quoteOnly ? "Pricing" : "Estimated total");
     set("summary-total", d.pdf && valid && !requestOutOfStock(d, this.s.settings) ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
     set("mobile-total", d.pdf && valid && !requestOutOfStock(d, this.s.settings) ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
-    set("summary-formula", quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side. ${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate.");
+    set("summary-formula", quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${printedSides(o)} printed sides \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side. ${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate.");
     document.querySelectorAll("[data-print-file-index]").forEach(card => {
       const file = files[Number(card.dataset.printFileIndex)];
       const updateHelp = (name, message, invalid) => {
@@ -728,6 +741,8 @@ class PrintEase {
       updateHelp("copy", copies ? "Choose 1–100 copies." : "Enter a whole number from 1 to 100.", !copies);
       updateHelp("paper", file.paperError || "Enter whole millimeters from 50 to 1,000.", !!file.paperError);
       card.querySelectorAll('[data-print-field="paperWidth"],[data-print-field="paperHeight"]').forEach(input => input.setAttribute("aria-invalid", String(!!file.paperError)));
+      const sides = card.querySelector("[data-printed-sides]");
+      if (sides) sides.textContent = `${printedSides(file.options)} printed sides per copy`;
       const preview = card.querySelector('[data-action="draft-preview"]');
       if (preview) preview.disabled = this.s.busy || !!file.paperError || !!file.rangeError;
     });
@@ -742,7 +757,7 @@ class PrintEase {
     if (invalid) return this.toast(invalid.paperError || invalid.rangeError || "Enter 1–100 copies for each file.");
     if ((!this.s.settings.acceptingOrders && !d.revision) || this.s.settingsError) return this.toast(this.s.settingsError || "The shop has paused new requests. Your draft is saved.");
     const quotedVersion = this.s.settings.version;
-    const cost = estimate(d.options, this.s.settings.rates);
+    const cost = estimate(handoutOptions(d.options), this.s.settings.rates);
     const displayTotal = requiresPaperQuote(d.options.paper) || d.attachments?.length ? "Shop quote" : pesos(cost.total);
     const files = [d, ...(d.attachments ?? [])];
     const summary = `<div class="review-sheet review-request-files">
@@ -754,7 +769,9 @@ class PrintEase {
           ["Copies", options.copies],
           ["Print mode", options.color ? "Color" : "Black & white"],
           ["Sides", options.duplex ? "Double-sided" : "Single-sided"],
-          ["Page sizing", printScaleLabel(options)]
+          slidesPerSide(options) > 1
+            ? ["Slides per side", `${slidesPerSide(options)} · ${printedSides(options)} printed sides per copy`]
+            : ["Page sizing", printScaleLabel(options)]
         ].map(([label, value]) => `<div><dt>${e(label)}</dt><dd>${e(value)}</dd></div>`).join("")}</dl>
       </section>`).join("")}
       <div class="review-total"><span>${displayTotal === "Shop quote" ? "Pricing" : "Estimated total"}</span><strong>${displayTotal}</strong></div>
@@ -773,10 +790,18 @@ class PrintEase {
         const label = document.getElementById("progress-text");
         if (label) label.textContent = p >= 1 ? "Saving your request…" : file ? `File ${file.index + 1} of ${file.total} · ${file.name} · ${Math.round(file.fraction / .97 * 100)}%` : "Preparing files…";
       };
+      let request = d;
+      if (files.some(file => slidesPerSide(file.options) > 1)) {
+        const { prepareHandout } = await import("./handout-pdf.mjs");
+        const prepared = [];
+        for (const file of files) prepared.push(await prepareHandout(file));
+        const [first, ...attachments] = prepared;
+        request = { ...first, attachments };
+      }
       if (d.revision) {
-        await this.backend.reviewOrder(d.revision.id, "revise", d.revision.version, { draft: d, onProgress: progress });
+        await this.backend.reviewOrder(d.revision.id, "revise", d.revision.version, { draft: request, onProgress: progress });
       } else {
-        await this.backend.submit({ ...d, addons: this.s.reviewAvailable ? d.addons ?? [] : d.addons }, progress);
+        await this.backend.submit({ ...request, addons: this.s.reviewAvailable ? d.addons ?? [] : d.addons }, progress);
       }
       await this.clearDraft();
       this.s.submitted = { id: d.revision?.id ?? d.id, revision: !!d.revision };

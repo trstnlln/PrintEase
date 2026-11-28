@@ -391,6 +391,34 @@ class Documents(private val context: Context) {
             }
         }
 
+    suspend fun handout(pdf: PdfFile, options: PrintOptions): PdfFile {
+        val target = file("handout-${UUID.randomUUID()}")
+        val suffix = " (${options.slidesPerSide} slides per side).pdf"
+        val name =
+            pdf.name
+                .replace(Regex("\\.pdf$", RegexOption.IGNORE_CASE), "")
+                .take(255 - suffix.length) + suffix
+        try {
+            return withContext(Dispatchers.IO) {
+                com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context.applicationContext)
+                writeHandout(pdf, options, target)
+                require(target.length() <= MAX_PDF_BYTES) {
+                    "The arranged PDF exceeds 5 MB. Use fewer selected slides or a smaller PDF."
+                }
+                inspect(target, name).also {
+                    check(it.pages == options.printedSides) { "The handout page count changed." }
+                }
+            }
+        } catch (error: Exception) {
+            target.delete()
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            val detail = error.message.orEmpty()
+            error(
+                "Could not arrange slides for ${pdf.name}. ${detail.ifBlank { "Try exporting the PowerPoint as a PDF again." }}"
+            )
+        }
+    }
+
     suspend fun renderPrint(file: File, page: Int, options: PrintOptions): Pair<Bitmap, Boolean> =
         withContext(Dispatchers.IO) {
             PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)).use {

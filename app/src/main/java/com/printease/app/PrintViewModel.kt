@@ -56,6 +56,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                 runCatching { parsePageRanges(saved["pageRanges"] ?: "", pdf.value?.pages ?: 1) }
                     .getOrDefault(emptyList()),
                 saved["actualSize"] ?: false,
+                saved["slidesPerSide"] ?: 1,
             )
         )
     private val events = Channel<String>(Channel.BUFFERED)
@@ -102,6 +103,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                             item.getBoolean("color"),
                             item.getBoolean("duplex"),
                             actualSize = item.getBoolean("actualSize"),
+                            slidesPerSide = item.getInt("slidesPerSide", 1),
                         )
                     AttachmentDraft(
                         pdf,
@@ -132,6 +134,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                         putBoolean("color", item.options.color)
                         putBoolean("duplex", item.options.duplex)
                         putBoolean("actualSize", item.options.actualSize)
+                        putInt("slidesPerSide", item.options.slidesPerSide)
                         putString("copiesText", item.input.copies)
                         putString("rangesText", item.input.ranges)
                         putString("paperWidth", item.input.width)
@@ -290,7 +293,9 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         if (files.size > 1)
             saveAttachments(attachments.value + files.drop(1).map { AttachmentDraft(it) })
         draftId = UUID.randomUUID().toString()
-        setOptions(options.value.copy(pages = imported.pages, pageRanges = emptyList()))
+        setOptions(
+            options.value.copy(pages = imported.pages, pageRanges = emptyList(), slidesPerSide = 1)
+        )
         previous?.let { File(it.path).delete() }
     }
 
@@ -301,6 +306,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["color"] = value.color
         saved["actualSize"] = value.actualSize
         saved["duplex"] = value.duplex
+        saved["slidesPerSide"] = value.slidesPerSide
         saved["pageRanges"] = pageRangeLabel(value.pageRanges)
     }
 
@@ -312,27 +318,46 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         val options = options.value.copy(pages = document.pages)
         val revision = revisionId.value
         val progressUpdate: (Float) -> Unit = { progress.value = it }
-        if (revision != null) {
-            repository!!.reviewOrder(
-                revision,
-                ReviewAction.Revise,
-                requireNotNull(saved["revisionVersion"]),
-                draft = CorrectionDraft(document, options, attachments.value),
-                progress = progressUpdate,
-            )
-        } else {
-            val reviewAvailable = shop.value.reviewAvailable
-            check(reviewAvailable || addons.value.isEmpty()) {
-                "Add-ons are unavailable. Refresh before submitting."
+        val temporary = mutableListOf<File>()
+        val originalAttachments = attachments.value
+        options.requireBatchRanges(originalAttachments)
+        suspend fun prepare(source: PdfFile, choice: PrintOptions): PdfFile =
+            if (choice.slidesPerSide == 1) source
+            else documents.handout(source, choice).also { temporary.add(File(it.path)) }
+        try {
+            val printable = prepare(document, options)
+            val outputOptions = options.handoutOptions()
+            val extras =
+                originalAttachments.map { item ->
+                    item.metadata()
+                    val output = prepare(item.pdf, item.options)
+                    if (output == item.pdf) item
+                    else AttachmentDraft(output, item.options.handoutOptions())
+                }
+            if (revision != null) {
+                repository!!.reviewOrder(
+                    revision,
+                    ReviewAction.Revise,
+                    requireNotNull(saved["revisionVersion"]),
+                    draft = CorrectionDraft(printable, outputOptions, extras),
+                    progress = progressUpdate,
+                )
+            } else {
+                val reviewAvailable = shop.value.reviewAvailable
+                check(reviewAvailable || addons.value.isEmpty()) {
+                    "Add-ons are unavailable. Refresh before submitting."
+                }
+                repository!!.submit(
+                    draftId,
+                    printable,
+                    outputOptions,
+                    addons.value.takeIf { reviewAvailable },
+                    extras,
+                    progressUpdate,
+                )
             }
-            repository!!.submit(
-                draftId,
-                document,
-                options,
-                addons.value.takeIf { reviewAvailable },
-                attachments.value,
-                progressUpdate,
-            )
+        } finally {
+            temporary.forEach { it.delete() }
         }
         saved["submittedId"] = revision ?: draftId
         discardDraft()
@@ -361,6 +386,7 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         saved["color"] = false
         saved["actualSize"] = false
         saved["duplex"] = false
+        saved["slidesPerSide"] = 1
         saved["pageRanges"] = ""
     }
 

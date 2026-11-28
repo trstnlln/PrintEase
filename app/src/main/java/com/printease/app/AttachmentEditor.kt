@@ -180,7 +180,38 @@ internal fun PrintOptionsEditor(
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
-    if (printToolsAvailable)
+    if (pdf != null && pdf.pages > 1) {
+        var chooseSlides by remember { mutableStateOf(false) }
+        Text("Slides per side", fontWeight = FontWeight.SemiBold)
+        Box {
+            OutlinedButton(
+                { chooseSlides = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            ) {
+                Text(options.slidesPerSide.toString(), Modifier.weight(1f))
+                Icon(Icons.Default.ExpandMore, null)
+            }
+            DropdownMenu(expanded = chooseSlides, onDismissRequest = { chooseSlides = false }) {
+                slideLayouts.forEach { count ->
+                    DropdownMenuItem(
+                        text = { Text("$count slides per side") },
+                        onClick = {
+                            chooseSlides = false
+                            onChange(options.copy(slidesPerSide = count), input)
+                        },
+                    )
+                }
+            }
+        }
+        Text(
+            if (options.slidesPerSide == 1) "Each PDF page counts as one slide."
+            else "${options.printedSides} printed sides per copy",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (printToolsAvailable && options.slidesPerSide == 1)
         PreferenceSwitch("Actual size", "Off for Fit to paper", options.actualSize, !busy) {
             onChange(options.copy(actualSize = it), input)
         }

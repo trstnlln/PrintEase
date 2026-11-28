@@ -186,6 +186,29 @@ test("a quoted request shows the confirmed amount and approval action", async t 
   assert.equal(app.s.orders.find(o=>o.id==="sample-1043").review.stage, "approved");
 });
 
+test("slides per side are reflected in the estimate, review and stored PDF", async t => {
+ const app = await setup(t);
+ await app.backend.login(false);
+ app.go("request");
+ await app.pick(await selectedFile(12));
+ const id = app.s.draft.id;
+ const layout = document.getElementById("slides-per-side");
+ assert.deepEqual([...layout.options].map(option => Number(option.value)), [1,2,4,6,9]);
+ layout.value = '4';
+ app.onInput({target:layout});
+ assert.equal(document.getElementById('summary-total').textContent, '₱6.00');
+ assert.match(document.getElementById('summary-formula').textContent, /3 printed sides/);
+ app.review();
+ assert.match(document.querySelector("#modal-root").textContent, /Slides per side4 · 3 printed sides per copy/);
+ await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});
+ const order = app.s.orders.find(order => order.id === id);
+ assert.equal(order.options.pages, 3);
+ assert.equal(order.estimatedCost, 6);
+ assert.equal(order.fileName, 'iPhone (4 slides per side).pdf');
+ const {openPdf} = await import('../src/pdf.mjs');
+ const doc = await openPdf(await app.backend.bytes(order));
+ try { assert.equal(doc.numPages, 3); } finally { await doc.destroy(); }
+});
 test("custom sizes and additional files use a shop quote and keep separate print choices", async t => {
  const app = await setup(t);
  await app.backend.login(false);
@@ -203,10 +226,11 @@ test("custom sizes and additional files use a shop quote and keep separate print
  input("paper-height","330");
  assert.equal(document.getElementById("summary-paper").textContent,"203 × 330 mm (custom)");
  assert.equal(document.getElementById("summary-total").textContent,"Shop quote");
- const file = await selectedFile(1);
+ const file = await selectedFile(3);
  file.name = "Cover.pdf";
  await app.pickFiles([file], true);
  input("file-0-paper","A3");
+ input("file-0-slidesPerSide","2");
  input("file-0-copies","0");
  assert.equal(document.querySelector('[data-action="review"]').disabled,true);
  input("file-0-copies","2");
@@ -217,6 +241,8 @@ test("custom sizes and additional files use a shop quote and keep separate print
  const saved = app.s.orders.find(order=>order.id===id);
  assert.equal(saved.options.paper,"Custom 203x330 mm");
  assert.equal(saved.attachments[0].options.paper,"A3");
+ assert.equal(saved.attachments[0].options.pages,2);
+ assert.equal(saved.attachments[0].fileName,"Cover (2 slides per side).pdf");
  assert.equal(saved.attachments[0].options.copies,2);
  assert.equal(saved.review.stage,"submitted");
 });
@@ -269,7 +295,7 @@ test('the top picker accepts a batch and keeps print settings close to each file
  assert.deepEqual(cards.map(card => card.firstElementChild.querySelector('h3').textContent), names);
  assert.deepEqual(cards.map(card => document.getElementById(card.getAttribute('aria-labelledby')).textContent), names);
  assert.deepEqual(cards.map(card => [...card.querySelectorAll('[data-print-field]')].map(field => field.dataset.printField)),
-   Array(3).fill(['ranges', 'paper', 'actualSize', 'copies', 'color', 'duplex']));
+   Array(3).fill(['ranges', 'paper', 'slidesPerSide', 'actualSize', 'copies', 'color', 'duplex']));
  assert.deepEqual(cards.map(card => card.querySelector('input[type=number]').id), ['copies', 'file-0-copies', 'file-1-copies']);
  for (const [id, value] of [['copies', '2'], ['file-0-copies', '3'], ['file-1-copies', '4']]) {
   const target = document.getElementById(id);

@@ -6,6 +6,29 @@ test('the real PDF selection path reads page count and hash even when iPhone sup
  const file=new Blob([samplePDF(3)]);file.name='Three pages.pdf';const metadata=await inspectPdf(file);
  assert.equal(metadata.pages,3);assert.equal(metadata.name,file.name);assert.match(metadata.sha256,/^[a-f0-9]{64}$/);assert.equal(metadata.bytes,file.size);
 });
+test('handouts arrange selected slides in order and produce stable PDF bytes', async () => {
+ const {prepareHandout} = await import('../src/handout-pdf.mjs');
+ const {openPdf} = await import('../src/pdf.mjs');
+ const file = new File([samplePDF(12)], 'Slides.pdf', {type:'application/pdf'});
+ const pdf = await inspectPdf(file);
+ const item = {file, pdf, options: {
+  paper:'A4', pages:12, copies:2, color:false, duplex:true, slidesPerSide:4,
+  pageRanges:[{start:1,end:3},{start:5,end:10},{start:12,end:12}],
+ }};
+ const prepared = await prepareHandout(item);
+ assert.equal(prepared.pdf.pages, 3);
+ assert.deepEqual(prepared.options, {paper:'A4', pages:3, copies:2, color:false, duplex:true, pageRanges:[], actualSize:false});
+ assert.equal(prepared.pdf.name, 'Slides (4 slides per side).pdf');
+ assert.equal((await prepareHandout(item)).pdf.sha256, prepared.pdf.sha256);
+ const output = await openPdf(new Uint8Array(await prepared.file.arrayBuffer()));
+ try {
+  const texts = await Promise.all([1,2,3].map(async page => {
+   const content = await (await output.getPage(page)).getTextContent();
+   return content.items.map(item => item.str).filter(text => /^Page \d+ of 12$/.test(text));
+  }));
+  assert.deepEqual(texts, [[1,2,3,5],[6,7,8,9],[10,12]].map(indices => indices.map(i => `Page ${i} of 12`)));
+ } finally { await output.destroy(); }
+});
 test('an unreadable iCloud file gives an actionable error',async()=>{
  await assert.rejects(inspectPdf({size:100,name:'Cloud.pdf',arrayBuffer:async()=>{throw new Error('not downloaded');}}),/Download it to your iPhone/);
 });

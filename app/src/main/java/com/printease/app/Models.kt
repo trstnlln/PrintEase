@@ -236,9 +236,11 @@ data class PrintOptions(
     val duplex: Boolean = false,
     val pageRanges: List<PageRange> = emptyList(),
     val actualSize: Boolean = false,
+    val slidesPerSide: Int = 1,
 ) {
     init {
         require(validPaper(paper))
+        require(slidesPerSide in slideLayouts)
         require(pages in 1..1000)
         require(copies in 1..100)
         require(pageRanges.size <= 5)
@@ -257,7 +259,7 @@ data class PrintOptions(
     fun rate(rates: PrintRates): Long =
         (if (color) rates.color else rates.bw) + (if (paper == "Legal") rates.legalExtra else 0)
 
-    fun total(rates: PrintRates) = selectedPages * copies * rate(rates)
+    fun total(rates: PrintRates) = printedSides * copies * rate(rates)
 
     val rate: Long
         get() = rate(PrintRates())
@@ -266,7 +268,7 @@ data class PrintOptions(
         get() = total(PrintRates())
 
     val sheets: Int
-        get() = (if (duplex) (selectedPages + 1) / 2 else selectedPages) * copies
+        get() = (if (duplex) (printedSides + 1) / 2 else printedSides) * copies
 
     val pageLabel: String
         get() =

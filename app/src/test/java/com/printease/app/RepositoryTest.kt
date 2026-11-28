@@ -2,6 +2,10 @@ package com.printease.app
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -28,6 +32,44 @@ class RepositoryTest {
             .clear()
             .commit()
         documents = Documents(context)
+    }
+
+    @Test
+    fun handoutSavesSelectedSlidesAndKeepsRetriesStable() {
+        val input = File(context.cacheDir, "slides.pdf")
+        val output = File(context.cacheDir, "handout.pdf")
+        val retry = File(context.cacheDir, "handout-retry.pdf")
+        PDDocument().use { document ->
+            repeat(12) { index ->
+                val page = PDPage(PDRectangle(594f, 334f))
+                if (index == 2) page.rotation = 90
+                document.addPage(page)
+                PDPageContentStream(document, page).use { stream ->
+                    stream.addRect(30f, 40f, 100f, 90f)
+                    stream.fill()
+                }
+            }
+            document.save(input)
+        }
+        val source = PdfFile(input.path, "Slides.pdf", 12, input.length(), "d".repeat(64))
+        val options =
+            PrintOptions(
+                pages = 12,
+                copies = 2,
+                duplex = true,
+                slidesPerSide = 4,
+                pageRanges = listOf(PageRange(1, 3), PageRange(5, 10), PageRange(12, 12)),
+            )
+        writeHandout(source, options, output)
+        writeHandout(source, options, retry)
+        assertArrayEquals(output.readBytes(), retry.readBytes())
+        assertEquals(3, options.handoutOptions().pages)
+        assertEquals(options.total, options.handoutOptions().total)
+        assertEquals(4, options.sheets)
+        PDDocument.load(output).use { document ->
+            assertEquals(3, document.numberOfPages)
+            assertEquals(listOf(4, 4, 2), document.pages.map { it.resources.xObjectNames.count() })
+        }
     }
 
     @Test
