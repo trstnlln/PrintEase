@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.google.firebase.firestore.FirebaseFirestoreException
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.catch
@@ -35,6 +36,7 @@ internal fun ServiceRequestsContent(
     documents: Documents,
     session: Session,
     accepting: Boolean,
+    shopName: String,
 ) {
     var requests by remember(session.uid) { mutableStateOf<List<ServiceRequest>?>(null) }
     var loadError by remember(session.uid) { mutableStateOf<String?>(null) }
@@ -67,12 +69,16 @@ internal fun ServiceRequestsContent(
             saveError = null
         }
     }
+    var savingDesignId by rememberSaveable(session.uid) { mutableStateOf<String?>(null) }
+    var previewDesign by remember(session.uid, page) { mutableStateOf<ServiceRequest?>(null) }
     val context = LocalContext.current
     val fileSaver =
         rememberLauncherForActivityResult(
             ActivityResultContracts.CreateDocument("application/pdf")
         ) { uri ->
-            if (uri != null && page.isNotEmpty()) action { desk.saveDesign(page, uri, context) }
+            val id = savingDesignId
+            savingDesignId = null
+            if (uri != null && id != null) action { desk.saveDesign(id, uri, context) }
         }
     key(page) {
         Column(
@@ -83,7 +89,7 @@ internal fun ServiceRequestsContent(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (page.isNotEmpty())
-                TextButton(
+                PressTextButton(
                     onClick = {
                         page = ""
                         saveError = null
@@ -117,17 +123,28 @@ internal fun ServiceRequestsContent(
                             request,
                             session,
                             busy,
-                            onSaveDesign = { fileSaver.launch(it) },
+                            onPreviewDesign = { previewDesign = request },
+                            onSaveDesign = { name ->
+                                savingDesignId = request.id
+                                fileSaver.launch(name.replace('/', '_').replace('\\', '_'))
+                            },
                             onChange = { change, quote, pickup ->
                                 action { desk.update(session, request, change, quote, pickup) }
                             },
                         )
-                        MessageThread(desk, session, "serviceRequests", request.id)
+                        MessageThread(
+                            desk,
+                            session,
+                            "serviceRequests",
+                            request.id,
+                            request.customerName,
+                            shopName,
+                        )
                     }
                 }
                 else -> {
                     if (!session.admin)
-                        Button(
+                        PressButton(
                             onClick = { page = "new" },
                             enabled = accepting,
                             modifier = Modifier.fillMaxWidth(),
@@ -165,6 +182,15 @@ internal fun ServiceRequestsContent(
             }
         }
     }
+    previewDesign?.let { request ->
+        PreviewDialog(
+            name = request.designName.orEmpty(),
+            documents = documents,
+            load = { desk.loadDesign(request.id) },
+            deleteLoadedFile = !BuildConfig.DEMO,
+            onClose = { previewDesign = null },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -183,6 +209,7 @@ private fun ServiceForm(
     var size by rememberSaveable { mutableStateOf("") }
     var sides by rememberSaveable { mutableStateOf("Single-sided") }
     var design by remember { mutableStateOf<PdfFile?>(null) }
+    var preview by remember(design?.path) { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val pick =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -256,16 +283,22 @@ private fun ServiceForm(
             modifier = Modifier.fillMaxWidth(),
             enabled = !busy,
         )
-        OutlinedButton(
+        PressOutlinedButton(
             onClick = { pick.launch(arrayOf("application/pdf", "image/jpeg", "image/png")) },
             enabled = !busy,
         ) {
             Text(if (design == null) "Attach design (optional)" else "Replace design")
         }
         Text(design?.name ?: "One PDF, JPG, or PNG up to 5 MB.")
-        if (design != null)
-            TextButton(onClick = { design = null }, enabled = !busy) { Text("Remove attachment") }
-        Button(
+        if (design != null) {
+            PressOutlinedButton(onClick = { preview = true }, enabled = !busy) {
+                Text("Preview design")
+            }
+            PressTextButton(onClick = { design = null }, enabled = !busy) {
+                Text("Remove attachment")
+            }
+        }
+        PressButton(
             onClick = {
                 action {
                     submit(
@@ -289,6 +322,15 @@ private fun ServiceForm(
             Text(if (busy) "Please wait…" else "Send request")
         }
     }
+    if (preview)
+        design?.let { file ->
+            PreviewDialog(
+                name = file.name,
+                documents = documents,
+                load = { File(file.path) },
+                onClose = { preview = false },
+            )
+        }
 }
 
 @Composable
@@ -296,6 +338,7 @@ private fun ServiceDetail(
     request: ServiceRequest,
     session: Session,
     busy: Boolean,
+    onPreviewDesign: () -> Unit,
     onSaveDesign: (String) -> Unit,
     onChange: (String, Long?, String) -> Unit,
 ) {
@@ -308,8 +351,12 @@ private fun ServiceDetail(
         if (request.size.isNotBlank()) DetailLine("Dimensions", request.size)
         if (request.details.isNotBlank()) DetailLine("Instructions", request.details)
         request.designName?.let { name ->
-            OutlinedButton(onClick = { onSaveDesign(name) }, enabled = !busy) {
-                Text("Download $name")
+            DetailLine("Design file", name)
+            PressOutlinedButton(onClick = onPreviewDesign, enabled = !busy) {
+                Text("Preview design")
+            }
+            PressTextButton(onClick = { onSaveDesign(name) }, enabled = !busy) {
+                Text("Download PDF")
             }
         }
         if (request.quote != null) {
@@ -317,16 +364,16 @@ private fun ServiceDetail(
             DetailLine("Pickup", request.pickup)
         } else Text("Waiting for the shop to confirm the price and pickup.")
         if (!session.admin && request.status == "Quoted") {
-            Button(onClick = { onChange("Approved", null, "") }, enabled = !busy) {
+            PressButton(onClick = { onChange("Approved", null, "") }, enabled = !busy) {
                 Text("Approve quote")
             }
-            OutlinedButton(onClick = { onChange("Declined", null, "") }, enabled = !busy) {
+            PressOutlinedButton(onClick = { onChange("Declined", null, "") }, enabled = !busy) {
                 Text("Decline quote")
             }
         }
         if (session.admin)
             serviceNextStatus[request.status]?.let { next ->
-                Button(onClick = { onChange("progress", null, "") }, enabled = !busy) {
+                PressButton(onClick = { onChange("progress", null, "") }, enabled = !busy) {
                     Text("Mark ${next.lowercase()}")
                 }
             }
@@ -358,7 +405,7 @@ private fun ServiceDetail(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !busy,
             )
-            Button(
+            PressButton(
                 onClick = { onChange("quote", quote.toLongOrNull(), pickup) },
                 enabled =
                     !busy && (quote.toLongOrNull() ?: 0L) in 1L..200000000L && pickup.isNotBlank(),
@@ -370,7 +417,19 @@ private fun ServiceDetail(
 }
 
 @Composable
-internal fun MessageThread(desk: ServiceDesk, session: Session, parent: String, id: String) {
+internal fun MessageThread(
+    desk: ServiceDesk,
+    session: Session,
+    parent: String,
+    id: String,
+    customerName: String,
+    shopName: String,
+) {
+    val customer =
+        customerName.trim().ifBlank {
+            if (session.admin) "Customer" else session.name.trim().ifBlank { "Customer" }
+        }
+    val shop = shopName.trim().ifBlank { "Nano Print Alangilan" }
     var messages by remember(id, session.uid) { mutableStateOf<List<DeskMessage>?>(null) }
     var error by remember(id, session.uid) { mutableStateOf<String?>(null) }
     var sendError by remember { mutableStateOf<String?>(null) }
@@ -418,7 +477,10 @@ internal fun MessageThread(desk: ServiceDesk, session: Session, parent: String, 
                             Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text(message.senderRole, style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                if (message.senderRole == "Shop") shop else customer,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
                             Text(message.text)
                             if (message.createdAt > 0)
                                 Text(
@@ -437,7 +499,7 @@ internal fun MessageThread(desk: ServiceDesk, session: Session, parent: String, 
                     enabled = !sending,
                 )
                 sendError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Button(
+                PressButton(
                     onClick = {
                         sending = true
                         sendError = null

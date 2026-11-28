@@ -67,7 +67,7 @@ internal fun PrintOptionsEditor(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FileOptionsHeading(pdf.name, position, count, Modifier.weight(1f))
             if (onRemove != null)
-                IconButton(onRemove, enabled = !busy) {
+                PressIconButton(onRemove, enabled = !busy) {
                     Icon(Icons.Default.Close, "Remove ${pdf.name}")
                 }
         }
@@ -98,7 +98,7 @@ internal fun PrintOptionsEditor(
     )
     Text("Paper size", fontWeight = FontWeight.SemiBold)
     Box {
-        OutlinedButton(
+        PressOutlinedButton(
             { choosePaper = true },
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
@@ -184,7 +184,7 @@ internal fun PrintOptionsEditor(
         var chooseSlides by remember { mutableStateOf(false) }
         Text("Slides per side", fontWeight = FontWeight.SemiBold)
         Box {
-            OutlinedButton(
+            PressOutlinedButton(
                 { chooseSlides = true },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !busy,
@@ -217,7 +217,7 @@ internal fun PrintOptionsEditor(
         }
     if (pdf != null) {
         ImageSizeEditor(pdf, busy, onResize)
-        OutlinedButton(
+        PressOutlinedButton(
             onPreview,
             modifier = Modifier.fillMaxWidth(),
             enabled = !busy && validPaper && ranges.isSuccess,
@@ -278,7 +278,7 @@ fun ImageSizeEditor(pdf: PdfFile, busy: Boolean, onResize: (Int) -> Unit) {
             isError = percent !in 1..100,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         )
-        TextButton(
+        PressTextButton(
             onClick = { percent?.let(onResize) },
             enabled = !busy && percent in 1..100 && percent != applied,
         ) {

@@ -244,15 +244,13 @@ internal class ServiceDesk(context: Context, private val documents: Documents) {
         }
     }
 
+    suspend fun loadDesign(id: String): File =
+        if (BuildConfig.DEMO) documents.file(id)
+        else HostedDocuments.downloadService(id, documents.file("design-${UUID.randomUUID()}"))
+
     suspend fun saveDesign(id: String, uri: Uri, context: Context) =
         withContext(Dispatchers.IO) {
-            val file =
-                if (BuildConfig.DEMO) documents.file(id)
-                else
-                    HostedDocuments.downloadService(
-                        id,
-                        documents.file("design-${UUID.randomUUID()}"),
-                    )
+            val file = loadDesign(id)
             try {
                 checkNotNull(context.contentResolver.openOutputStream(uri)) {
                         "The destination is unavailable."

@@ -126,7 +126,7 @@ fun ReviewPanel(
                             Modifier.fillMaxWidth(),
                             enabled && valid,
                         )
-                        TextButton({ action = null }, enabled = enabled) { Text("Back") }
+                        PressTextButton({ action = null }, enabled = enabled) { Text("Back") }
                     }
                     else -> {
                         if (stage !in listOf(ReviewStage.Correction, ReviewStage.Approved))
@@ -141,7 +141,7 @@ fun ReviewPanel(
                                 enabled,
                             )
                         if (stage != ReviewStage.Correction)
-                            OutlinedButton(
+                            PressOutlinedButton(
                                 {
                                     action = ReviewAction.RequestCorrection
                                     note = ""
@@ -163,7 +163,7 @@ fun ReviewPanel(
                     Modifier.fillMaxWidth(),
                     enabled,
                 )
-                OutlinedButton(
+                PressOutlinedButton(
                     { action = ReviewAction.Decline },
                     enabled = enabled,
                     modifier = Modifier.fillMaxWidth(),
@@ -186,7 +186,7 @@ fun ReviewPanel(
                 )
             },
             confirmButton = {
-                TextButton(
+                PressTextButton(
                     {
                         onReview(requireNotNull(action), version, "", null)
                         action = null
@@ -196,7 +196,7 @@ fun ReviewPanel(
                     Text(if (approve) "Approve price" else "Decline price")
                 }
             },
-            dismissButton = { TextButton({ action = null }) { Text("Back") } },
+            dismissButton = { PressTextButton({ action = null }) { Text("Back") } },
         )
     }
 }

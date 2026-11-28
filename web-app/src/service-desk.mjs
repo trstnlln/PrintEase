@@ -71,6 +71,7 @@ export class ServiceDesk {
     this.text = "";
     this.quoteDraft = null;
     this.file = null;
+    this.preparedDesign = null;
     this.newId = active && route === "service-new" ? "service-" + crypto.randomUUID() : "";
     const handle = fn => value => {
       if (this.key !== key) return;
@@ -129,15 +130,33 @@ export class ServiceDesk {
     this.stop = () => unsub.forEach(stop => stop());
   }
 
+  prepareDesign(file) {
+    if (this.preparedDesign?.file === file) return this.preparedDesign.promise;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("Preparing the design timed out. Choose the file again and retry.")), 30000);
+    const preview = { file, promise: null };
+    preview.promise = import("./print-file.mjs")
+      .then(({ preparePrintFile }) => preparePrintFile(file, { signal: controller.signal }))
+      .catch(error => {
+        if (this.preparedDesign === preview) this.preparedDesign = null;
+        throw error;
+      })
+      .finally(() => clearTimeout(timer));
+    this.preparedDesign = preview;
+    return preview.promise;
+  }
+
+  selectDesign(file) {
+    this.file = file;
+    this.preparedDesign = null;
+  }
+
   async submit() {
     const id = this.newId;
     const fields = serviceFields({ ...this.form, quantity: Number(this.form.quantity), details: this.form.details.trim(), size: this.form.size.trim() });
     let design = null;
     if (this.file) {
-      const { preparePrintFile } = await import("./print-file.mjs");
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error("Preparing the design timed out. Choose the file again and retry.")), 30000);
-      const prepared = await preparePrintFile(this.file, { signal: controller.signal }).finally(() => clearTimeout(timer));
+      const prepared = await this.prepareDesign(this.file);
       const fileName = prepared.pdf.name.slice(0, 255);
       if (this.local) await demo.put("files", { id, file: prepared.file });
       else await this.backend.documents.upload(this.backend.auth.currentUser, prepared, () => {}, id);
@@ -192,15 +211,20 @@ export class ServiceDesk {
     this.text = "";
   }
 
-  async download() {
-    const file = this.local
-      ? (await demo.get("files", this.id))?.file
-      : new Blob([await this.backend.documents.serviceBytes(this.backend.auth.currentUser, this.id)], { type: "application/pdf" });
+  async designBytes() {
+    if (!this.local) return this.backend.documents.serviceBytes(this.backend.auth.currentUser, this.id);
+    const file = (await demo.get("files", this.id))?.file;
     if (!file) throw new Error("The design file is unavailable.");
-    const url = URL.createObjectURL(file);
+    return new Uint8Array(await file.arrayBuffer());
+  }
+
+  async download() {
+    const name = this.request.design.fileName;
+    const bytes = await this.designBytes();
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = this.request.design.fileName;
+    link.download = name;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
@@ -214,9 +238,13 @@ const disabled = state => state.busy || (!state.online && state.mode !== "demo")
 const field = (id, label, html) => `<label for="${id}">${label}</label>${html}`;
 
 function thread(s, desk, title) {
+  const order = s.route === "order-messages" ? s.orders.find(order => order.id === s.selected) : null;
+  const customer = (order?.studentName ?? desk.request?.customerName ?? desk.request?.studentName)?.trim()
+    || (s.session.admin ? "Customer" : s.session.name?.trim() || "Customer");
+  const shop = s.settings?.name?.trim() || "Nano Print Alangilan";
   return `<section class="card stack service-thread"><div><h2>${title}</h2>
     <p class="muted">Visible to the customer and authorized shop staff.</p></div>
-    <ol aria-label="Recent messages" role="log" class="service-messages" tabindex="0">${desk.messages.map(m => `<li class="${m.senderId === s.session.uid ? "own" : ""}"><strong>${e(m.senderRole)}</strong> <small>${e(date(m.createdAt))}</small><p>${e(m.text)}</p></li>`).join("")}</ol>
+    <ol aria-label="Recent messages" role="log" class="service-messages" tabindex="0">${desk.messages.map(m => `<li class="${m.senderId === s.session.uid ? "own" : ""}"><strong>${e(m.senderRole === "Shop" ? shop : customer)}</strong> <small>${e(date(m.createdAt))}</small><p>${e(m.text)}</p></li>`).join("")}</ol>
     ${!desk.threadVerified ? '<p class="muted">Connecting to messages…</p>' : !desk.messages.length ? '<p class="muted">No messages yet.</p>' : ""}
     <form class="stack" id="service-message-form">
       ${field("service-message", "Message", `<textarea id="service-message" rows="2" maxlength="1000" required ${desk.threadVerified ? disabled(s) : "disabled"}>${e(desk.text)}</textarea>`)}
@@ -252,9 +280,10 @@ export function serviceView(s, desk) {
         <p id="service-file-summary" class="muted text-wrap">${desk.file ? `Selected file · ${e(desk.file.name)}` : "One PDF, JPG, or PNG up to 5 MB."}</p>
         <div class="file-picker-actions">
           <button type="button" id="service-file-picker" class="button outline" data-action="service-pick-file"
-            aria-describedby="service-file-summary" ${disabled(s)}>${desk.file ? "Replace design file" : "Choose design file"}</button>
+            aria-describedby="service-file-summary" ${s.busy ? "disabled" : ""}>${desk.file ? "Replace design file" : "Choose design file"}</button>
           <input id="service-file" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" hidden>
-          ${desk.file ? `<button class="button outline" type="button" data-action="service-remove-file" ${disabled(s)}>Remove attachment</button>` : ""}
+          ${desk.file ? `<button class="button outline" type="button" data-action="service-preview-draft" ${s.busy ? "disabled" : ""}>Preview design</button>
+          <button class="button outline" type="button" data-action="service-remove-file" ${s.busy ? "disabled" : ""}>Remove attachment</button>` : ""}
         </div>
       </fieldset>
       <button class="button" ${disabled(s)}>${s.busy ? "Sending…" : "Send request"}</button>
@@ -272,7 +301,11 @@ export function serviceView(s, desk) {
       ${r.sides ? `<p><strong>Print sides</strong> ${e(r.sides)}</p>` : ""}
       ${r.size ? `<p><strong>Dimensions</strong> ${e(r.size)}</p>` : ""}
       ${r.details ? `<p class="service-instructions">${e(r.details)}</p>` : ""}
-      ${r.design ? `<button class="button" data-action="service-download" ${disabled(s)}>Download ${e(r.design.fileName)}</button>` : ""}
+      ${r.design ? `<p class="text-wrap"><strong>Design file</strong> ${e(r.design.fileName)}</p>
+        <div class="file-picker-actions service-design-actions">
+          <button class="button outline" data-action="service-preview" ${disabled(s)}>Preview design</button>
+          <button class="button outline" data-action="service-download" ${disabled(s)}>Download PDF</button>
+        </div>` : ""}
       ${r.quote ? `<h3>Shop quote · ${pesos(r.quote)}</h3><p class="service-instructions">${e(r.pickup)}</p>` : '<p class="muted">Waiting for the shop to confirm the price and pickup.</p>'}
       ${!staff && r.status === "Quoted" ? `<div class="actions">${change("Approve quote", "Approved", true)}${change("Decline quote", "Declined")}</div>` : ""}
       ${staff && nextStatus[r.status] ? change("Mark " + nextStatus[r.status].toLowerCase(), "progress", true) : ""}

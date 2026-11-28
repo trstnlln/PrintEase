@@ -326,15 +326,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .queue-status-card h2 { font-size: 1.125rem; }
 .queue-status-counts { font-size: 1.0625rem; font-weight: 650; }
 @media (prefers-reduced-motion: no-preference) {
-  .button, .icon-button, .text-action, .filter, .bottom-nav a, .order-card {
-    transition: transform 140ms ease-out, background-color 140ms ease-out, border-color 140ms ease-out;
+  :is(button, .button, .icon-button, .text-action, .filter, .bottom-nav a, .nav-items a, summary) {
+    transition: scale 130ms ease-out, background-color 130ms ease-out, border-color 130ms ease-out;
   }
-  .button:not(:disabled):active, .icon-button:not(:disabled):active,
-  .text-action:not(:disabled):active, .filter:active, .bottom-nav a:active {
-    transform: scale(.96);
+  :is(button, .button, .icon-button, .text-action, .filter, .bottom-nav a, .nav-items a, summary):not(:disabled):not([aria-disabled="true"]):active {
+    scale: .96;
   }
-  .order-card:active { transform: scale(.985); }
+  .file-choose:has(input:active:not(:disabled)) { scale: .96; }
+  :is(.order-card, a.service-row) { transition: scale 130ms ease-out; }
+  :is(.order-card, a.service-row):active { scale: .985; }
 }
+
 
 :root {
   --active-surface: #d6eedf;
@@ -526,4 +528,6 @@ a.service-row { color: var(--ink); text-decoration: none; }
   gap: 8px;
 }
 .service-attachment legend { margin-bottom: 8px; padding: 0; font-size: 13px; font-weight: 600; }
-.service-attachment .file-picker-actions { justify-content: flex-start; }
+.service-attachment .file-picker-actions, .service-design-actions { justify-content: flex-start; }
+
+.service-messages strong { overflow-wrap: anywhere; }

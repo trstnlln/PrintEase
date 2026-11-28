@@ -204,10 +204,23 @@ class PrintEase {
         document.getElementById("service-file")?.click();
         return;
       case "service-remove-file":
-        this.services.file = null;
+        this.services.selectDesign(null);
         this.render();
         document.getElementById("service-file-picker")?.focus({ preventScroll: true });
         return;
+      case "service-preview-draft": {
+        const file = this.services.file;
+        if (file) return this.previewPdf(file.name, async () => {
+          const { file: pdf } = await this.services.prepareDesign(file);
+          return new Uint8Array(await pdf.arrayBuffer());
+        }, undefined, false, false);
+        return;
+      }
+      case "service-preview": {
+        const design = this.services.request?.design;
+        if (design) return this.previewPdf(design.fileName, () => this.services.designBytes());
+        return;
+      }
       case "service-download":
         return this.action(() => this.services.download());
       case "service-update":
@@ -438,7 +451,7 @@ class PrintEase {
     if (id === "service-file" && event.type === "change") {
       const file = target.files[0];
       if (file) {
-        this.services.file = file;
+        this.services.selectDesign(file);
         this.render();
       }
       return;
@@ -1069,26 +1082,28 @@ class PrintEase {
       }
     }
   }
-  async previewPdf(name, load, options, adminPrint = false) {
+  async previewPdf(name, load, options, adminPrint = false, canDownload = true) {
     const canPrint = !!options && adminPrint && typeof window.print === "function";
     const downloadName = /\.pdf$/i.test(name) ? name : name + ".pdf";
     const printSettings = canPrint
       ? `${e(paperLabel(options.paper))} · ${options.copies} ${options.copies === 1 ? "copy" : "copies"} · ${options.color ? "Color" : "Black & white"} · ${options.duplex ? "Double-sided" : "Single-sided"}`
       : "";
-    const actions = `<div class="preview-file-actions"><div class="row">
+    const actions = canDownload ? `<div class="preview-file-actions"><div class="row">
       ${canPrint ? `<button class="button" type="button" data-action="preview-print" disabled>${icon("printer")}Print</button>` : ""}
       <a id="pdf-download" class="button outline hidden" download="${e(downloadName)}">${icon("download")} Download PDF</a></div>
-      ${canPrint ? `<p class="small" id="print-job-status" role="status">${printSettings}</p>` : ""}</div>`;
+      ${canPrint ? `<p class="small" id="print-job-status" role="status">${printSettings}</p>` : ""}</div>` : "";
     this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header>${options ? `<div class="preview-settings"><p><strong>${e(paperLabel(options.paper))}</strong> · ${e(printScaleLabel(options))}</p><p class="small">Dashed lines show estimated printer margins.</p><p class="danger-text" id="preview-clipped" role="status" hidden></p><button class="text-action" data-action="preview-layout">View original PDF</button></div>` : ""}${actions}<div class="preview-pages" id="preview-pages" role="region" aria-label="Scrollable PDF pages" tabindex="0"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button></footer></div>`, null, true);
     const current = { doc: null, page: options?.pageRanges?.[0]?.start ?? 1, url: null, pages: null, options, layout: !!options, canPrint, printJob: null, printController: null };
     this.preview = current;
     try {
       const bytes = await load();
       if (this.preview !== current) return;
-      current.url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
       const a = document.getElementById("pdf-download");
-      a.href = current.url;
-      a.classList.remove("hidden");
+      if (a) {
+        current.url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        a.href = current.url;
+        a.classList.remove("hidden");
+      }
       const { openPdf } = await import("./pdf.mjs");
       const doc = await openPdf(bytes);
       if (this.preview !== current) {

@@ -67,7 +67,7 @@ fun PickupSummary(order: PrintOrder, admin: Boolean, busy: Boolean, onEstimate: 
                 order.status in
                     listOf(OrderStatus.Pending, OrderStatus.Accepted, OrderStatus.Printing)
         ) {
-            OutlinedButton(
+            PressOutlinedButton(
                 onEstimate,
                 Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 enabled = !busy,
@@ -111,17 +111,17 @@ fun PickupTimeDialog(order: PrintOrder, onSave: (Long?) -> Unit, onDismiss: () -
                     singleLine = true,
                 )
                 if (order.expectedReadyAt != null)
-                    TextButton({ onSave(null) }) { Text("Clear estimate") }
+                    PressTextButton({ onSave(null) }) { Text("Clear estimate") }
             }
         },
         confirmButton = {
-            TextButton(
+            PressTextButton(
                 { number?.let { onSave(System.currentTimeMillis() + it * 60000) } },
                 enabled = number != null && number in 1..10080,
             ) {
                 Text("Save estimate")
             }
         },
-        dismissButton = { TextButton(onDismiss) { Text("Go back") } },
+        dismissButton = { PressTextButton(onDismiss) { Text("Go back") } },
     )
 }

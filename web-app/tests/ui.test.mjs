@@ -638,7 +638,17 @@ test('a customer requests a PVC ID and exchanges messages and a quote with the s
   Object.defineProperty(element, 'files', { configurable: true, value: files });
   app.onInput({ type: 'change', target: element });
  };
- const design = new window.File(['design'], 'ID.pdf', {type: 'application/pdf'});
+ const design = await selectedFile(2);
+ design.name = 'ID.pdf';
+ const previews = [];
+ app.previewPdf = async (name, load, options, print, download = true) => {
+  const { openPdf } = await import('../src/pdf.mjs');
+  const pdf = await openPdf(await load());
+  previews.push({ name, pages: pdf.numPages, download });
+  await pdf.destroy();
+ };
+ const click = action => app.onClick({ target: document.querySelector(`[data-action="${action}"]`), preventDefault() {} });
+ const senders = () => [...document.querySelectorAll('.service-messages li strong')].map(label => label.textContent);
  assert.equal(pickerLabel(), 'Choose design file');
  assert.equal(picker().hidden, true);
  let opened = false;
@@ -656,6 +666,10 @@ test('a customer requests a PVC ID and exchanges messages and a quote with the s
  assert.equal(pickerLabel(), 'Choose design file');
  assert.equal(app.services.file, null);
  assert.doesNotMatch(selected(), /ID[.]pdf/);
+ assert.equal(document.querySelector('[data-action="service-preview-draft"]'), null);
+ pick(design);
+ await click('service-preview-draft');
+ assert.deepEqual(previews, [{ name: 'ID.pdf', pages: 2, download: false }]);
  input('service-quantity', '2');
  input('service-sides', 'Double-sided');
  input('service-details', 'Please use full color.');
@@ -669,6 +683,10 @@ test('a customer requests a PVC ID and exchanges messages and a quote with the s
  app.go('service-detail', service);
  await pause(() => document.getElementById('service-quote'));
  assert.match(document.body.textContent, /Can I pick up on Friday/);
+ assert.deepEqual(senders(), ['Alex Reyes']);
+ assert.match(document.querySelector('[data-action="service-download"]').textContent, /Download PDF/);
+ await click('service-preview');
+ assert.deepEqual(previews.at(-1), { name: 'ID.pdf', pages: 2, download: true });
  input('service-message', 'Yes, after 2 PM.');
  await submit('service-message-form');
  input('service-quote', '150');
@@ -679,6 +697,7 @@ test('a customer requests a PVC ID and exchanges messages and a quote with the s
  await pause(() => document.querySelector('[data-next="Approved"]'));
  assert.match(document.body.textContent, /₱150.00/);
  assert.match(document.body.textContent, /Yes, after 2 PM/);
+ assert.deepEqual(senders(), ['Alex Reyes', 'Nano Print Alangilan']);
  await app.onClick({ target: document.querySelector('[data-next="Approved"]'), preventDefault() {} });
  assert.match(document.body.textContent, /Approved/);
  app.go('order-messages', 'sample-1043');
@@ -686,5 +705,6 @@ test('a customer requests a PVC ID and exchanges messages and a quote with the s
  input('service-message', 'One more copy, please.');
  await submit('service-message-form');
  assert.match(document.body.textContent, /One more copy/);
+ assert.deepEqual(senders(), ['Alex Reyes']);
  assert.doesNotMatch(document.body.textContent, /Yes, after 2 PM/);
 });

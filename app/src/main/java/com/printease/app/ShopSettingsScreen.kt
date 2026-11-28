@@ -79,7 +79,8 @@ fun ShopCard(
                         else MaterialTheme.colorScheme.error,
                 )
             }
-            if (onEdit != null) IconButton(onEdit) { Icon(Icons.Default.Edit, "Edit shop details") }
+            if (onEdit != null)
+                PressIconButton(onEdit) { Icon(Icons.Default.Edit, "Edit shop details") }
         }
         Text(settings.address, style = MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -91,7 +92,7 @@ fun ShopCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        OutlinedButton(
+        PressOutlinedButton(
             {
                 val query =
                     if (
@@ -119,7 +120,7 @@ fun ShopCard(
         if (settings.contactEmail.isNotBlank() || settings.facebookUrl.isNotBlank()) {
             val contacts: @Composable (Modifier) -> Unit = { buttonModifier ->
                 if (settings.contactEmail.isNotBlank())
-                    OutlinedButton(
+                    PressOutlinedButton(
                         {
                             runCatching {
                                     context.startActivity(
@@ -143,7 +144,7 @@ fun ShopCard(
                         Text("Email shop")
                     }
                 if (settings.facebookUrl.isNotBlank())
-                    OutlinedButton(
+                    PressOutlinedButton(
                         {
                             runCatching {
                                     context.startActivity(
@@ -176,7 +177,7 @@ fun ShopCard(
         }
         if (isNanoPrint) {
             HorizontalDivider()
-            TextButton(
+            PressTextButton(
                 onClick = { showServices = !showServices },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) {
@@ -387,7 +388,7 @@ fun ShopSettingsContent(
                             index,
                             label ->
                             val bit = 1 shl (index + 1)
-                            FilterChip(
+                            PressFilterChip(
                                 openingDays and bit != 0,
                                 { openingDays = openingDays xor bit },
                                 { Text(label) },
@@ -473,7 +474,7 @@ fun ShopSettingsContent(
                 stockPapers.forEach { paper ->
                     var expanded by remember { mutableStateOf(false) }
                     Box {
-                        OutlinedButton(
+                        PressOutlinedButton(
                             { expanded = true },
                             Modifier.fillMaxWidth(),
                             enabled = !busy,

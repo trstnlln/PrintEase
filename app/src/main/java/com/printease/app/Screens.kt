@@ -8,10 +8,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -32,7 +30,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -131,7 +128,10 @@ fun PrintEase(
                     },
                     navigationIcon = {
                         if (!mainRoute)
-                            IconButton(onClick = { model.navigate(backRoute) }, enabled = !busy) {
+                            PressIconButton(
+                                onClick = { model.navigate(backRoute) },
+                                enabled = !busy,
+                            ) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                             }
                     },
@@ -139,7 +139,10 @@ fun PrintEase(
                         onToggleTheme?.let { ThemeModeButton(dark, it) }
                         if (BuildConfig.DEMO) ModeBadge()
                         if (mainRoute)
-                            IconButton(onClick = { model.navigate("account") }, enabled = !busy) {
+                            PressIconButton(
+                                onClick = { model.navigate("account") },
+                                enabled = !busy,
+                            ) {
                                 UserAvatar(session, size = 36.dp)
                             }
                     },
@@ -162,7 +165,10 @@ fun PrintEase(
                             Triple("account", "Account", Icons.Default.PersonOutline),
                         )
                         .forEach { (target, label, icon) ->
+                            val interaction = remember { MutableInteractionSource() }
                             NavigationBarItem(
+                                modifier = Modifier.pressFeedback(interaction),
+                                interactionSource = interaction,
                                 selected = route == target,
                                 onClick = { model.navigate(target) },
                                 icon = { Icon(icon, null) },
@@ -248,16 +254,25 @@ fun PrintEase(
                         model.documents,
                         session,
                         state.settings.acceptingOrders,
+                        state.settings.name,
                     )
                 route == "order-messages" -> {
-                    if (state.orders.any { it.id == selected })
+                    val order = state.orders.find { it.id == selected }
+                    if (order != null)
                         Column(
                             Modifier.widthIn(max = 700.dp)
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
                                 .padding(22.dp)
                         ) {
-                            MessageThread(model.serviceDesk, session, "orders", selected)
+                            MessageThread(
+                                model.serviceDesk,
+                                session,
+                                "orders",
+                                selected,
+                                order.studentName,
+                                state.settings.name,
+                            )
                         }
                     else EmptyPanel("Order unavailable", "Return to Orders to open your request.")
                 }
@@ -345,7 +360,7 @@ fun PrintEase(
                 )
             },
             confirmButton = {
-                TextButton(
+                PressTextButton(
                     onClick = {
                         signOut = false
                         model.signOut()
@@ -354,7 +369,9 @@ fun PrintEase(
                     Text("Sign out")
                 }
             },
-            dismissButton = { TextButton(onClick = { signOut = false }) { Text("Stay signed in") } },
+            dismissButton = {
+                PressTextButton(onClick = { signOut = false }) { Text("Stay signed in") }
+            },
         )
     preview?.let { order ->
         PreviewDialog(
@@ -410,7 +427,7 @@ fun Brand() {
 
 @Composable
 private fun ThemeModeButton(dark: Boolean, onClick: () -> Unit) {
-    IconButton(onClick) {
+    PressIconButton(onClick) {
         Icon(
             if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
             if (dark) "Switch to light mode" else "Switch to dark mode",
@@ -471,13 +488,6 @@ fun EmptyPanel(title: String, description: String, icon: ImageVector = Icons.Def
 }
 
 @Composable
-private fun Modifier.pressFeedback(source: MutableInteractionSource): Modifier {
-    val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) .96f else 1f, label = "Button press")
-    return this.scale(scale)
-}
-
-@Composable
 private fun QueueStatusCard(status: QueueStatus) {
     Panel(Modifier.fillMaxWidth()) {
         Text("Shop queue", style = MaterialTheme.typography.titleMedium)
@@ -502,11 +512,9 @@ fun PrimaryButton(
     icon: ImageVector? = null,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    Button(
+    PressButton(
         onClick,
-        modifier.heightIn(min = 52.dp).pressFeedback(interaction),
-        interactionSource = interaction,
+        modifier.heightIn(min = 52.dp),
         enabled = enabled,
         colors = colors,
         shape = RoundedCornerShape(16.dp),
@@ -586,7 +594,7 @@ fun AuthContent(
                     Modifier.fillMaxWidth(),
                     icon = Icons.Default.School,
                 )
-                OutlinedButton(
+                PressOutlinedButton(
                     { onDemo(true) },
                     Modifier.fillMaxWidth().heightIn(min = 52.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -607,7 +615,7 @@ fun AuthContent(
                     if (register) "Create your account" else "Welcome back",
                     style = MaterialTheme.typography.titleLarge,
                 )
-                OutlinedButton(
+                PressOutlinedButton(
                     onClick = onGoogle,
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
@@ -669,7 +677,7 @@ fun AuthContent(
                     visualTransformation =
                         if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
-                        IconButton({ visible = !visible }) {
+                        PressIconButton({ visible = !visible }) {
                             Icon(
                                 if (visible) Icons.Default.VisibilityOff
                                 else Icons.Default.Visibility,
@@ -686,8 +694,8 @@ fun AuthContent(
                     !busy,
                 )
                 if (!register)
-                    TextButton({ onReset(email) }, enabled = !busy) { Text("Reset password") }
-                TextButton(
+                    PressTextButton({ onReset(email) }, enabled = !busy) { Text("Reset password") }
+                PressTextButton(
                     {
                         register = !register
                         password = ""
@@ -754,7 +762,7 @@ fun Dashboard(
                         "Follow this request in Orders. The shop assigns a queue number after review."
                     )
                     if (state.orders.any { it.id == submittedId })
-                        TextButton({ onOrder(submittedId) }) { Text("View request") }
+                        PressTextButton({ onOrder(submittedId) }) { Text("View request") }
                 }
             }
         item {
@@ -858,7 +866,7 @@ fun Dashboard(
                                 style = MaterialTheme.typography.titleLarge,
                             )
                             needsResponse.take(4).forEach { order ->
-                                OutlinedButton(
+                                PressOutlinedButton(
                                     { onOrder(order.id) },
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
@@ -909,7 +917,7 @@ fun Dashboard(
                         if (session.admin) "Review requests, send quotes, and reply to customers."
                         else "Request PVC ID, bookbinding, scanning, and more."
                     )
-                    OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
+                    PressOutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
                         Text(
                             if (session.admin) "Open service requests"
                             else "Browse services and requests"
@@ -946,7 +954,9 @@ fun Dashboard(
                     modifier = Modifier.weight(1f),
                 )
                 if (!session.admin && !overview)
-                    IconButton(onNew) { Icon(Icons.Default.AddCircleOutline, "New print request") }
+                    PressIconButton(onNew) {
+                        Icon(Icons.Default.AddCircleOutline, "New print request")
+                    }
             }
         }
         item {
@@ -963,7 +973,9 @@ fun Dashboard(
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = {
                     if (search.isNotEmpty())
-                        IconButton({ search = "" }) { Icon(Icons.Default.Close, "Clear search") }
+                        PressIconButton({ search = "" }) {
+                            Icon(Icons.Default.Close, "Clear search")
+                        }
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
@@ -977,7 +989,7 @@ fun Dashboard(
                 (if (session.admin) listOf("All", "Pending", "Active", "Ready", "History")
                     else listOf("All", "Active", "Ready", "History"))
                     .forEach { value ->
-                        FilterChip(
+                        PressFilterChip(
                             selected = value == filter,
                             onClick = { filter = value },
                             label = { Text(value) },
@@ -1272,7 +1284,7 @@ fun RequestContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    OutlinedButton(
+                    PressOutlinedButton(
                         {
                             if (pdf == null && paperSizesAvailable) batchPicker.launch(fileTypes)
                             else picker.launch(fileTypes)
@@ -1288,7 +1300,7 @@ fun RequestContent(
                         )
                     }
                     if (paperSizesAvailable && pdf != null && attachments.size < MAX_ATTACHMENTS)
-                        OutlinedButton(
+                        PressOutlinedButton(
                             { moreFilesPicker.launch(fileTypes) },
                             Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             enabled = !busy,
@@ -1423,7 +1435,7 @@ fun RequestContent(
                 }
             }
             if (pdf != null)
-                TextButton({ discard = true }, enabled = !busy) {
+                PressTextButton({ discard = true }, enabled = !busy) {
                     Text("Discard this draft", color = MaterialTheme.colorScheme.error)
                 }
         }
@@ -1513,7 +1525,7 @@ fun RequestContent(
                 }
             },
             confirmButton = {
-                TextButton({
+                PressTextButton({
                     review = false
                     if (reviewedSettings.version == settings.version && canSubmit) onSubmit()
                 }) {
@@ -1524,7 +1536,7 @@ fun RequestContent(
                     )
                 }
             },
-            dismissButton = { TextButton({ review = false }) { Text("Keep editing") } },
+            dismissButton = { PressTextButton({ review = false }) { Text("Keep editing") } },
         )
     if (discard)
         AlertDialog(
@@ -1532,14 +1544,14 @@ fun RequestContent(
             title = { Text("Discard draft?") },
             text = { Text("The selected PDF and print options will be removed from this device.") },
             confirmButton = {
-                TextButton({
+                PressTextButton({
                     discard = false
                     onDiscard()
                 }) {
                     Text("Discard")
                 }
             },
-            dismissButton = { TextButton({ discard = false }) { Text("Keep draft") } },
+            dismissButton = { PressTextButton({ discard = false }) { Text("Keep draft") } },
         )
 }
 
@@ -1609,7 +1621,11 @@ fun OrderDetail(
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         onMessages?.let { open ->
-            OutlinedButton(onClick = open, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            PressOutlinedButton(
+                onClick = open,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text(if (admin) "Message customer" else "Message shop")
             }
         }
@@ -1704,7 +1720,7 @@ fun OrderDetail(
                     "The PDF has been removed under the shop’s retention policy. Your order history is saved.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-            OutlinedButton(
+            PressOutlinedButton(
                 onPreview,
                 Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 enabled = !busy && order.documentDeletedAt == null,
@@ -1714,7 +1730,7 @@ fun OrderDetail(
                 Text("View PDF")
             }
             if (admin && order.documentDeletedAt == null)
-                TextButton({ onSaveFile(0) }, enabled = !busy) { Text("Download PDF") }
+                PressTextButton({ onSaveFile(0) }, enabled = !busy) { Text("Download PDF") }
             if (checklistActive) {
                 Text(
                     "Print checklist · ${order.printedFiles.size} of ${order.attachments.size + 1} printed",
@@ -1739,7 +1755,7 @@ fun OrderDetail(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (order.documentDeletedAt == null)
-                    OutlinedButton(
+                    PressOutlinedButton(
                         { onPreviewAttachment(index + 1) },
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth(),
@@ -1747,7 +1763,9 @@ fun OrderDetail(
                         Text("View PDF")
                     }
                 if (admin && order.documentDeletedAt == null)
-                    TextButton({ onSaveFile(index + 1) }, enabled = !busy) { Text("Download PDF") }
+                    PressTextButton({ onSaveFile(index + 1) }, enabled = !busy) {
+                        Text("Download PDF")
+                    }
                 if (checklistActive)
                     PrintChecklistToggle(
                         item.fileName,
@@ -1758,7 +1776,7 @@ fun OrderDetail(
                     }
             }
             if (admin && reviewAvailable && canRemovePdf(order, settings)) {
-                OutlinedButton(
+                PressOutlinedButton(
                     { removePdf = true },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !busy && !cached,
@@ -1815,7 +1833,7 @@ fun OrderDetail(
                                 .replace(Regex("[^A-Za-z0-9]"), "")
                                 .uppercase(java.util.Locale.ROOT) == collectionCode(order.id),
                     )
-                    TextButton(
+                    PressTextButton(
                         {
                             action = null
                             code = ""
@@ -1849,7 +1867,7 @@ fun OrderDetail(
                         Modifier.fillMaxWidth(),
                         reason.isNotBlank() && !busy && !cached,
                     )
-                    TextButton(
+                    PressTextButton(
                         {
                             action = null
                             reason = ""
@@ -1893,7 +1911,7 @@ fun OrderDetail(
                     }
             }
         } else if (order.status == OrderStatus.Pending)
-            OutlinedButton(
+            PressOutlinedButton(
                 { action = OrderStatus.Cancelled },
                 Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 enabled = !busy && !cached,
@@ -1928,7 +1946,7 @@ fun OrderDetail(
                     )
                 },
                 confirmButton = {
-                    TextButton(
+                    PressTextButton(
                         {
                             action = null
                             onTransition(
@@ -1954,7 +1972,7 @@ fun OrderDetail(
                         Text("Confirm")
                     }
                 },
-                dismissButton = { TextButton({ action = null }) { Text("Go back") } },
+                dismissButton = { PressTextButton({ action = null }) { Text("Go back") } },
             )
         }
     if (estimateDialog)
@@ -1976,14 +1994,14 @@ fun OrderDetail(
                 )
             },
             confirmButton = {
-                TextButton({
+                PressTextButton({
                     repeatDialog = false
                     onReorder(order)
                 }) {
                     Text("Prepare repeat order")
                 }
             },
-            dismissButton = { TextButton({ repeatDialog = false }) { Text("Keep draft") } },
+            dismissButton = { PressTextButton({ repeatDialog = false }) { Text("Keep draft") } },
         )
     if (replaceForCorrection)
         AlertDialog(
@@ -1995,14 +2013,16 @@ fun OrderDetail(
                 )
             },
             confirmButton = {
-                TextButton({
+                PressTextButton({
                     replaceForCorrection = false
                     onEdit()
                 }) {
                     Text("Edit request")
                 }
             },
-            dismissButton = { TextButton({ replaceForCorrection = false }) { Text("Keep draft") } },
+            dismissButton = {
+                PressTextButton({ replaceForCorrection = false }) { Text("Keep draft") }
+            },
         )
     if (removePdf)
         AlertDialog(
@@ -2014,14 +2034,14 @@ fun OrderDetail(
                 )
             },
             confirmButton = {
-                TextButton({
+                PressTextButton({
                     removePdf = false
                     onCleanup()
                 }) {
                     Text("Remove PDF")
                 }
             },
-            dismissButton = { TextButton({ removePdf = false }) { Text("Keep PDF") } },
+            dismissButton = { PressTextButton({ removePdf = false }) { Text("Keep PDF") } },
         )
 }
 
@@ -2077,7 +2097,11 @@ fun AccountContent(
                 style = MaterialTheme.typography.bodySmall,
             )
             if (session.admin)
-                OutlinedButton(onSettings, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                PressOutlinedButton(
+                    onSettings,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Text("Manage shop details & rates")
                 }
         }
@@ -2088,7 +2112,7 @@ fun AccountContent(
                 Text(
                     "Orders are shared between demo roles on this device and remain after restarting. Demo does not send documents to Firebase."
                 )
-                OutlinedButton(
+                PressOutlinedButton(
                     { onSwitch(!session.admin) },
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -2098,7 +2122,7 @@ fun AccountContent(
                     Text(if (session.admin) "Switch to customer" else "Switch to administrator")
                 }
             }
-        OutlinedButton(
+        PressOutlinedButton(
             onSignOut,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
@@ -2179,11 +2203,11 @@ fun PreviewDialog(
                 TopAppBar(
                     title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     navigationIcon = {
-                        IconButton(onClose) { Icon(Icons.Default.Close, "Close PDF") }
+                        PressIconButton(onClose) { Icon(Icons.Default.Close, "Close PDF") }
                     },
                     actions = {
                         if (file != null)
-                            IconButton({
+                            PressIconButton({
                                 runCatching {
                                         val uri =
                                             FileProvider.getUriForFile(
@@ -2223,14 +2247,14 @@ fun PreviewDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            TextButton(
+                            PressTextButton(
                                 { scope.launch { listState.scrollToItem(page - 1) } },
                                 enabled = page > 0,
                             ) {
                                 Text("Previous")
                             }
                             Text("${page + 1} / $pages")
-                            TextButton(
+                            PressTextButton(
                                 { scope.launch { listState.scrollToItem(page + 1) } },
                                 enabled = page < pages - 1,
                             ) {
@@ -2253,7 +2277,7 @@ fun PreviewDialog(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(error!!)
-                            TextButton({
+                            PressTextButton({
                                 error = null
                                 file = null
                                 retry++
@@ -2275,7 +2299,7 @@ fun PreviewDialog(
                                         Modifier.weight(1f),
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
-                                    TextButton({ printLayout = !printLayout }) {
+                                    PressTextButton({ printLayout = !printLayout }) {
                                         Text(
                                             if (printLayout) "View original PDF"
                                             else "View print layout"
@@ -2289,7 +2313,7 @@ fun PreviewDialog(
                                         Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     ) {
-                                        Button(
+                                        PressButton(
                                             onClick = {
                                                 preparingPrint = true
                                                 printError = null
@@ -2324,7 +2348,7 @@ fun PreviewDialog(
                                             Spacer(Modifier.width(6.dp))
                                             Text(if (preparingPrint) "Preparing…" else "Print")
                                         }
-                                        OutlinedButton(
+                                        PressOutlinedButton(
                                             onClick = onDownload,
                                             enabled = !preparingPrint,
                                             modifier = Modifier.weight(1f),
