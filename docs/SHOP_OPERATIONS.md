@@ -1,0 +1,103 @@
+# Shop settings, printing and pickup
+
+PrintEase displays **Nano Print Alangilan**, near BSU Alangilan and outside campus. The location button opens the owner-provided [Google Maps listing](https://maps.app.goo.gl/gBCZetYJyz46RoeQ9), verified on November 20, 2026. The link resolves to Nano Print Alangilan at marker coordinates **13.7853824, 121.0733167** (Google Maps feature `0x33bd0ff51a980455:0x1c73b020a3978e11`). These are the place marker coordinates, not the map viewport centre.
+
+The project owner provided the street address as **Neptune St., Golden Country Homes, Alangilan, Batangas City**, hours **6:00 AM–10:00 PM** (days unspecified), and business email **nanoprint.alangilan@gmail.com**. Printing prices and shop participation still need confirmation. The Facebook page URL is pending. Older saved settings named “Nano Alangilan” display the corrected name when loaded. Other administrator-configured shops retain a map search using their own name and address. The map update alone needs no new fields. The newer estimates, contacts and alert subscriptions require the current Firestore rules.
+
+## Activate the update
+
+1. Pull the latest `kotlin-native` branch, keep your local `app/google-services.json`, sync Gradle, and run `liveDebug`.
+2. Deploy the matching rules before using the new clients. From the repository root:
+
+   ```sh
+   npm ci
+   npx firebase login
+   npx firebase deploy --only firestore:rules,firestore:indexes --project printease-ce44e
+   ```
+
+3. Sign in using the shop account with a console-created `admins/<uid>.enabled: true` grant or a trusted `admin: true` custom claim. Open **Account → Manage shop details & rates**. Set the confirmed shop name, address/landmark and pickup hours. Save. Android and web listen to `shopSettings/current` in the same project. Students cannot edit these settings.
+4. Enter whole-peso B&W, color and Legal surcharge rates. Sample defaults remain ₱2, ₱10 and +₱1 per printed side. Leave **Rates confirmed with the shop** off until the shop verifies them. Each new order stores its own `pricing` snapshot and total. Rate changes do not change old quotes. Old orders without a snapshot use the original sample rates. New clients reject a changed quote and ask the student to review again. Deploy clients together when changing rates: old clients with hardcoded prices cannot submit an outdated price.
+5. Switch **Accept new requests** off to pause new submissions. Existing requests can still move through the queue. A retained draft can be sent once the shop resumes. A retry of an already-saved request first resolves its existing ID.
+
+## Pages and pricing
+
+Leave **Pages to print** blank for all pages, or enter `1-3, 5, 8-10`. Ranges refer to physical PDF page positions starting at 1, not printed labels within the document. The app sorts and merges overlapping/adjacent ranges, bounds them to the PDF's actual page count and supports up to five normalized ranges.
+
+The price is selected pages × copies × the saved rate per printed side. Duplex reduces sheets, not the printed-side price; odd selections round up separately for each copy. Every selected page uses the same color mode. The full original PDF is retained for preview. The shop operator must apply the displayed page selection, paper, copies and duplex options in their printer dialog; this application does not send Bluetooth or direct network printer jobs.
+
+Rules independently validate each persisted range, the selected-page count, the current rate snapshot and total. Clients cannot change submitted PDF paths, options, quotes or completion times. Admin status changes preserve these fields.
+
+## Shop queue counts
+
+After publishing the matching Firestore rules, sign in with an administrator account on the updated web or Android app. The app reports the number of accepted requests waiting to print and the number currently printing. Signed-in customers see those aggregate numbers and the report time on Home and the request form. The last report remains visible if staff disconnect. Use the individual pickup estimate on a request for timing.
+
+## Pickup estimates, collection and repeat requests
+
+In an active request, staff can set **Minutes from now** (1 minute to 7 days) or clear an existing estimate. Students see the estimated time and a note that it may change. Queue numbers identify requests; they do not imply an exact wait.
+
+At handover, ask the student to open their order and provide the six-character **collection code**. Enter the matching code before marking Completed. The code is a workflow check within the authenticated shop workspace. Never grant administrator access to ordinary students.
+
+A student can select **Print this again** on a completed, cancelled or rejected order with an available PDF. It prepares a fresh draft and requires review of current prices. Replacing an unfinished draft requires confirmation; download/validation failure preserves the existing draft.
+
+## Pickup notifications without Firebase billing
+
+Android **Account → Pickup alerts** enables periodic WorkManager checks for the most recent 100 orders. Checks run about every 15 minutes, and Android battery/network settings can delay them. They need internet and notification permission. Sign-out cancels checks and clears visible alerts; both the worker and notification display verify the same opted-in UID. One ready notification is recorded per account/order on this device. Keep Orders open for immediate status updates.
+
+The web companion uses encrypted Web Push via the existing Site Worker. On iPhone, use iOS 16.4 or later, add PrintEase to the Home Screen in Safari, then open the installed app and choose **Account → Enable pickup alerts**. The Account test button sends a generic test alert. Browser permission is requested only after the user taps Enable.
+
+The Site requires runtime `PUSH_VAPID_PUBLIC_KEY` and secret `PUSH_VAPID_PRIVATE_KEY`, already configured for this project, plus the current Firestore rules. Device subscriptions live under `users/<uid>/pushSubscriptions`; only the owner can register them. Staff can send ready alerts through the authenticated API and retry **Send pickup alert** if delivery failed. Per-order/device receipts skip previously accepted sends. Private keys remain server-side, known provider hosts are checked before sending, and notification text contains no document names or collection codes. A service-worker account marker prevents alerts from displaying after local opt-out or account changes.
+
+Notification delivery is best-effort. A crash after provider acceptance but before receipt persistence can cause a repeated send; the same request uses one notification tag. A failed alert never rolls back the saved Ready status. Real iPhone/Android notification delivery still needs device verification.
+
+The legacy optional Firebase Cloud Messaging functions remain available in `functions/` for owners who choose to deploy them separately. They are not required for these periodic Android reminders or web alerts and may require Firebase billing. They have not been deployed by this workspace.
+
+## Quotes, corrections and add-ons
+
+Publish the current Firestore rules, then refresh the web app or sign in again on Android. Updated clients can detect the published rules. A new request from an updated client starts in shop review. The shop can request a correction with a note or send a final price in whole Philippine pesos. The student can update their PDF or options on the same request, or approve or decline the latest price. Staff can assign a queue number after the student approves. Orders from earlier clients can still use their original workflow.
+
+Bookbinding and lamination are optional requests on the print form. Staff include confirmed add-ons in the final quote. Students can ask the shop about its other advertised services. New requests stay paused when staff enable confirmed rates and keep the shop's availability switch off.
+
+## Paper sizes, multi-PDF requests and pickup windows
+
+Students can choose A4, Letter or Legal at configured rates. For A3, A5, B5, Folio, Tabloid and custom paper (50–1,000 mm for each dimension), staff confirm stock and send the price. The final quote is the price the student approves.
+
+In **Print files**, select up to three files at once or use **Add files** to fill any remaining slots. Each file has its own paper, copies, color and sides. Multi-PDF requests print all pages. Use a single-PDF request when selecting a subset of pages. Open each PDF from the same request, then send one quote and use one collection code.
+
+The queue groups requests by the next step. Quote and correction alerts open the corresponding student request. Use Account to enable alerts on the student's device.
+
+In shop settings, turn on **Show pickup windows** and save the actual opening days, hours, optional same-day cutoff and closure dates in Philippine time. Students see the next window before submission. Staff confirm readiness for each request.
+
+The new settings and expanded requests require publishing the current Firestore rules. Demo mode can try them immediately.
+
+## Image uploads, print layout and paper availability
+
+Students can choose PDF, JPG or PNG up to 15 MB per file. PrintEase converts each image to a one-page PDF on the device before upload. Export Word, PowerPoint and Excel files as PDFs. A request can mix documents and images.
+
+Set **Image size (%)** for a photo, tap **Apply size**, and preview the result. Any whole percentage from 1–100 scales both dimensions and keeps the photo centered. The resized photo is embedded in the PDF sent to the shop.
+
+Use **Preview print layout** to view the selected paper size and estimated 5 mm margins. **Fit to paper** shrinks oversized pages; **Actual size** preserves the PDF page scale and flags possible cropping. The preview centers the page and follows its orientation. Staff use the saved instructions and their printer’s actual margins when printing.
+
+In **Shop settings → Paper availability**, mark each size **Available**, **Out of stock** or **Stock unconfirmed**. An unconfigured size starts at **Stock unconfirmed**. Students can request a quote for unconfirmed stock; a size marked out of stock is disabled for new requests and corrections.
+
+In a printing request, **Save PDF** on Android or **Download PDF** on the web opens or saves each printable file next to its instructions. Mark each file printed, then move the request to **Ready for Pickup**. An interrupted upload keeps the draft, and a retry skips files already confirmed in private storage.
+
+## Service requests and alerts
+
+Customers can keep a draft on their device and add separate front and back files to a double-sided ID request. Shop staff can enter a service fee, optional extras, a pickup date and time in the Philippines, and pickup instructions. Updating an approved quote before work starts sends it back for customer approval. Customers can cancel while a request is awaiting a quote or approval.
+
+The shop's web dashboard displays **Needs reply**, **Needs quote**, and **Ready for pickup**. Opening an unread request marks it as read for your account. Customers with browser alerts enabled can also receive service quote and pickup notifications. Android displays the same in-app updates.
+
+## PDF retention
+
+In **Shop settings**, choose **Keep files**, **7 days**, **14 days**, or **30 days**. The default is **Keep files**. When an administrator opens the connected web app, PrintEase checks for expired files from completed and cancelled requests. The check repeats every 15 minutes while the shop keeps the web app open. The hosted environment has no scheduled trigger for cleanup while the shop is signed out.
+
+Cleanup removes private PDF attachments, including both sides of a service design, and preserves the request history. It excludes legacy uploads shared across multiple requests and copies already downloaded by staff. Staff can also remove an expired completed PDF from its print order.
+
+## Acceptance checks on the real project
+
+- Sign in on Android and iPhone web with the same student account; submit a selected-page PDF and compare the saved quote, selection and status on both clients.
+- Use a separate admin account to edit rates. Verify old quotes remain unchanged and a fresh request uses the new rate. Try saving settings concurrently; the older version must be rejected.
+- On an Android device and iPhone Safari, try a Folio photo at Actual size and Fit to paper. Submit a mixed JPG/PDF request, interrupt the second upload, reconnect and verify the saved draft and one request ID. Check both themes and large text, then mark each file printed before pickup.
+- Pause requests and verify students retain drafts but cannot create new orders.
+- With alerts opted in, progress a test order through Accepted → Printing → Ready. Verify the notification opens the correct order. Deny permission, disable alerts, sign out and switch accounts; private alerts must not appear.
+- Leave retention off during initial testing. In an isolated Firebase test project, create an expired completed order and verify cleanup retains its metadata and never removes an active PDF.

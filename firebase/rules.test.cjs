@@ -2,7 +2,7 @@ const { test, before, after } = require('node:test');
 const fs = require('node:fs');
 const { initializeTestEnvironment, assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
 const { doc, setDoc, getDoc, updateDoc, runTransaction } = require('firebase/firestore');
-const { ref, uploadBytes, getBytes } = require('firebase/storage');
+const { ref, uploadBytes, getBytes, deleteObject } = require('firebase/storage');
 let env;
 before(async () => {
   env = await initializeTestEnvironment({projectId: 'demo-printease', firestore: {rules: fs.readFileSync('firebase/firestore.rules','utf8')}, storage: {rules: fs.readFileSync('firebase/storage.rules','utf8')}});
@@ -34,7 +34,7 @@ test('admin must follow workflow and cannot change price', async () => {
   await assertSucceeds(runTransaction(db, async tx => {
     const counter = doc(db,'counters/2026-11-09');
     const snap = await tx.get(counter); const number = (snap.data()?.last ?? 0) + 1;
-    tx.set(counter,{last:number});
+    tx.set(counter,{last:number,orderId:'workflow'});
     tx.update(target,{status:'Accepted',queue:number,queueDay:'2026-11-09'});
   }));
   await assertFails(updateDoc(target,{status:'Printing',estimatedCost:0}));
@@ -53,4 +53,362 @@ test('private PDFs enforce ownership, size and MIME type', async () => {
   await assertFails(uploadBytes(ref(student().storage(),'documents/other/forged.pdf'),data,{contentType:'application/pdf'}));
   await assertFails(uploadBytes(ref(student().storage(),'documents/student/wrong.pdf'),data,{contentType:'text/plain'}));
   await assertFails(uploadBytes(ref(student().storage(),'documents/student/large.pdf'),new Uint8Array(5*1024*1024+1),{contentType:'application/pdf'}));
+});
+
+test('retry can inspect missing IDs without reading another student order', async () => {
+  await assertSucceeds(getDoc(doc(student().firestore(),'orders/new-id')));
+});
+test('students may cancel only their own pending requests', async () => {
+  const db = student().firestore(), target = doc(db,'orders/cancel');
+  await setDoc(target,order('cancel'));
+  await assertFails(updateDoc(doc(env.authenticatedContext('other').firestore(),'orders/cancel'),{status:'Cancelled'}));
+  await assertSucceeds(updateDoc(target,{status:'Cancelled',note:''}));
+  await assertFails(updateDoc(target,{status:'Pending'}));
+});
+test('counter reuse cannot assign a duplicate number to another order', async () => {
+  await setDoc(doc(student().firestore(),'orders/duplicate'),order('duplicate'));
+  await assertFails(updateDoc(doc(admin().firestore(),'orders/duplicate'),{status:'Accepted',queue:1,queueDay:'2026-11-09'}));
+});
+test('concurrent admin transactions allocate distinct queue numbers', async () => {
+  const ids = ['concurrent-a','concurrent-b','concurrent-c'];
+  await Promise.all(ids.map(id=>setDoc(doc(student().firestore(),'orders/'+id),order(id))));
+  const db = admin().firestore();
+  await Promise.all(ids.map(id=>runTransaction(db,async tx=>{
+    const counter=doc(db,'counters/2026-11-14'),target=doc(db,'orders/'+id);
+    await tx.get(target);
+    const snap=await tx.get(counter);const n=(snap.data()?.last ?? 0)+1;
+    tx.set(counter,{last:n,orderId:id});tx.update(target,{status:'Accepted',queue:n,queueDay:'2026-11-14'});
+  })));
+  const numbers=await Promise.all(ids.map(async id=>(await getDoc(doc(db,'orders/'+id))).data().queue));
+  require('node:assert/strict').equal(new Set(numbers).size,3);
+});
+
+test('submitted PDFs cannot be deleted by students', async () => {
+  const path='documents/student/no-delete.pdf';
+  await uploadBytes(ref(student().storage(),path),new TextEncoder().encode('%PDF-test'),{contentType:'application/pdf'});
+  await assertFails(deleteObject(ref(student().storage(),path)));
+  await assertSucceeds(deleteObject(ref(admin().storage(),path)));
+});
+
+const settings = (version=1) => ({name:'Nearby print shop',address:'Near BSU Alangilan campus',pickupHours:'Confirm pickup hours with the shop',acceptingOrders:true,rates:{bw:4,color:12,legalExtra:2},retentionDays:0,version});
+test('page selections are priced by selected pages; overlapping or forged ranges are rejected',async()=>{
+ const db=student().firestore(),base=order('ranges');
+ const options={...base.options,pages:10,pageRanges:[{start:1,end:3},{start:5,end:5}],selectedPages:4};
+ const good={...base,options,estimatedCost:16,pricing:{bw:2,color:10,legalExtra:1},updatedAt:Date.now(),completedAt:null,documentDeletedAt:null};
+ await assertSucceeds(setDoc(doc(db,'orders/ranges'),good)).catch(e=>{e.message='Valid two-range order failed: '+e.message;throw e;});
+ const maximum={...good,storagePath:'documents/student/five-ranges.pdf',options:{...options,pages:20,pageRanges:Array.from({length:5},(_,i)=>({start:i*2+1,end:i*2+1})),selectedPages:5},estimatedCost:20};
+ await assertSucceeds(setDoc(doc(db,'orders/five-ranges'),maximum)).catch(e=>{e.message='Valid five-range order failed: '+e.message;throw e;});
+ await assertFails(setDoc(doc(db,'orders/six-ranges'),{...maximum,storagePath:'documents/student/six-ranges.pdf',options:{...maximum.options,pages:22,pageRanges:[...maximum.options.pageRanges,{start:21,end:21}],selectedPages:6},estimatedCost:24}));
+ await assertFails(setDoc(doc(db,'orders/extra-range-key'),{...maximum,storagePath:'documents/student/extra-range-key.pdf',options:{...maximum.options,pageRanges:[{start:1,end:1,extra:true}],selectedPages:1},estimatedCost:4}));
+ for(const [id,changes] of [['forged-count',{selectedPages:1}],['overlap',{pageRanges:[{start:1,end:3},{start:3,end:5}]}],['outside',{pageRanges:[{start:1,end:11}]}],['negative',{pageRanges:[{start:0,end:3}]}],['missing-ranges',{pageRanges:[]}],['fractional',{pageRanges:[{start:1.5,end:3}]}]]) {
+  await assertFails(setDoc(doc(db,'orders/'+id),{...good,storagePath:`documents/student/${id}.pdf`,options:{...options,...changes}}));
+ }
+ // A huge span cannot compensate an invalid overlapping/negative span in the count.
+ await assertFails(setDoc(doc(db,'orders/compensating-span'),{...good,storagePath:'documents/student/compensating-span.pdf',options:{...options,pageRanges:[{start:1,end:100001},{start:1,end:1}],selectedPages:1},estimatedCost:4}));
+ await assertFails(setDoc(doc(db,'orders/negative-compensation'),{...good,storagePath:'documents/student/negative-compensation.pdf',options:{...options,pageRanges:[{start:-100000,end:-100000},{start:-100000,end:1}],selectedPages:1},estimatedCost:4}));
+ await assertFails(updateDoc(doc(db,'orders/ranges'),{options:{...options,selectedPages:1},estimatedCost:4}));
+});
+test('only admins edit shop settings; rate changes preserve old quotes and pause new requests',async()=>{
+ const adb=admin().firestore(),sdb=student().firestore(),target=doc(adb,'shopSettings/current');
+ await assertFails(setDoc(doc(sdb,'shopSettings/current'),settings()));
+ await assertSucceeds(setDoc(target,settings()));
+ await assertFails(setDoc(target,settings())); // optimistic version check
+ const old=await getDoc(doc(adb,'orders/private'));
+ require('node:assert/strict').equal(old.data().estimatedCost,12);
+ await assertFails(setDoc(doc(sdb,'orders/old-rate'),order('old-rate')));
+ const priced={...order('new-rate'),pricing:settings().rates,estimatedCost:24};
+ await assertSucceeds(setDoc(doc(sdb,'orders/new-rate'),priced));
+ await assertFails(setDoc(doc(sdb,'orders/forged-rate'),{...priced,storagePath:'documents/student/forged-rate.pdf',pricing:{bw:1,color:1,legalExtra:0},estimatedCost:6}));
+ await assertSucceeds(setDoc(target,{...settings(2),acceptingOrders:false,retentionDays:7}));
+ await assertFails(setDoc(doc(sdb,'orders/paused'),{...priced,storagePath:'documents/student/paused.pdf'}));
+ await assertFails(setDoc(target,{...settings(3),retentionDays:1}));
+ await assertSucceeds(setDoc(target,{...settings(3),acceptingOrders:true}));
+});
+test('notification tokens belong to their signed-in owner; students cannot mark files removed',async()=>{
+ const db=student().firestore(),target=doc(db,'users/student/devices/phone');
+ await assertSucceeds(setDoc(target,{token:'a-valid-looking-test-device-token',updatedAt:Date.now()}));
+ await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),'users/student/devices/phone')));
+ await assertFails(setDoc(doc(db,'users/other/devices/phone'),{token:'a-valid-looking-test-device-token',updatedAt:Date.now()}));
+ await assertFails(updateDoc(doc(db,'orders/private'),{documentDeletedAt:Date.now()}));
+});
+test('hosted PDFs bind immutable hashes and paths to the student',async()=>{
+ const hash='a'.repeat(64), db=student().firestore();
+ const saved={...order('hosted'),documentStore:'hosted',fileHash:hash,storagePath:`hosted/student/${hash}.pdf`,pricing:settings().rates,estimatedCost:24};
+ await assertSucceeds(setDoc(doc(db,'orders/hosted'),saved));
+ const maximum={...saved,options:{...saved.options,pages:1000,pageRanges:Array.from({length:5},(_,i)=>({start:i*200+1,end:(i+1)*200-1})),selectedPages:995},estimatedCost:7960,updatedAt:Date.now(),completedAt:null,documentDeletedAt:null};
+ await assertSucceeds(setDoc(doc(db,'orders/hosted-max-ranges'),maximum));
+ await assertFails(setDoc(doc(db,'orders/hosted-max-forged'),{...maximum,options:{...maximum.options,selectedPages:1},estimatedCost:8}));
+ await assertFails(setDoc(doc(db,'orders/bad-hosted-owner'),{...saved,storagePath:`hosted/other/${hash}.pdf`}));
+ await assertFails(setDoc(doc(db,'orders/bad-hosted-hash'),{...saved,fileHash:'wrong'}));
+ await assertFails(updateDoc(doc(db,'orders/hosted'),{fileHash:'b'.repeat(64),storagePath:`hosted/student/${'b'.repeat(64)}.pdf`}));
+});
+test('only the console can grant administrator documents; students cannot promote themselves',async()=>{
+ const db=student().firestore();
+ await assertSucceeds(getDoc(doc(db,'admins/student')));
+ await assertFails(setDoc(doc(db,'admins/student'),{enabled:true}));
+ await assertFails(getDoc(doc(db,'admins/other')));
+ await env.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'admins/console-admin'),{enabled:true}));
+ await assertSucceeds(getDoc(doc(env.authenticatedContext('console-admin').firestore(),'orders/private')));
+});
+
+test('pickup estimates belong to administrators and cannot modify immutable order details',async()=>{
+ const id='eta-request',sdb=student().firestore(),adb=admin().firestore();
+ const saved={...order(id),pricing:settings().rates,estimatedCost:24};
+ await assertSucceeds(setDoc(doc(sdb,'orders/'+id),saved));
+ const time=Date.now()+30*60000;
+ await assertFails(updateDoc(doc(sdb,'orders/'+id),{expectedReadyAt:time,updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:time,updatedAt:Date.now()}));
+ await assertFails(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:time,estimatedCost:1,updatedAt:Date.now()}));
+ await assertFails(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:Date.now()+8*86400000,updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(doc(adb,'orders/'+id),{expectedReadyAt:null,updatedAt:Date.now()}));
+ await assertFails(setDoc(doc(sdb,'orders/student-eta'),{...saved,storagePath:'documents/student/student-eta.pdf',expectedReadyAt:time}));
+});
+test('shop contacts reject unsafe links and price confirmation is explicit',async()=>{
+ const db=admin().firestore(),target=doc(db,'shopSettings/current');
+ const current=(await getDoc(target)).data();
+ const next={...current,version:current.version+1,contactEmail:'nanoprint.alangilan@gmail.com',facebookUrl:'https://www.facebook.com/nano.example',ratesConfirmed:true};
+ await assertFails(setDoc(target,{...next,facebookUrl:'javascript:alert(1)'}));
+ await assertFails(setDoc(target,{...next,facebookUrl:'https://facebook.com.evil.example/page'}));
+ await assertSucceeds(setDoc(target,next));
+});
+test('browser push subscriptions are private and other students cannot register devices for an owner',async()=>{
+ const id='c'.repeat(64),value={endpoint:'https://fcm.googleapis.com/fcm/send/example',keys:{p256dh:'a'.repeat(87),auth:'b'.repeat(22)},updatedAt:Date.now()};
+ const path='users/student/pushSubscriptions/'+id;
+ await assertSucceeds(setDoc(doc(student().firestore(),path),value));
+ await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),path)));
+ await assertSucceeds(getDoc(doc(admin().firestore(),path)));
+ await assertFails(setDoc(doc(env.authenticatedContext('other').firestore(),path),value));
+ await assertFails(setDoc(doc(student().firestore(),'users/student/pushSubscriptions/'+'d'.repeat(64)),{...value,keys:{p256dh:'bad',auth:'bad'}}));
+ const receipt='orders/private/pushDeliveries/'+id;
+ await assertFails(setDoc(doc(student().firestore(),receipt),{state:'sent',updatedAt:Date.now()}));
+ await assertSucceeds(setDoc(doc(admin().firestore(),receipt),{state:'sent',updatedAt:Date.now()}));
+});
+
+test('review gates acceptance, binds approval to a quote version, and allows a bounded correction', async () => {
+ const id = 'quote-review', hash = 'f'.repeat(64), newer = 'e'.repeat(64), path = 'orders/' + id;
+ const sdb = student().firestore(), adb = admin().firestore(), other = env.authenticatedContext('other').firestore();
+ const submitted = { stage:'submitted', version:0, addons:['lamination'], note:'', quote:null };
+ const quoted = { ...submitted, stage:'quoted', version:1, note:'Includes lamination', quote:35 };
+ const approved = { ...quoted, stage:'approved', version:2 };
+ const files = fileHash => ({ documentStore:'hosted', fileHash, storagePath:`hosted/student/${id}/${fileHash}.pdf` });
+ const maximum = { ...order(id), ...files(hash), pricing:settings().rates, review:submitted,
+   options: { ...order(id).options, pages:1000, pageRanges:Array.from({length:5},(_,i)=>({start:i*200+1,end:(i+1)*200-1})), selectedPages:995 },
+   estimatedCost:7960 };
+ await assertSucceeds(getDoc(doc(sdb,'capabilities/print-review-v1')));
+ await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(),'capabilities/print-review-v1')));
+ await assertSucceeds(setDoc(doc(sdb,path), maximum));
+ await assertFails(updateDoc(doc(sdb,path), { review:quoted }));
+ await assertSucceeds(updateDoc(doc(adb,path), { review:quoted, updatedAt:Date.now() }));
+ const accept = () => runTransaction(adb, async tx => {
+   const counter = doc(adb,'counters/2026-11-28');
+   tx.set(counter, { last:1, orderId:id });
+   tx.update(doc(adb,path), { status:'Accepted', queue:1, queueDay:'2026-11-28' });
+ });
+ await assertFails(accept());
+ await assertFails(updateDoc(doc(other,path), { review:approved }));
+ await assertFails(updateDoc(doc(sdb,path), { review:{...approved, quote:1} }));
+ await assertSucceeds(updateDoc(doc(sdb,path), { review:approved }));
+ const correction = { ...submitted, stage:'correction', version:3, note:'Use the correct PDF' };
+ await assertSucceeds(updateDoc(doc(adb,path), { review:correction }));
+ await assertFails(accept());
+ await assertFails(updateDoc(doc(sdb,path), { review:approved }));
+ const revised = { ...submitted, stage:'revised', version:4 };
+ await assertFails(updateDoc(doc(sdb,path), { review:revised, ...files(newer), estimatedCost:1 }));
+ await assertFails(updateDoc(doc(sdb,path), { review:revised, ...files(newer), storagePath:`hosted/other/${id}/${newer}.pdf` }));
+ await assertSucceeds(updateDoc(doc(sdb,path), { review:revised, ...files(newer), options:maximum.options, estimatedCost:7960, updatedAt:Date.now() }));
+ await assertSucceeds(updateDoc(doc(adb,path), { review:{...quoted,version:5} }));
+ await assertSucceeds(updateDoc(doc(sdb,path), { review:{...approved,version:6} }));
+ await assertSucceeds(accept());
+});
+
+test('staff can mark only completed, expired per-order PDFs as removed', async () => {
+ const adb = admin().firestore(), sdb = student().firestore(), old = Date.now() - 9*86400000;
+ const hash = 'a'.repeat(64), scoped = id => `hosted/student/${id}/${hash}.pdf`;
+ await env.withSecurityRulesDisabled(async context => {
+   const db = context.firestore();
+   await setDoc(doc(db,'shopSettings/current'), {...settings(7),retentionDays:7});
+   for (const id of ['expired','fresh','shared','still-printing']) {
+     await setDoc(doc(db,'orders/'+id), {...order(id), documentStore:'hosted', fileHash:hash,
+       storagePath:id === 'shared' ? `hosted/student/${hash}.pdf` : scoped(id),
+       status:id === 'still-printing' ? 'Printing' : 'Completed', completedAt:id === 'fresh' ? Date.now() : old });
+   }
+ });
+ await assertFails(updateDoc(doc(sdb,'orders/expired'), {documentDeletedAt:Date.now()}));
+ for (const id of ['fresh','shared','still-printing']) await assertFails(updateDoc(doc(adb,'orders/'+id), {documentDeletedAt:Date.now()}));
+ await assertFails(updateDoc(doc(adb,'orders/expired'), {documentDeletedAt:Date.now(),fileName:'new'}));
+ await assertSucceeds(updateDoc(doc(adb,'orders/expired'), {documentDeletedAt:Date.now()}));
+});
+
+test('expanded sizes and per-file choices require a scoped request that the shop must quote', async () => {
+ const studentDb = student().firestore(), adminDb = admin().firestore();
+ const id = 'size-and-files', hash = '7'.repeat(64), pricing = settings().rates;
+ const document = {
+   ...order(id), documentStore:'hosted', fileHash:hash, storagePath:`hosted/student/${id}/${hash}.pdf`,
+   pricing, estimatedCost:0, options:{...order(id).options,paper:'Custom 203x330 mm',pages:1000,
+     pageRanges:[{start:1,end:1000}],selectedPages:1000,actualSize:true},
+   review:{stage:'submitted',version:0,addons:[],note:'',quote:null}
+ };
+ const first = {fileName:'Cover.pdf', fileHash:'8'.repeat(64), options:{...order(id).options,paper:'Custom 200x330 mm',color:true,duplex:false,actualSize:true}};
+ const second = {fileName:'Appendix.pdf', fileHash:'9'.repeat(64), options:{...order(id).options,paper:'Custom 190x240 mm',copies:1,actualSize:true}};
+ const target = doc(studentDb,'orders/'+id);
+ await assertSucceeds(getDoc(doc(studentDb,'capabilities/paper-sizes-v1')));
+ await assertSucceeds(getDoc(doc(studentDb,'capabilities/print-tools-v1')));
+ await assertFails(setDoc(target,{...document,options:{...document.options,actualSize:'true'}}));
+ await assertFails(setDoc(target,{...document,options:{...document.options,paper:'Custom 20x3000 mm'}}));
+ await assertFails(setDoc(target,{...document,attachments:[first,second,first]}));
+ await assertFails(setDoc(target,{...document,attachments:[{...first,fileHash:'../another-student'}]}));
+ await assertFails(setDoc(target,{...document,review:null,storagePath:`hosted/student/${hash}.pdf`}));
+ await assertFails(setDoc(target,{...document,attachments:[first],options:{...document.options,pageRanges:[{start:2,end:999}],selectedPages:998}}));
+ await assertSucceeds(setDoc(target,{...document,attachments:[first,second]}));
+ const correction={...document.review,stage:'correction',version:1,note:'Check your cover'};
+ await assertSucceeds(updateDoc(doc(adminDb,'orders/'+id),{review:correction}));
+ await assertSucceeds(updateDoc(target,{review:{...document.review,stage:'revised',version:2},attachments:[second,first]}));
+ await assertFails(updateDoc(target,{estimatedCost:1}));
+ await assertFails(updateDoc(doc(adminDb,'orders/'+id),{attachments:[]}));
+ await assertFails(updateDoc(target,{attachments:[]}));
+});
+
+test('pickup schedules accept bounded shop settings and reject invalid hours or student changes', async () => {
+ const a = doc(admin().firestore(),'shopSettings/current'), s = doc(student().firestore(),'shopSettings/current');
+ const settings = { ...((await getDoc(a)).data()) };
+ const pickupSchedule = {days:[1,2,3,4,5,6],open:360,close:1320,cutoff:960,closed:'2026-12-25'};
+ const updated = {...settings,version:settings.version+1,pickupSchedule};
+ await assertFails(setDoc(s,updated));
+ await assertFails(setDoc(a,{...updated,pickupSchedule:{...pickupSchedule,days:[0]}}));
+ await assertFails(setDoc(a,{...updated,pickupSchedule:{...pickupSchedule,cutoff:1440}}));
+ await assertSucceeds(setDoc(a,updated));
+});
+
+test('staff manage valid paper availability and print checks across clients', async () => {
+ const studentDb = student().firestore(), adminDb = admin().firestore();
+ const shopRef = doc(adminDb, 'shopSettings/current'), current = (await getDoc(shopRef)).data();
+ const paperStock = {available:['A4','Folio'], out:['Legal']};
+ const next = {...current, version:current.version+1, paperStock};
+ await assertFails(setDoc(doc(studentDb,'shopSettings/current'),next));
+ await assertFails(setDoc(shopRef,{...next, paperStock:{available:['Folio'],out:['Folio']}}));
+ await assertFails(setDoc(shopRef,{...next, paperStock:{available:['A6'],out:[]}}));
+ await assertSucceeds(setDoc(shopRef,next));
+ const id = 'checklist', target = doc(adminDb,'orders/'+id);
+ await env.withSecurityRulesDisabled(async context => {
+   await setDoc(doc(context.firestore(),'orders/'+id),{...order(id),status:'Printing',queue:1,queueDay:'2026-11-23'});
+ });
+ await assertFails(updateDoc(doc(studentDb,'orders/'+id),{printedFiles:[0],updatedAt:Date.now()}));
+ await assertFails(updateDoc(target,{printedFiles:[1],updatedAt:Date.now()}));
+ await assertFails(updateDoc(target,{printedFiles:[0,0],updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{printedFiles:[0],updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{printedFiles:[],updatedAt:Date.now()}));
+ await assertFails(updateDoc(target,{status:'Ready for Pickup',updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{printedFiles:[0],updatedAt:Date.now()}));
+ await assertSucceeds(updateDoc(target,{status:'Ready for Pickup',updatedAt:Date.now()}));
+});
+
+test('customers read aggregate queue counts without access to another request', async () => {
+ const publicStatus = 'queueStatus/current';
+ const staff = doc(admin().firestore(), publicStatus), customer = doc(student().firestore(), publicStatus);
+ const updated = {waiting:3,printing:1,checkedAt:Date.now()};
+ await assertFails(setDoc(customer,updated));
+ await assertFails(setDoc(staff,{...updated,orderId:'private'}));
+ await assertSucceeds(setDoc(staff,updated));
+ await assertSucceeds(getDoc(customer));
+ await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(),publicStatus)));
+ await assertFails(getDoc(doc(env.authenticatedContext('unrelated-customer').firestore(),'orders/private')));
+ await assertFails(setDoc(staff,{...updated,waiting:2}));
+ await assertSucceeds(setDoc(staff,{...updated,waiting:2,checkedAt:updated.checkedAt+1}));
+});
+
+test('service requests enforce ownership, valid details and the quote workflow', async () => {
+  const { serverTimestamp, collection, getDocs, query, where } = require('firebase/firestore');
+  const path = 'serviceRequests/service-11223344-1122-1122-1122-112233445566';
+  const customer = student().firestore();
+  const staff = admin().firestore();
+  const stranger = env.authenticatedContext('other').firestore();
+  await env.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), 'shopSettings/current'), { acceptingOrders: true }, { merge: true }));
+  const fields = {
+    ownerId: 'student', customerName: 'Alex', service: 'pvc-id', quantity: 2, size: '', details: 'Full color',
+    sides: 'Double-sided', design: { fileName: 'ID.pdf', fileHash: 'a'.repeat(64) },
+    status: 'Submitted', version: 0, quote: null, pickup: '', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(doc(customer, path), { ...fields, ownerId: 'other' }));
+  await assertFails(setDoc(doc(customer, path), { ...fields, service: 'tarpaulin', sides: '' }));
+  await assertFails(setDoc(doc(customer, path), { ...fields, design: { fileName: 'ID.pdf', fileHash: 'bad' } }));
+  await assertSucceeds(getDoc(doc(customer, 'capabilities/service-requests-v1')));
+  await assertSucceeds(setDoc(doc(customer, path), fields));
+  await assertSucceeds(getDoc(doc(staff, path)));
+  await assertFails(getDoc(doc(stranger, path)));
+  await assertSucceeds(getDocs(query(collection(customer, 'serviceRequests'), where('ownerId', '==', 'student'))));
+  await assertFails(getDocs(collection(stranger, 'serviceRequests')));
+  const quote = { status: 'Quoted', quote: 150, pickup: 'Tomorrow after 2 PM', version: 1, updatedAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(customer, path), quote));
+  await assertFails(updateDoc(doc(staff, path), { ...quote, pickup: '   ' }));
+  await assertSucceeds(updateDoc(doc(staff, path), quote));
+  const approve = { status: 'Approved', version: 2, updatedAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(stranger, path), approve));
+  await assertFails(updateDoc(doc(customer, path), { ...approve, quote: 1 }));
+  await assertSucceeds(updateDoc(doc(customer, path), approve));
+  await assertFails(updateDoc(doc(staff, path), { ...approve, version: 3, status: 'Ready for pickup' }));
+  await assertSucceeds(updateDoc(doc(staff, path), { ...approve, version: 3, status: 'In progress' }));
+  await assertSucceeds(updateDoc(doc(staff, path), { ...approve, version: 4, status: 'Ready for pickup' }));
+  await assertSucceeds(updateDoc(doc(staff, path), { ...approve, version: 5, status: 'Completed' }));
+
+  await env.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), 'orders/customer-thread'), order('customer-thread')));
+  for (const parent of [path, 'orders/customer-thread']) {
+    const thread = parent + '/messages';
+    const message = { senderId: 'student', senderRole: 'Customer', text: 'Can I collect on Friday?', createdAt: serverTimestamp() };
+    await assertFails(setDoc(doc(stranger, thread, 'intruder'), { ...message, senderId: 'other' }));
+    await assertFails(setDoc(doc(customer, thread, 'fake'), { ...message, senderRole: 'Shop' }));
+    await assertFails(setDoc(doc(customer, thread, 'blank'), { ...message, text: '   ' }));
+    await assertSucceeds(setDoc(doc(customer, thread, 'first'), message));
+    await assertSucceeds(setDoc(doc(staff, thread, 'reply'), { ...message, senderId: 'admin', senderRole: 'Shop', text: 'Yes.\nAfter 2 PM.' }));
+    await assertFails(getDocs(collection(stranger, thread)));
+    await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), thread, 'first')));
+    await assertSucceeds(getDocs(collection(staff, thread)));
+    await assertSucceeds(getDocs(collection(customer, thread)));
+    await assertFails(updateDoc(doc(customer, thread, 'first'), { text: 'Changed' }));
+  }
+});
+
+test('service desk binds unread activity to participants and protects quotes and retention', async () => {
+  const { serverTimestamp, Timestamp, collection, getDocs, query, where } = require('firebase/firestore');
+  const id = 'service-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const path = 'serviceRequests/' + id;
+  const activity = 'threadActivity/serviceRequests--' + id;
+  const customer = student().firestore();
+  const staff = admin().firestore();
+  const stranger = env.authenticatedContext('other').firestore();
+  await env.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), 'shopSettings/current'), { retentionDays: 7, acceptingOrders: true }, { merge: true }));
+  const fields = {
+    ownerId: 'student', customerName: 'Alex', service: 'pvc-id', quantity: 2, size: '', details: '',
+    sides: 'Double-sided', design: null, designBack: { fileName: 'Back.pdf', fileHash: 'b'.repeat(64) },
+    status: 'Submitted', version: 0, quote: null, pickup: '', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  };
+  await assertSucceeds(getDoc(doc(customer, 'capabilities/service-desk-v2')));
+  await assertFails(setDoc(doc(customer, path), { ...fields, sides: 'Single-sided' }));
+  await assertSucceeds(setDoc(doc(customer, path), fields));
+  const participant = { kind: 'serviceRequests', id, ownerId: 'student' };
+  await assertFails(setDoc(doc(stranger, activity), { ...participant, customerAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(customer, activity), { ...participant, shopAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(customer, activity), { ...participant, customerAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(staff, activity), { ...participant, shopAt: serverTimestamp() }, { merge: true }));
+  await assertFails(setDoc(doc(customer, activity), { ...participant, shopAt: serverTimestamp() }, { merge: true }));
+  await assertFails(getDoc(doc(stranger, activity)));
+  await assertSucceeds(getDocs(query(collection(customer, 'threadActivity'), where('ownerId', '==', 'student'))));
+  const receipt = 'users/student/threadReads/serviceRequests--' + id;
+  await assertSucceeds(setDoc(doc(customer, receipt), { seenAt: serverTimestamp() }));
+  await assertFails(getDoc(doc(staff, receipt)));
+  await assertFails(setDoc(doc(stranger, receipt), { seenAt: serverTimestamp() }));
+  const quote = { status: 'Quoted', quote: 150, pickup: 'Show the order number.', version: 1, updatedAt: serverTimestamp(),
+    quoteDetails: { serviceFee: 120, extrasFee: 30, pickupAt: Date.now() + 86400000 } };
+  await assertFails(updateDoc(doc(staff, path), { ...quote, quote: 149 }));
+  await assertSucceeds(updateDoc(doc(staff, path), quote));
+  await assertFails(updateDoc(doc(customer, path), {
+    status: 'Approved', version: 2, updatedAt: serverTimestamp(),
+    quoteDetails: { ...quote.quoteDetails, serviceFee: 1 },
+  }));
+  await assertSucceeds(updateDoc(doc(customer, path), { status: 'Cancelled', version: 2, updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(staff, path), { ...quote, version: 3 }));
+  await assertFails(updateDoc(doc(staff, path), { documentDeletedAt: Date.now() }));
+  await env.withSecurityRulesDisabled(ctx => updateDoc(doc(ctx.firestore(), path), { updatedAt: Timestamp.fromMillis(Date.now() - 8 * 86400000) }));
+  await assertFails(updateDoc(doc(customer, path), { documentDeletedAt: Date.now() }));
+  await assertSucceeds(updateDoc(doc(staff, path), { documentDeletedAt: Date.now() }));
+  await assertSucceeds(getDoc(doc(customer, path)));
 });

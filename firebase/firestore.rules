@@ -2,60 +2,454 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function admin() { return signedIn() && request.auth.token.get('admin', false) == true; }
-    function validOptions(o) {
-      return o.keys().hasAll(['paper','pages','copies','color','duplex'])
-        && o.keys().hasOnly(['paper','pages','copies','color','duplex'])
-        && o.paper in ['A4','Letter','Legal']
-        && o.pages is int && o.pages >= 1 && o.pages <= 1000
-        && o.copies is int && o.copies >= 1 && o.copies <= 100
+    function admin() {
+      return signedIn() && (request.auth.token.get('admin', false) == true
+        || (exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('enabled', false) == true));
+    }
+    function validDocument(d, orderId) {
+      return (d.get('documentStore','firebase') == 'firebase'
+          && d.get('fileHash',null) == null
+          && d.storagePath == 'documents/' + request.auth.uid + '/' + orderId + '.pdf')
+        || (d.get('documentStore','firebase') == 'hosted'
+          && d.fileHash is string && d.fileHash.matches('^[a-f0-9]{64}$')
+          && ((d.get('review',null) == null && d.storagePath == 'hosted/' + request.auth.uid + '/' + d.fileHash + '.pdf')
+            || (d.get('review',null) != null && d.storagePath == 'hosted/' + request.auth.uid + '/' + orderId + '/' + d.fileHash + '.pdf')));
+    }
+    function rates() {
+      return exists(/databases/$(database)/documents/shopSettings/current)
+        ? get(/databases/$(database)/documents/shopSettings/current).data.rates
+        : {'bw':2,'color':10,'legalExtra':1};
+    }
+    function accepting() {
+      return !exists(/databases/$(database)/documents/shopSettings/current)
+        || get(/databases/$(database)/documents/shopSettings/current).data.acceptingOrders;
+    }
+    function validRates(r) {
+      return r is map && r.keys().hasAll(['bw','color','legalExtra']) && r.keys().hasOnly(['bw','color','legalExtra'])
+        && r.bw is int && r.bw >= 1 && r.bw <= 1000
+        && r.color is int && r.color >= 1 && r.color <= 1000
+        && r.legalExtra is int && r.legalExtra >= 0 && r.legalExtra <= 1000;
+    }
+    function rangeCount(entry, previousEnd, pages) {
+      let start = entry.start;
+      let end = entry.end;
+      // One rejected span cannot be offset by the other bounded spans.
+      return entry.size() == 2 && start is int && end is int
+        && start > previousEnd && end >= start && end <= pages
+        ? end - start + 1 : -100000;
+    }
+    function validRanges(o) {
+      let r = o.pageRanges;
+      let n = r.size();
+      let pages = o.pages;
+      let selected = o.selectedPages;
+      return r is list && n >= 1 && n <= 5
+        && selected is int && selected >= 1 && selected <= pages
+        && selected == rangeCount(r[0],0,pages)
+          + (n > 1 ? rangeCount(r[1],r[0].end,pages) : 0)
+          + (n > 2 ? rangeCount(r[2],r[1].end,pages) : 0)
+          + (n > 3 ? rangeCount(r[3],r[2].end,pages) : 0)
+          + (n > 4 ? rangeCount(r[4],r[3].end,pages) : 0);
+    }
+    function standardPaper(paper) { return paper in ['A4','Letter','Legal']; }
+    function validPaper(paper) {
+      return paper is string && (standardPaper(paper)
+        || paper in ['A3','A5','B5','Folio','Tabloid']
+        || paper.matches('^Custom ([5-9][0-9]|[1-9][0-9]{2}|1000)x([5-9][0-9]|[1-9][0-9]{2}|1000) mm$'));
+    }
+    function validCoreOptions(o) {
+      let pages = o.pages;
+      let copies = o.copies;
+      return o.keys().hasOnly(['paper','pages','copies','color','duplex','pageRanges','selectedPages','actualSize'])
+        && o.get('actualSize',false) is bool
+        && validPaper(o.paper)
+        && pages is int && pages >= 1 && pages <= 1000
+        && copies is int && copies >= 1 && copies <= 100
         && o.color is bool && o.duplex is bool;
     }
-    function validPrice(d) {
-      return d.estimatedCost == d.options.pages * d.options.copies *
-        ((d.options.color ? 10 : 2) + (d.options.paper == 'Legal' ? 1 : 0));
+    function hasPageSelection(o) { return o.keys().hasAny(['pageRanges','selectedPages']); }
+    function validOrderOptions(d) {
+      let o = d.options;
+      return validCoreOptions(o) && (!hasPageSelection(o)
+        || (d.get('attachments',[]).size() == 0 ? validRanges(o)
+          : o.pageRanges == [{'start':1,'end':o.pages}] && o.selectedPages == o.pages));
     }
+    function validAttachment(file) {
+      return file is map && file.keys().hasOnly(['fileName','fileHash','options'])
+        && file.fileName is string && file.fileName.size() > 0 && file.fileName.size() <= 255
+        && file.fileHash is string && file.fileHash.matches('^[a-f0-9]{64}$')
+        && !hasPageSelection(file.options) && validCoreOptions(file.options);
+    }
+    function validAttachments(d) {
+      let files = d.get('attachments',[]);
+      let count = files.size();
+      return files is list && count <= 2
+        && (count == 0 || (d.documentStore == 'hosted' && d.get('review',null) != null
+          && validAttachment(files[0]) && (count == 1 || validAttachment(files[1]))));
+    }
+    function validEstimate(d) {
+      let r = d.get('pricing', {'bw':2,'color':10,'legalExtra':1});
+      let o = d.options;
+      return r == rates() && d.estimatedCost == o.get('selectedPages',o.pages) * o.copies *
+        ((o.color ? r.color : r.bw) + (o.paper == 'Legal' ? r.legalExtra : 0));
+    }
+    function validPrice(d) {
+      return standardPaper(d.options.paper) && d.get('attachments',[]).size() == 0
+        ? validEstimate(d) : d.estimatedCost == 0 && d.pricing == rates();
+    }
+    function recent(t) { return t is int && t >= request.time.toMillis() - 300000 && t <= request.time.toMillis() + 300000; }
+    function validUpdated(d) { return !d.keys().hasAny(['updatedAt']) || recent(d.updatedAt); }
     function validTransition(old, next) {
-      return (old == 'Pending' && next in ['Accepted','Rejected'])
+      return (old == 'Pending' && next in ['Accepted','Rejected','Cancelled'])
         || (old == 'Accepted' && next == 'Printing')
         || (old == 'Printing' && next == 'Ready for Pickup')
         || (old == 'Ready for Pickup' && next == 'Completed');
     }
+    function validReview(review) {
+      return review is map && review.keys().hasOnly(['stage','version','addons','note','quote'])
+        && review.version is int && review.version >= 0
+        && review.addons is list && review.addons.size() <= 2
+        && review.addons.hasOnly(['bookbinding','lamination'])
+        && review.addons.size() == review.addons.toSet().size()
+        && review.note is string && review.note.size() <= 500;
+    }
+    function canReview(old, next) {
+      return old.status == 'Pending' && next.status == 'Pending'
+        && next.get('review',null) != null && validReview(next.review)
+        && next.review.version == old.get('review',{}).get('version',-1) + 1
+        && next.review.addons == old.get('review',{}).get('addons',[])
+        && validUpdated(next);
+    }
+    function staffReview(old, next) {
+      let stage = old.get('review',{}).get('stage','submitted');
+      return next.diff(old).affectedKeys().hasOnly(['review','updatedAt'])
+        && (next.review.stage == 'quoted'
+            && stage in ['submitted','revised','quoted','declined']
+            && next.review.quote is int && next.review.quote >= 1 && next.review.quote <= 200000000
+          || next.review.stage == 'correction'
+            && stage in ['submitted','revised','quoted','declined','approved']
+            && next.review.quote == null && next.review.note.size() > 0);
+    }
+    function studentReview(old, next, orderId) {
+      let review = next.review;
+      let stage = old.review.stage;
+      let changed = next.diff(old).affectedKeys();
+      let name = next.fileName;
+      return stage == 'correction'
+        ? review.stage == 'revised' && review.quote == null && review.note == ''
+          && changed.hasOnly(['review','updatedAt','fileName','storagePath','fileHash','documentStore','options','pricing','estimatedCost','attachments'])
+          && next.documentStore == 'hosted'
+          && name is string && name.size() > 0 && name.size() <= 255
+          && validDocument(next, orderId) && validOrderOptions(next)
+          && (!changed.hasAny(['attachments']) || validAttachments(next)) && validPrice(next)
+        : stage == 'quoted' && changed.hasOnly(['review','updatedAt'])
+          && (review.stage == 'approved' && review.quote == old.review.quote && review.note == old.review.note
+            || review.stage == 'declined' && review.quote == null && review.note == '');
+    }
+    // A permitted read of this fixed path lets clients detect the published rule version.
+    match /capabilities/{capability} {
+      allow get: if signedIn() && capability in ['print-review-v1','paper-sizes-v1','print-tools-v1','service-requests-v1','service-desk-v2'];
+    }
+    function validOrder(d,orderId) {
+      // All required fields are accessed below; a missing field rejects the write.
+      return d.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note','pricing','updatedAt','completedAt','documentDeletedAt','documentStore','fileHash','expectedReadyAt','review','attachments'])
+        && accepting() && validUpdated(d)
+        && d.get('completedAt',null) == null && d.get('documentDeletedAt',null) == null
+        && d.get('expectedReadyAt',null) == null
+        && (d.get('review',null) == null ? standardPaper(d.options.paper)
+          : (validReview(d.review) && d.review.stage == 'submitted'
+          && d.review.version == 0 && d.review.quote == null && d.review.note == ''))
+        && d.ownerId == request.auth.uid
+        && d.studentName is string && d.studentName.size() > 0 && d.studentName.size() <= 200
+        && d.fileName is string && d.fileName.size() > 0 && d.fileName.size() <= 255
+        && validDocument(d, orderId)
+        && validAttachments(d) && validOrderOptions(d) && validPrice(d)
+        && recent(d.createdAt)
+        && d.status == 'Pending'
+        && d.queue == null && d.queueDay == null
+        && d.note == '';
+    }
+    function validPrintedFiles(files, attachments) {
+      return files is list && files.size() == files.toSet().size()
+        && files.hasOnly(attachments == 2 ? [0,1,2] : attachments == 1 ? [0,1] : [0]);
+    }
     match /orders/{orderId} {
-      allow read: if admin() || (signedIn() && resource.data.ownerId == request.auth.uid);
-      allow create: if signedIn() && !admin()
-        && request.resource.data.keys().hasAll(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
-        && request.resource.data.keys().hasOnly(['ownerId','studentName','fileName','storagePath','options','estimatedCost','createdAt','status','queue','queueDay','note'])
-        && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.studentName is string && request.resource.data.studentName.size() > 0 && request.resource.data.studentName.size() <= 200
-        && request.resource.data.fileName is string && request.resource.data.fileName.size() > 0 && request.resource.data.fileName.size() <= 255
-        && request.resource.data.storagePath == 'documents/' + request.auth.uid + '/' + orderId + '.pdf'
-        && validOptions(request.resource.data.options) && validPrice(request.resource.data)
-        && request.resource.data.createdAt is int
-        && request.resource.data.createdAt >= request.time.toMillis() - 300000
-        && request.resource.data.createdAt <= request.time.toMillis() + 300000
-        && request.resource.data.status == 'Pending'
-        && request.resource.data.queue == null && request.resource.data.queueDay == null
+      allow get: if signedIn() && (!exists(/databases/$(database)/documents/orders/$(orderId)) || admin() || resource.data.ownerId == request.auth.uid);
+      allow list: if admin() || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn() && !admin() && validOrder(request.resource.data,orderId);
+      allow update: if signedIn() && resource.data.ownerId == request.auth.uid
+        && resource.data.status == 'Pending' && request.resource.data.status == 'Cancelled'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','note','updatedAt'])
+        && validUpdated(request.resource.data)
         && request.resource.data.note == '';
-      allow update: if admin()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','queue','queueDay','note'])
+      allow update: if request.resource.data.status != resource.data.status && admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','queue','queueDay','note','updatedAt','completedAt'])
+        && validUpdated(request.resource.data)
+        && (request.resource.data.status == 'Completed'
+          ? (!request.resource.data.keys().hasAny(['completedAt']) || recent(request.resource.data.completedAt))
+          : request.resource.data.get('completedAt',null) == resource.data.get('completedAt',null))
         && validTransition(resource.data.status, request.resource.data.status)
+        && (request.resource.data.status != 'Ready for Pickup'
+          || !resource.data.keys().hasAny(['printedFiles'])
+          || resource.data.printedFiles.size() == resource.data.get('attachments',[]).size() + 1)
         && request.resource.data.note is string && request.resource.data.note.size() <= 500
         && (request.resource.data.status != 'Rejected' || request.resource.data.note.size() > 0)
         && ((request.resource.data.status == 'Accepted'
+          && resource.data.get('review',{}).get('stage','approved') == 'approved'
           && request.resource.data.queueDay is string
           && request.resource.data.queueDay.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
           && request.resource.data.queue is int && request.resource.data.queue > 0
-          && getAfter(/databases/$(database)/documents/counters/$(request.resource.data.queueDay)).data.last == request.resource.data.queue)
+          && getAfter(/databases/$(database)/documents/counters/$(request.resource.data.queueDay)).data.last == request.resource.data.queue
+          && getAfter(/databases/$(database)/documents/counters/$(request.resource.data.queueDay)).data.orderId == orderId)
           || (request.resource.data.status != 'Accepted'
             && request.resource.data.queue == resource.data.queue
             && request.resource.data.queueDay == resource.data.queueDay));
+      allow update: if resource.data.status == 'Printing'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedFiles','updatedAt'])
+        && validPrintedFiles(request.resource.data.printedFiles, resource.data.get('attachments',[]).size())
+        && validUpdated(request.resource.data) && admin();
+      allow update: if signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['review'])
+        && canReview(resource.data,request.resource.data)
+        && (request.auth.uid == resource.data.ownerId && studentReview(resource.data,request.resource.data,orderId)
+          || admin() && staffReview(resource.data,request.resource.data));
+      allow update: if admin()
+        && resource.data.status in ['Pending','Accepted','Printing']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['expectedReadyAt','updatedAt'])
+        && validUpdated(request.resource.data)
+        && (request.resource.data.get('expectedReadyAt',null) == null
+          || (request.resource.data.expectedReadyAt is int
+            && request.resource.data.expectedReadyAt >= request.time.toMillis() - 60000
+            && request.resource.data.expectedReadyAt <= request.time.toMillis() + 604800000));
+      allow update: if admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documentDeletedAt'])
+        && resource.data.status in ['Completed','Cancelled']
+        && resource.data.get('documentDeletedAt',null) == null
+        && resource.data.documentStore == 'hosted'
+        && resource.data.storagePath == 'hosted/' + resource.data.ownerId + '/' + orderId + '/' + resource.data.fileHash + '.pdf'
+        && orderClosedAt(resource.data) is int
+        && get(/databases/$(database)/documents/shopSettings/current).data.retentionDays in [7,14,30]
+        && orderClosedAt(resource.data) <= request.time.toMillis() -
+          get(/databases/$(database)/documents/shopSettings/current).data.retentionDays * 86400000
+        && recent(request.resource.data.documentDeletedAt);
+      allow delete: if false;
+    }
+    function orderClosedAt(d) {
+      return d.status == 'Cancelled' ? d.get('updatedAt',null) : d.get('completedAt',null);
+    }
+    function participant(ownerId) {
+      return signedIn() && (ownerId == request.auth.uid || admin());
+    }
+    function threadAccess(parent, id) {
+      return signedIn() && (parent == 'orders' || parent == 'serviceRequests')
+        && participant(get(/databases/$(database)/documents/$(parent)/$(id)).data.ownerId);
+    }
+    match /{parent}/{id}/messages/{messageId} {
+      allow read: if threadAccess(parent, id);
+      allow create: if threadAccess(parent, id)
+        && request.resource.data.keys().hasOnly(['senderId','senderRole','text','createdAt'])
+        && request.resource.data.senderId == request.auth.uid
+        && (request.resource.data.senderRole == 'Shop' && admin()
+          || request.resource.data.senderRole == 'Customer' && !admin())
+        && request.resource.data.text is string && request.resource.data.text.size() <= 1000
+        && request.resource.data.text.matches('(?s).*[^[:space:]].*')
+        && request.resource.data.createdAt == request.time;
+    }
+    match /threadActivity/{key} {
+      function validActivity(d) {
+        return d.keys().hasOnly(['kind','id','ownerId','shopAt','customerAt'])
+          && d.kind in ['orders','serviceRequests'] && key == d.kind + '--' + d.id
+          && d.ownerId == get(/databases/$(database)/documents/$(d.kind)/$(d.id)).data.ownerId
+          && participant(d.ownerId);
+      }
+      function validRoleChange(d, keys) {
+        return (admin() && keys.hasOnly(['shopAt']) && d.shopAt == request.time
+          || !admin() && keys.hasOnly(['customerAt']) && d.customerAt == request.time);
+      }
+      allow read: if participant(resource.data.ownerId);
+      allow create: if validActivity(request.resource.data)
+        && validRoleChange(request.resource.data, request.resource.data.keys().toSet().difference(['kind','id','ownerId'].toSet()));
+      allow update: if validActivity(request.resource.data)
+        && validRoleChange(request.resource.data, request.resource.data.diff(resource.data).affectedKeys());
+    }
+    match /users/{uid}/threadReads/{key} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['seenAt'])
+        && request.resource.data.seenAt == request.time;
+    }
+    match /serviceRequests/{id} {
+      function designFile(d) {
+        return d is map && d.keys().hasOnly(['fileName','fileHash'])
+          && d.fileName is string && d.fileName.size() >= 1 && d.fileName.size() <= 255
+          && d.fileHash is string && d.fileHash.matches('^[a-f0-9]{64}$');
+      }
+      function validQuoteDetails(d) {
+        let breakdown = d.get('quoteDetails', null);
+        return breakdown == null || (breakdown is map
+          && breakdown.keys().hasOnly(['serviceFee','extrasFee','pickupAt'])
+          && breakdown.serviceFee is int && breakdown.serviceFee > 0
+          && breakdown.extrasFee is int && breakdown.extrasFee >= 0
+          && breakdown.serviceFee + breakdown.extrasFee == d.quote
+          && breakdown.pickupAt is int && breakdown.pickupAt > request.time.toMillis()
+          && breakdown.pickupAt <= request.time.toMillis() + 15552000000);
+      }
+      function validService(d) {
+        return d.keys().hasOnly(['ownerId','customerName','service','quantity','details','size',
+          'sides','design','designBack','status','quote','pickup','createdAt','updatedAt','version'])
+          && d.ownerId == request.auth.uid
+          && d.customerName is string && d.customerName.size() >= 1 && d.customerName.size() <= 200
+          && d['service'] in ['pvc-id','print-edit','photocopy','bookbind','scan','tarpapel',
+            'school-supplies','laminate','rush-id','vellum-magazine','tarpaulin','brochure-booklet']
+          && d.quantity is int && d.quantity >= 1 && d.quantity <= 1000
+          && d.details is string && d.details.size() <= 1000
+          && d.size is string && d.size.size() <= 120
+          && (d['service'] != 'tarpaulin' || d.size.size() > 0)
+          && (d['service'] in ['pvc-id','rush-id'] && d.sides in ['Single-sided','Double-sided']
+            || !(d['service'] in ['pvc-id','rush-id']) && d.sides == '')
+          && (d.design == null || designFile(d.design))
+          && (d.get('designBack', null) == null
+            || (d.sides == 'Double-sided' && designFile(d.designBack)))
+          && d.createdAt == request.time && d.updatedAt == request.time
+          && d.version == 0 && d.status == 'Submitted' && d.quote == null && d.pickup == '';
+      }
+      function quoteChange(before, after) {
+        return before.status in ['Submitted','Quoted','Declined','Approved'] && after.status == 'Quoted'
+          && after.quote is int && after.quote >= 1 && after.quote <= 200000000
+          && after.pickup is string && after.pickup.size() <= 250
+          && after.pickup.matches('(?s).*[^[:space:]].*') && validQuoteDetails(after);
+      }
+      function sameQuote(before, after) {
+        return before.quote == after.quote && before.pickup == after.pickup
+          && before.get('quoteDetails',null) == after.get('quoteDetails',null);
+      }
+      function progressChange(before, after) {
+        return ([before.status, after.status] in [
+          ['Approved','In progress'], ['In progress','Ready for pickup'], ['Ready for pickup','Completed']])
+          && sameQuote(before, after);
+      }
+      allow get: if signedIn() && (!exists(/databases/$(database)/documents/serviceRequests/$(id))
+        || participant(resource.data.ownerId));
+      allow list: if participant(resource.data.ownerId);
+      allow create: if signedIn() && !admin() && accepting()
+        && id.matches('^service-[a-f0-9-]{36}$') && validService(request.resource.data);
+      allow update: if participant(resource.data.ownerId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','quote','pickup','quoteDetails','updatedAt','version'])
+        && request.resource.data.updatedAt == request.time && request.resource.data.version == resource.data.version + 1
+        && (admin() && (quoteChange(resource.data, request.resource.data) || progressChange(resource.data, request.resource.data))
+          || !admin() && sameQuote(resource.data, request.resource.data)
+            && ((resource.data.status == 'Quoted' && request.resource.data.status in ['Approved','Declined'])
+              || (resource.data.status in ['Submitted','Quoted','Declined'] && request.resource.data.status == 'Cancelled')));
+      allow update: if admin() && resource.data.status in ['Completed','Cancelled']
+        && resource.data.get('documentDeletedAt',null) == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['documentDeletedAt'])
+        && resource.data.updatedAt is timestamp
+        && get(/databases/$(database)/documents/shopSettings/current).data.retentionDays in [7,14,30]
+        && resource.data.updatedAt.toMillis() <= request.time.toMillis() -
+          get(/databases/$(database)/documents/shopSettings/current).data.retentionDays * 86400000
+        && recent(request.resource.data.documentDeletedAt);
+      match /pushDeliveries/{deviceId} {
+        allow read: if admin();
+        allow create, update: if admin() && deviceId.matches('^[a-f0-9]{64}$')
+          && request.resource.data.keys().hasOnly(['state','updatedAt'])
+          && request.resource.data.state == 'sent' && recent(request.resource.data.updatedAt);
+      }
+    }
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+    match /queueStatus/{id} {
+      allow get: if signedIn() && id == 'current';
+      function validQueueStatus(d) {
+        return d.keys().hasOnly(['waiting','printing','checkedAt'])
+          && d.waiting is int && d.waiting >= 0 && d.waiting <= 10000
+          && d.printing is int && d.printing >= 0 && d.printing <= 10000
+          && recent(d.checkedAt);
+      }
+      allow create: if id == 'current' && admin() && validQueueStatus(request.resource.data);
+      allow update: if id == 'current' && admin() && validQueueStatus(request.resource.data)
+        && request.resource.data.checkedAt > resource.data.checkedAt;
+      allow list, delete: if false;
+    }
+    match /shopSettings/{id} {
+      allow read: if signedIn() && id == 'current';
+      function validSchedule(s) {
+        return s is map && s.keys().hasAll(['days','open','close','cutoff','closed'])
+          && s.keys().hasOnly(['days','open','close','cutoff','closed'])
+          && s.days is list && s.days.size() >= 1 && s.days.size() <= 7
+          && s.days.hasOnly([1,2,3,4,5,6,7]) && s.days.size() == s.days.toSet().size()
+          && s.open is int && s.close is int && s.open >= 0 && s.close <= 1439 && s.open < s.close
+          && (s.cutoff == null || (s.cutoff is int && s.cutoff >= s.open && s.cutoff <= s.close))
+          && s.closed is string && (s.closed == '' || s.closed.matches('^([0-9]{4}-[0-9]{2}-[0-9]{2})(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,13}$'));
+      }
+      function validPaperStock(stock) {
+        let papers = ['A4','Letter','Legal','A3','A5','B5','Folio','Tabloid','Custom'];
+        let available = stock.available;
+        let out = stock.out;
+        return stock.keys().hasOnly(['available','out']) && available is list && out is list
+          && available.hasOnly(papers) && out.hasOnly(papers) && !available.hasAny(out)
+          && available.size() == available.toSet().size() && out.size() == out.toSet().size();
+      }
+      function validSettings(d) {
+        return d.keys().hasAll(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version'])
+          && d.keys().hasOnly(['name','address','pickupHours','acceptingOrders','rates','retentionDays','version','contactEmail','facebookUrl','ratesConfirmed','pickupSchedule','paperStock'])
+          && d.name is string && d.name.size() >= 2 && d.name.size() <= 100
+          && d.address is string && d.address.size() >= 2 && d.address.size() <= 300
+          && d.pickupHours is string && d.pickupHours.size() >= 2 && d.pickupHours.size() <= 200
+          && d.get('contactEmail','') is string && d.get('contactEmail','').size() <= 254
+          && (d.get('contactEmail','') == '' || d.contactEmail.matches('^[^ @]+@[^ @]+[.][^ @]+$'))
+          && d.get('facebookUrl','') is string && d.get('facebookUrl','').size() <= 2048
+          && (d.get('facebookUrl','') == '' || d.facebookUrl.matches('^https://(www[.]|m[.])?(facebook[.]com|fb[.]com)(/[^ ]*)?$'))
+          && d.get('ratesConfirmed',false) is bool
+          && (d.get('pickupSchedule',null) == null || validSchedule(d.pickupSchedule))
+          && (!d.keys().hasAny(['paperStock']) || validPaperStock(d.paperStock))
+          && d.acceptingOrders is bool && validRates(d.rates)
+          && d.retentionDays in [0,7,14,30] && d.version is int;
+      }
+      allow create: if admin() && id == 'current' && validSettings(request.resource.data) && request.resource.data.version == 1;
+      allow update: if admin() && id == 'current' && validSettings(request.resource.data) && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
+    match /users/{uid}/devices/{deviceId} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['token','updatedAt']) && request.resource.data.keys().hasOnly(['token','updatedAt'])
+        && request.resource.data.token is string && request.resource.data.token.size() >= 20 && request.resource.data.token.size() <= 4096
+        && recent(request.resource.data.updatedAt);
+    }
+    match /users/{uid}/pushSubscriptions/{deviceId} {
+      allow read, delete: if signedIn() && (request.auth.uid == uid || admin());
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && deviceId.matches('^[a-f0-9]{64}$')
+        && request.resource.data.keys().hasOnly(['endpoint','keys','updatedAt'])
+        && request.resource.data.endpoint is string
+        && request.resource.data.endpoint.size() >= 20 && request.resource.data.endpoint.size() <= 2048
+        && request.resource.data.endpoint.matches('^https://[^ ]+$')
+        && request.resource.data.keys is map && request.resource.data.keys.size() == 2
+        && request.resource.data.keys.p256dh is string && request.resource.data.keys.auth is string
+        && request.resource.data.keys.p256dh.matches('^[A-Za-z0-9_-]{80,100}$')
+        && request.resource.data.keys.auth.matches('^[A-Za-z0-9_-]{20,30}$')
+        && recent(request.resource.data.updatedAt);
+    }
+    match /orders/{orderId}/pushDeliveries/{deviceId} {
+      allow read: if admin();
+      allow create, update: if admin() && deviceId.matches('^[a-f0-9]{64}$')
+        && request.resource.data.keys().hasOnly(['state','updatedAt'])
+        && request.resource.data.state in ['sent'] && recent(request.resource.data.updatedAt);
       allow delete: if false;
     }
     match /counters/{day} {
       allow read: if admin();
-      allow create: if admin() && request.resource.data.keys().hasOnly(['last']) && request.resource.data.last == 1;
-      allow update: if admin() && request.resource.data.keys().hasOnly(['last']) && request.resource.data.last == resource.data.last + 1;
+      function validCounter() {
+        return request.resource.data.keys().hasOnly(['last','orderId'])
+          && request.resource.data.last is int && request.resource.data.orderId is string
+          && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.status == 'Accepted'
+          && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.queue == request.resource.data.last
+          && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.queueDay == day;
+      }
+      allow create: if admin() && validCounter() && request.resource.data.last == 1;
+      allow update: if request.resource.data.last == resource.data.last + 1 && admin() && validCounter();
       allow delete: if false;
     }
   }
