@@ -13,7 +13,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,6 +49,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -2076,13 +2079,11 @@ fun PreviewDialog(
     var file by remember { mutableStateOf<File?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
-    var page by rememberSaveable {
-        mutableIntStateOf((printOptions?.pageRanges?.firstOrNull()?.start ?: 1) - 1)
-    }
+    val initialPage = (printOptions?.pageRanges?.firstOrNull()?.start ?: 1) - 1
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialPage)
+    val scope = rememberCoroutineScope()
     var printLayout by rememberSaveable { mutableStateOf(printOptions != null) }
-    var clipped by remember { mutableStateOf(false) }
     var pages by remember { mutableIntStateOf(0) }
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(retry) {
         error = null
         try {
@@ -2092,24 +2093,6 @@ fun PreviewDialog(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             error = friendlyError(e)
-        }
-    }
-    LaunchedEffect(file, page, printLayout) {
-        file?.let { f ->
-            bitmap = null
-            try {
-                if (printLayout && printOptions != null) {
-                    val (image, crop) = documents.renderPrint(f, page, printOptions)
-                    bitmap = image
-                    clipped = crop
-                } else {
-                    bitmap = documents.render(f, page)
-                    clipped = false
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                error = "This page could not be displayed. Try opening the PDF in another app."
-            }
         }
     }
     Dialog(
@@ -2154,16 +2137,30 @@ fun PreviewDialog(
                 )
             },
             bottomBar = {
-                if (pages > 0)
+                if (file != null && pages > 0)
                     Surface {
+                        val page =
+                            if (listState.canScrollBackward && !listState.canScrollForward)
+                                pages - 1
+                            else listState.firstVisibleItemIndex.coerceIn(0, pages - 1)
                         Row(
                             Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            TextButton({ page-- }, enabled = page > 0) { Text("Previous") }
+                            TextButton(
+                                { scope.launch { listState.scrollToItem(page - 1) } },
+                                enabled = page > 0,
+                            ) {
+                                Text("Previous")
+                            }
                             Text("${page + 1} / $pages")
-                            TextButton({ page++ }, enabled = page < pages - 1) { Text("Next") }
+                            TextButton(
+                                { scope.launch { listState.scrollToItem(page + 1) } },
+                                enabled = page < pages - 1,
+                            ) {
+                                Text("Next")
+                            }
                         }
                     }
             },
@@ -2189,28 +2186,20 @@ fun PreviewDialog(
                                 Text("Retry preview")
                             }
                         }
-                    bitmap != null ->
-                        Column(
-                            Modifier.fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(12.dp)
-                        ) {
+                    file != null -> {
+                        val source = requireNotNull(file)
+                        Column(Modifier.fillMaxSize()) {
                             if (printOptions != null) {
-                                Panel(Modifier.fillMaxWidth()) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
                                     Text(
                                         "${paperLabel(printOptions.paper)} · ${printOptions.scaleLabel}",
-                                        style = MaterialTheme.typography.titleMedium,
+                                        Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium,
                                     )
-                                    if (printLayout)
-                                        Text(
-                                            "Dashed lines show estimated printer margins.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                    if (clipped)
-                                        Text(
-                                            "Actual size may cut off content. Use Fit to paper to keep the whole page.",
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
                                     TextButton({ printLayout = !printLayout }) {
                                         Text(
                                             if (printLayout) "View original PDF"
@@ -2218,18 +2207,84 @@ fun PreviewDialog(
                                         )
                                     }
                                 }
-                                Spacer(Modifier.height(12.dp))
                             }
-                            Image(
-                                bitmap!!.asImageBitmap(),
-                                "Page ${page + 1} of $pages",
-                                Modifier.fillMaxWidth()
-                                    .aspectRatio(bitmap!!.width.toFloat() / bitmap!!.height),
+                            val renderPage: suspend (Int) -> Pair<Bitmap, Boolean> =
+                                remember(documents, source, printOptions, printLayout) {
+                                    { page ->
+                                        if (printLayout && printOptions != null)
+                                            documents.renderPrint(source, page, printOptions)
+                                        else documents.render(source, page) to false
+                                    }
+                                }
+                            ScrollablePreviewPages(
+                                pages,
+                                listState,
+                                Modifier.weight(1f),
+                                renderPage,
                             )
                         }
+                    }
                     else -> CircularProgressIndicator()
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun ScrollablePreviewPages(
+    pages: Int,
+    listState: LazyListState,
+    modifier: Modifier,
+    renderPage: suspend (Int) -> Pair<Bitmap, Boolean>,
+) {
+    LazyColumn(
+        modifier.fillMaxWidth(),
+        state = listState,
+        contentPadding = PaddingValues(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(pages) { page -> PreviewPage(page, pages, renderPage) }
+    }
+}
+
+@Composable
+private fun PreviewPage(page: Int, count: Int, renderPage: suspend (Int) -> Pair<Bitmap, Boolean>) {
+    val rendered by
+        produceState<Result<Pair<Bitmap, Boolean>>?>(null, page, renderPage) {
+            value = null
+            try {
+                value = Result.success(renderPage(page))
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                value = Result.failure(error)
+            }
+        }
+    val result = rendered
+    val (bitmap, clipped) = result?.getOrNull() ?: (null to false)
+    if (bitmap != null) {
+        Image(
+            bitmap.asImageBitmap(),
+            "Page ${page + 1} of $count",
+            Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height),
+        )
+        if (clipped)
+            Text(
+                "Page ${page + 1}: Actual size may cut off content. Use Fit to paper to keep the whole page.",
+                Modifier.padding(top = 6.dp),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+    } else {
+        Box(
+            Modifier.fillMaxWidth()
+                .aspectRatio(210f / 297)
+                .background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (result?.isFailure == true)
+                Text("Page ${page + 1} could not be displayed.", Modifier.padding(16.dp))
+            else CircularProgressIndicator()
         }
     }
 }

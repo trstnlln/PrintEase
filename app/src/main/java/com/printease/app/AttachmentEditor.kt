@@ -164,6 +164,12 @@ internal fun PrintOptionsEditor(
             "The shop checks stock and confirms the final price.",
             style = MaterialTheme.typography.bodySmall,
         )
+    if (paperSizesAvailable && !custom)
+        Text(
+            "Choose Custom size to set the width and height.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     val availability = stock.status(options.paper)
     if (printToolsAvailable || availability == "out")
         Text(
@@ -218,7 +224,16 @@ internal fun PrintOptionsEditor(
 
 @Composable
 fun ImageSizeEditor(pdf: PdfFile, busy: Boolean, onResize: (Int) -> Unit) {
-    val applied = pdf.imagePercent ?: return
+    val applied = pdf.imagePercent
+    if (applied == null) {
+        Text("Image size (%)", fontWeight = FontWeight.SemiBold)
+        Text(
+            "Available for JPG or PNG uploads.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
     var value by rememberSaveable(pdf.path) { mutableStateOf(applied.toString()) }
     val percent = value.toIntOrNull()
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

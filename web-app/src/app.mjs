@@ -6,6 +6,7 @@ import { firebaseConfig } from "./config.mjs";
 import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, selectedPages, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
 import * as db from "./db.mjs";
+import { mountPreviewPages } from "./pdf-preview.mjs";
 import {pushState,reconcilePushUser,enablePush,disablePush,pushRequest,pickupAlertMessage} from "./push.mjs";
 const freshDraft = () => ({ id: crypto.randomUUID(), pdf: null, file: null, options: defaults(), rawCopies: "1", rawRanges: "", rangeError: null });
 class PrintEase {
@@ -372,9 +373,9 @@ class PrintEase {
         return;
       }
       case "preview-layout":
-        if (this.preview?.doc && !this.preview.rendering) {
+        if (this.preview?.doc) {
           this.preview.layout = !this.preview.layout;
-          return this.drawPreview();
+          return this.showPreviewPages();
         }
         return;
       case "preview-prev":
@@ -886,6 +887,7 @@ class PrintEase {
   }
   closeModal() {
     if (this.preview) {
+      this.preview.pages?.dispose();
       this.preview.doc?.destroy().catch(() => {
       });
       if (this.preview.url) URL.revokeObjectURL(this.preview.url);
@@ -902,8 +904,8 @@ class PrintEase {
     this.openModal(`<div class="dialog-content"><div class="row between"><h2>PrintEase on your iPhone</h2><button class="icon-button" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>Open this link in <b>Safari</b>, then:</p><ol class="install-steps"><li>Tap <b>Share</b> ${icon("share")}.</li><li>Scroll down and select <b>Add to Home Screen</b>.</li><li>Keep the name <b>PrintEase</b> and tap <b>Add</b>.</li></ol><p class="small">PrintEase’s Firebase sign-in is separate from your browser account. Live orders require internet.</p><button class="button" data-action="close-modal">Got it</button></div>`);
   }
   async previewPdf(name, load, options) {
-    this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header>${options ? `<div class="preview-settings"><p><strong>${e(paperLabel(options.paper))}</strong> · ${e(printScaleLabel(options))}</p><p class="small">Dashed lines show estimated printer margins.</p><p class="danger-text" id="preview-clipped" role="status" hidden></p><button class="text-action" data-action="preview-layout">View original PDF</button></div>` : ""}<div class="preview-pages" id="preview-pages"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button><a id="pdf-download" class="icon-button hidden" download="${e(name)}" aria-label="Download PDF">${icon("download")}</a></footer></div>`, null, true);
-    const current = { doc: null, page: options?.pageRanges?.[0]?.start ?? 1, url: null, rendering: false, options, layout: !!options };
+    this.openModal(`<div class="preview-shell"><header class="preview-head"><h2 class="grow">${e(name)}</h2><button class="icon-button" data-action="close-modal" aria-label="Close PDF">${icon("close")}</button></header>${options ? `<div class="preview-settings"><p><strong>${e(paperLabel(options.paper))}</strong> · ${e(printScaleLabel(options))}</p><p class="small">Dashed lines show estimated printer margins.</p><p class="danger-text" id="preview-clipped" role="status" hidden></p><button class="text-action" data-action="preview-layout">View original PDF</button></div>` : ""}<div class="preview-pages" id="preview-pages" role="region" aria-label="Scrollable PDF pages" tabindex="0"><div class="spinner" aria-label="Loading PDF"></div></div><footer class="preview-footer"><button class="button outline" data-action="preview-prev" disabled>Previous</button><span id="page-label" class="small">Loading\u2026</span><button class="button outline" data-action="preview-next" disabled>Next</button><a id="pdf-download" class="icon-button hidden" download="${e(name)}" aria-label="Download PDF">${icon("download")}</a></footer></div>`, null, true);
+    const current = { doc: null, page: options?.pageRanges?.[0]?.start ?? 1, url: null, pages: null, options, layout: !!options };
     this.preview = current;
     try {
       const bytes = await load();
@@ -919,50 +921,50 @@ class PrintEase {
         return;
       }
       current.doc = doc;
-      await this.drawPreview();
+      await this.showPreviewPages();
     } catch (error) {
       if (this.preview === current) {
         document.getElementById("preview-pages").innerHTML = `<div class="card stack"><h3>PDF preview unavailable</h3><p>${e(errorMessage(error))}</p><button class="button outline" data-action="close-modal">Close and try again</button></div>`;
       }
     }
   }
-  async drawPreview() {
+  async showPreviewPages() {
     const p = this.preview;
-    if (!p?.doc || p.rendering) return;
-    p.rendering = true;
+    if (!p?.doc) return;
+    const { renderPage, renderPrintPage } = await import("./pdf.mjs");
+    if (this.preview !== p) return;
     const area = document.getElementById("preview-pages");
-    area.innerHTML = '<canvas aria-label="PDF page"></canvas>';
-    const canvas = area.querySelector("canvas");
-    document.getElementById("page-label").textContent = `${p.page} / ${p.doc.numPages}`;
-    this.modal.dialog.querySelectorAll('[data-action^="preview-"]').forEach((b) => b.disabled = true);
-    try {
-      const { renderPage, renderPrintPage } = await import("./pdf.mjs");
-      const clipped = p.layout ? await renderPrintPage(p.doc, p.page, canvas, p.options) : (await renderPage(p.doc, p.page, canvas), false);
-      if (this.preview !== p) return;
-      const note = document.getElementById("preview-clipped");
-      if (note) {
-        note.hidden = !clipped;
-        note.textContent = clipped ? "Actual size may cut off content. Use Fit to paper to keep the whole page." : "";
+    const label = document.getElementById("page-label");
+    const note = document.getElementById("preview-clipped");
+    const toggle = this.modal.dialog.querySelector('[data-action="preview-layout"]');
+    const previous = this.modal.dialog.querySelector('[data-action="preview-prev"]');
+    const next = this.modal.dialog.querySelector('[data-action="preview-next"]');
+    const layout = p.layout;
+    if (toggle) toggle.textContent = layout ? "View original PDF" : "View print layout";
+    p.pages?.dispose();
+    p.pages = mountPreviewPages(area, {
+      pages: p.doc.numPages,
+      initialPage: p.page,
+      renderPage: async (page, canvas) => {
+        if (layout) return renderPrintPage(p.doc, page, canvas, p.options);
+        await renderPage(p.doc, page, canvas);
+        return false;
+      },
+      onPage: (page, clipped) => {
+        p.page = page;
+        label.textContent = `${page} / ${p.doc.numPages}`;
+        previous.disabled = page <= 1;
+        next.disabled = page >= p.doc.numPages;
+        if (note) {
+          note.hidden = !clipped;
+          note.textContent = clipped ? "Actual size may cut off content. Use Fit to paper to keep the whole page." : "";
+        }
       }
-      const toggle = document.querySelector('[data-action="preview-layout"]');
-      if (toggle) toggle.textContent = p.layout ? "View original PDF" : "View print layout";
-    } catch (error) {
-      if (this.preview === p) this.toast(errorMessage(error));
-    } finally {
-      p.rendering = false;
-      if (this.preview === p) {
-        const toggle = document.querySelector('[data-action="preview-layout"]');
-        if (toggle) toggle.disabled = false;
-        document.querySelector('[data-action="preview-prev"]').disabled = p.page <= 1;
-        document.querySelector('[data-action="preview-next"]').disabled = p.page >= p.doc.numPages;
-      }
-    }
+    });
   }
-  async changePage(delta) {
+  changePage(delta) {
     const p = this.preview;
-    if (!p?.doc || p.rendering) return;
-    p.page = Math.max(1, Math.min(p.doc.numPages, p.page + delta));
-    await this.drawPreview();
+    p?.pages?.jump(p.page + delta);
   }
   async registerWorker() {
     if (!("serviceWorker" in navigator) || location.protocol === "file:") return;

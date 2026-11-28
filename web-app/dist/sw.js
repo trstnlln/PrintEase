@@ -1,5 +1,5 @@
 // Only public application assets are cached. Private API requests are never cached.
-const CACHE='printease-62005b2e38e6845c',ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/nano-print-alangilan.jpg","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/theme.js","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
+const CACHE='printease-8772b510a74e4d89',ASSETS=["/assets/PDFJS-LICENSE.txt","/assets/app.js","/assets/app.js.LEGAL.txt","/assets/logo.png","/assets/nano-print-alangilan.jpg","/assets/pdf.mjs","/assets/pdf.worker.mjs","/assets/theme.js","/assets/touch-icon.png","/index.html","/manifest.webmanifest","/styles.css"];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('printease-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{

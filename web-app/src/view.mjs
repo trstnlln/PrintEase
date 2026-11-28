@@ -215,6 +215,7 @@ function paperPicker(s, item, field, id) {
       min="50" max="1000" step="1" value="${e(item.paperHeight ?? size[1])}" aria-describedby="${id("paper")}-dimension-help" aria-invalid="${!!item.paperError}"></label></div>
       <small id="${id("paper")}-dimension-help" data-paper-help class="${item.paperError ? "danger-text" : ""}">${e(item.paperError || "Enter whole millimeters from 50 to 1,000.")}</small>` : ""}
     ${stockNote(s, current)}
+    ${s.paperSizesAvailable && !size ? '<small>Choose Custom size to set the width and height.</small>' : ""}
     ${requiresPaperQuote(current) ? '<p class="small">The shop will confirm the final price.</p>' : ""}
   </div>`;
 }
@@ -236,7 +237,10 @@ function scaleOptions(options) {
 }
 
 function imageSizeEditor(pdf, index, busy) {
-  if (!pdf?.imagePercent && !pdf?.sourceKind) return "";
+  if (!pdf) return "";
+  if (!pdf.imagePercent && !pdf.sourceKind) {
+    return '<p class="small image-size-note"><strong>Image size (%)</strong><br>Available for JPG or PNG uploads.</p>';
+  }
   return `<div class="image-size-editor">
     <label>Image size (%)<input id="image-size-${index}" type="number" inputmode="numeric" min="1" max="100" step="1"
       value="${pdf.imagePercent ?? 100}" aria-describedby="image-size-help-${index}" ${busy ? "disabled" : ""}></label>

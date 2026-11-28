@@ -5,6 +5,7 @@ import 'fake-indexeddb/auto';
 import {webcrypto} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
+import {mountPreviewPages} from '../src/pdf-preview.mjs';
 import * as db from '../src/db.mjs';
 import {defaults} from '../src/model.mjs';
 globalThis.__PE_TEST__=true;
@@ -364,6 +365,48 @@ test('applying a custom image size saves the updated file and preserves the draf
  assert.equal(app.s.draft.id,id);assert.equal(app.s.draft.pdf.imagePercent,37);
  const stored=await db.get('files',app.draftKey);
  assert.match(await stored.blob.text(),/%PrintEaseImage 37/);
+});
+test('PDF preview scrolls through pages, jumps to a page, and releases distant canvases', async t => {
+ const window = new Window();
+ t.after(() => window.happyDOM.abort());
+ const area = window.document.createElement('div');
+ window.document.body.append(area);
+ Object.defineProperty(area, 'clientHeight', {value: 400});
+ Object.defineProperty(area, 'scrollHeight', {value: 4800});
+ let current;
+ const preview = mountPreviewPages(area, {
+  pages: 8,
+  initialPage: 1,
+  async renderPage(page, canvas) {
+   await Promise.resolve();
+   canvas.width = 420;
+   canvas.height = 600;
+   return page === 8;
+  },
+  onPage(page, clipped) { current = {page, clipped}; }
+ });
+ t.after(() => preview.dispose());
+ for (const [index, sheet] of [...area.children].entries()) {
+  Object.defineProperty(sheet, 'offsetTop', {value: index * 600});
+ }
+ const settle = () => new Promise(resolve => setImmediate(resolve));
+ await settle();
+ assert.equal(area.children.length, 8);
+ assert.equal(area.querySelector('[data-page="1"] canvas').getAttribute('aria-label'), 'Page 1 of 8');
+ area.scrollTop = 600;
+ area.dispatchEvent(new window.Event('scroll'));
+ await settle();
+ assert.equal(current.page, 2);
+ assert.ok(area.querySelector('[data-page="2"] canvas'));
+ preview.jump(8);
+ await settle();
+ assert.equal(area.scrollTop, 4200);
+ assert.deepEqual(current, {page: 8, clipped: true});
+ assert.equal(area.querySelector('[data-page="1"] canvas'), null);
+ preview.dispose();
+ area.scrollTop = 0;
+ area.dispatchEvent(new window.Event('scroll'));
+ assert.equal(current.page, 8);
 });
 test('paper stock is editable and blocks an unavailable size in an existing student draft',async t=>{
  const app=await setup(t);await app.backend.login(true);app.go('settings');
