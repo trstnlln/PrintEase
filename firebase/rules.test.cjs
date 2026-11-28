@@ -315,3 +315,54 @@ test('customers read aggregate queue counts without access to another request', 
  await assertFails(setDoc(staff,{...updated,waiting:2}));
  await assertSucceeds(setDoc(staff,{...updated,waiting:2,checkedAt:updated.checkedAt+1}));
 });
+
+test('service requests enforce ownership, valid details and the quote workflow', async () => {
+  const { serverTimestamp, collection, getDocs, query, where } = require('firebase/firestore');
+  const path = 'serviceRequests/service-11223344-1122-1122-1122-112233445566';
+  const customer = student().firestore();
+  const staff = admin().firestore();
+  const stranger = env.authenticatedContext('other').firestore();
+  await env.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), 'shopSettings/current'), { acceptingOrders: true }, { merge: true }));
+  const fields = {
+    ownerId: 'student', customerName: 'Alex', service: 'pvc-id', quantity: 2, size: '', details: 'Full color',
+    sides: 'Double-sided', design: { fileName: 'ID.pdf', fileHash: 'a'.repeat(64) },
+    status: 'Submitted', version: 0, quote: null, pickup: '', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(doc(customer, path), { ...fields, ownerId: 'other' }));
+  await assertFails(setDoc(doc(customer, path), { ...fields, service: 'tarpaulin', sides: '' }));
+  await assertFails(setDoc(doc(customer, path), { ...fields, design: { fileName: 'ID.pdf', fileHash: 'bad' } }));
+  await assertSucceeds(getDoc(doc(customer, 'capabilities/service-requests-v1')));
+  await assertSucceeds(setDoc(doc(customer, path), fields));
+  await assertSucceeds(getDoc(doc(staff, path)));
+  await assertFails(getDoc(doc(stranger, path)));
+  await assertSucceeds(getDocs(query(collection(customer, 'serviceRequests'), where('ownerId', '==', 'student'))));
+  await assertFails(getDocs(collection(stranger, 'serviceRequests')));
+  const quote = { status: 'Quoted', quote: 150, pickup: 'Tomorrow after 2 PM', version: 1, updatedAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(customer, path), quote));
+  await assertFails(updateDoc(doc(staff, path), { ...quote, pickup: '   ' }));
+  await assertSucceeds(updateDoc(doc(staff, path), quote));
+  const approve = { status: 'Approved', version: 2, updatedAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(stranger, path), approve));
+  await assertFails(updateDoc(doc(customer, path), { ...approve, quote: 1 }));
+  await assertSucceeds(updateDoc(doc(customer, path), approve));
+  await assertFails(updateDoc(doc(staff, path), { ...approve, version: 3, status: 'Ready for pickup' }));
+  await assertSucceeds(updateDoc(doc(staff, path), { ...approve, version: 3, status: 'In progress' }));
+  await assertSucceeds(updateDoc(doc(staff, path), { ...approve, version: 4, status: 'Ready for pickup' }));
+  await assertSucceeds(updateDoc(doc(staff, path), { ...approve, version: 5, status: 'Completed' }));
+
+  await env.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), 'orders/customer-thread'), order('customer-thread')));
+  for (const parent of [path, 'orders/customer-thread']) {
+    const thread = parent + '/messages';
+    const message = { senderId: 'student', senderRole: 'Customer', text: 'Can I collect on Friday?', createdAt: serverTimestamp() };
+    await assertFails(setDoc(doc(stranger, thread, 'intruder'), { ...message, senderId: 'other' }));
+    await assertFails(setDoc(doc(customer, thread, 'fake'), { ...message, senderRole: 'Shop' }));
+    await assertFails(setDoc(doc(customer, thread, 'blank'), { ...message, text: '   ' }));
+    await assertSucceeds(setDoc(doc(customer, thread, 'first'), message));
+    await assertSucceeds(setDoc(doc(staff, thread, 'reply'), { ...message, senderId: 'admin', senderRole: 'Shop', text: 'Yes.\nAfter 2 PM.' }));
+    await assertFails(getDocs(collection(stranger, thread)));
+    await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), thread, 'first')));
+    await assertSucceeds(getDocs(collection(staff, thread)));
+    await assertSucceeds(getDocs(collection(customer, thread)));
+    await assertFails(updateDoc(doc(customer, thread, 'first'), { text: 'Changed' }));
+  }
+});

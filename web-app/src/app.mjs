@@ -5,6 +5,7 @@ import { addons, MAX_QUOTE } from "./review.mjs";
 import { firebaseConfig } from "./config.mjs";
 import { defaults, estimate, pesos, escapeHtml as e, errorMessage, validateOptions, MAX_BYTES, defaultShop, validateShop, parsePageRanges, rangeText, pageLabel, collectionCode, terminal } from "./model.mjs";
 import { authView, shell, dashboard, requestView, detailView, accountView, settingsView, icon } from "./view.mjs";
+import { ServiceDesk, serviceView } from "./service-desk.mjs";
 import * as db from "./db.mjs";
 import { mountPreviewPages } from "./pdf-preview.mjs";
 import { handoutName, handoutOptions, printedSides, slideLayouts, slidesPerSide } from "./handout.mjs";
@@ -16,6 +17,7 @@ class PrintEase {
   constructor({ root = document.getElementById("app"), demo = false } = {}) {
     this.root = root;
     this.s = { mode: demo ? "demo" : readMode(), session: null, orders: [], settings: defaultShop(), reviewAvailable: false, paperSizesAvailable: false, printToolsAvailable: false, submitted: null, queueStatus: null, settingsError: null, shopEdit: null, ready: false, cached: false, syncError: null, busy: false, progress: 0, route: "home", selected: "", filter: "All", search: "", online: navigator.onLine, auth: { register: false, name: "", email: "", password: "", visible: false }, draft: freshDraft(), requestError: null, draftWarning: null, fileReading: false, push:{supported:false,enabled:false,message:null} };
+    this.services = new ServiceDesk(() => this.render());
     this.modal = null;
     this.preview = null;
     this.preparation = null;
@@ -105,8 +107,8 @@ class PrintEase {
   routeFromHash() {
     const hash = location.hash.slice(1);
     const [route, id] = hash.split("/");
-    this.s.route = ["home", "orders", "account", "request", "detail", "settings"].includes(route) ? route : "home";
-    if (route === "detail") {
+    this.s.route = ["home", "orders", "account", "request", "detail", "settings", "services", "service-new", "service-detail", "order-messages"].includes(route) ? route : "home";
+    if (["detail", "service-detail", "order-messages"].includes(route)) {
       try {
         this.s.selected = decodeURIComponent(id || "");
       } catch {
@@ -137,8 +139,14 @@ class PrintEase {
     } catch {
     }
     const s = this.s;
+    this.services.sync(s, this.backend);
+    const isService = ["services", "service-new", "service-detail", "order-messages"].includes(s.route);
+    const oldThread = this.root.querySelector(".service-messages");
+    const threadScroll = oldThread && oldThread.scrollHeight - oldThread.clientHeight - oldThread.scrollTop > 24 ? oldThread.scrollTop : null;
     const servicesWereOpen = this.root.querySelector(".shop-services[open]") !== null;
-    this.root.innerHTML = s.session ? shell(s, s.route === "request" ? requestView(s) : s.route === "detail" ? detailView(s) : s.route === "account" ? accountView(s) : s.route === "settings" && s.session.admin ? settingsView(s) : dashboard(s)) : authView(s);
+    this.root.innerHTML = s.session ? shell(s, isService ? serviceView(s, this.services) : s.route === "request" ? requestView(s) : s.route === "detail" ? detailView(s) : s.route === "account" ? accountView(s) : s.route === "settings" && s.session.admin ? settingsView(s) : dashboard(s)) : authView(s);
+    const thread = this.root.querySelector(".service-messages");
+    if (thread) thread.scrollTop = threadScroll ?? thread.scrollHeight;
     const services = this.root.querySelector(".shop-services");
     if (servicesWereOpen && services) services.open = true;
     if (id) {
@@ -192,6 +200,13 @@ class PrintEase {
     event.preventDefault();
     if (this.s.busy && !["close-modal", "cancel-preparation"].includes(action)) return;
     switch (action) {
+      case "service-remove-file":
+        this.services.file = null;
+        return this.render();
+      case "service-download":
+        return this.action(() => this.services.download());
+      case "service-update":
+        return this.action(() => this.services.update(node.dataset.next, Number(node.dataset.version)));
       case "cancel-preparation":
         this.preparation?.abort();
         return;
@@ -409,6 +424,27 @@ class PrintEase {
     const target = event.target;
     if (!target || target.disabled) return;
     const id = target.id;
+    const serviceFields = { "service-choice": "service", "service-quantity": "quantity", "service-details": "details", "service-size": "size", "service-sides": "sides" };
+    if (serviceFields[id]) {
+      this.services.form[serviceFields[id]] = target.value;
+      if (id === "service-choice") this.render();
+      return;
+    }
+    if (id === "service-file" && event.type === "change") {
+      this.services.file = target.files[0] ?? null;
+      return this.render();
+    }
+    if (id === "service-message") {
+      this.services.text = target.value;
+      return;
+    }
+    if (id === "service-quote" || id === "service-pickup") {
+      this.services.quoteDraft = {
+        quote: document.getElementById("service-quote").value,
+        pickup: document.getElementById("service-pickup").value
+      };
+      return;
+    }
     if (id?.startsWith("auth-")) {
       const key = id.slice(5);
       if (["name", "email", "password"].includes(key)) this.s.auth[key] = target.value;
@@ -526,6 +562,23 @@ class PrintEase {
     this.saveDraft().catch(error => this.toast(errorMessage(error)));
   }
   async onSubmit(event) {
+    const serviceForm = event.target;
+    if (["service-request-form", "service-message-form", "service-quote-form"].includes(serviceForm.id)) {
+      event.preventDefault();
+      if (this.s.busy) return;
+      if (serviceForm.id === "service-message-form") return this.action(() => this.services.send());
+      if (serviceForm.id === "service-quote-form") {
+        const input = {
+          quote: serviceForm.querySelector("#service-quote").valueAsNumber,
+          pickup: serviceForm.querySelector("#service-pickup").value
+        };
+        return this.action(() => this.services.update("quote", Number(serviceForm.dataset.version), input));
+      }
+      let id;
+      await this.action(async () => { id = await this.services.submit(); });
+      if (id) this.go("service-detail", id);
+      return;
+    }
     if (event.target.id === "review-form") {
       event.preventDefault();
       if (this.s.busy) return;
@@ -1089,6 +1142,7 @@ class PrintEase {
     }
   }
   close() {
+    this.services.stop();
     this.preparation?.abort();
     document.removeEventListener("error", this.imageError, true);
     this.backend?.close();

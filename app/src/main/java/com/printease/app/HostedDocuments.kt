@@ -161,13 +161,22 @@ object HostedDocuments {
             }
         }
 
-    suspend fun download(order: PrintOrder, target: File, index: Int = 0): File =
+    suspend fun download(order: PrintOrder, target: File, index: Int = 0): File {
+        require(Regex("[A-Za-z0-9_-]{1,128}").matches(order.id))
+        val query = if (index == 0) "" else "?file=$index"
+        return download("/api/documents/${order.id}$query", target)
+    }
+
+    suspend fun downloadService(id: String, target: File): File {
+        require(Regex("service-[a-f0-9-]{36}").matches(id))
+        return download("/api/service-documents/$id", target)
+    }
+
+    private suspend fun download(path: String, target: File): File =
         withContext(Dispatchers.IO) {
-            require(Regex("[A-Za-z0-9_-]{1,128}").matches(order.id))
             val (_, token) = identity()
-            val query = if (index == 0) "" else "?file=$index"
-            val request = connection("/api/documents/${order.id}$query", token, "GET")
-            val temp = File(target.parentFile, "${order.id}-${UUID.randomUUID()}.part")
+            val request = connection(path, token, "GET")
+            val temp = File(target.parentFile, "${UUID.randomUUID()}.part")
             try {
                 checkResponse(request)
                 request.inputStream.use { input ->

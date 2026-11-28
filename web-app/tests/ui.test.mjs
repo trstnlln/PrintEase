@@ -611,3 +611,54 @@ test('staff checklist saves each printed file and unlocks pickup when complete',
  await app.onClick({target:document.querySelector('[data-action="mark-printed"]'),preventDefault(){}});
  assert.equal(ready().disabled,true);
 });
+
+test('a customer requests a PVC ID and exchanges messages and a quote with the shop', async t => {
+ const app = await setup(t);
+ const pause = async check => {
+  for (let count = 0; count < 40; count++) {
+   if (check()) return;
+   await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.ok(check(), 'The view did not finish loading');
+ };
+ const input = (id, value) => {
+  const target = document.getElementById(id);
+  target.value = value;
+  app.onInput({ target });
+ };
+ const submit = id => app.onSubmit({ target: document.getElementById(id), preventDefault() {} });
+ await app.backend.login(false);
+ app.go('service-new');
+ await pause(() => document.getElementById('service-request-form'));
+ input('service-quantity', '2');
+ input('service-sides', 'Double-sided');
+ input('service-details', 'Please use full color.');
+ await submit('service-request-form');
+ const service = app.s.selected;
+ await pause(() => document.getElementById('service-message'));
+ assert.match(document.body.textContent, /Double-sided/);
+ input('service-message', 'Can I pick up on Friday?');
+ await submit('service-message-form');
+ await app.backend.login(true);
+ app.go('service-detail', service);
+ await pause(() => document.getElementById('service-quote'));
+ assert.match(document.body.textContent, /Can I pick up on Friday/);
+ input('service-message', 'Yes, after 2 PM.');
+ await submit('service-message-form');
+ input('service-quote', '150');
+ input('service-pickup', 'Friday after 2 PM');
+ await submit('service-quote-form');
+ await app.backend.login(false);
+ app.go('service-detail', service);
+ await pause(() => document.querySelector('[data-next="Approved"]'));
+ assert.match(document.body.textContent, /₱150.00/);
+ assert.match(document.body.textContent, /Yes, after 2 PM/);
+ await app.onClick({ target: document.querySelector('[data-next="Approved"]'), preventDefault() {} });
+ assert.match(document.body.textContent, /Approved/);
+ app.go('order-messages', 'sample-1043');
+ await pause(() => document.getElementById('service-message'));
+ input('service-message', 'One more copy, please.');
+ await submit('service-message-form');
+ assert.match(document.body.textContent, /One more copy/);
+ assert.doesNotMatch(document.body.textContent, /Yes, after 2 PM/);
+});

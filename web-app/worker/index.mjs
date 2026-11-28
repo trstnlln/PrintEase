@@ -105,11 +105,12 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
     const actual = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
     if (hash !== actual) fail(409, 'document/changed', 'The PDF changed. Choose it again before sending.');
     if (orderId) {
-     const prior = await firestore(user, 'orders/' + orderId);
+     const forService = /^service-[a-f0-9-]{36}$/.test(orderId);
+     const prior = await firestore(user, (forService ? 'serviceRequests/' : 'orders/') + orderId);
      if (prior.response.ok) {
       const owner = value(prior.data, 'ownerId')?.stringValue;
       const stage = value(prior.data, 'review')?.mapValue?.fields?.stage?.stringValue;
-      if (owner !== user.uid || value(prior.data, 'status')?.stringValue !== 'Pending' || stage !== 'correction') {
+      if (forService || owner !== user.uid || value(prior.data, 'status')?.stringValue !== 'Pending' || stage !== 'correction') {
        fail(409, 'document/order-closed', 'Refresh this request before replacing its PDF.');
       }
      } else if (prior.response.status !== 404) {
@@ -133,6 +134,18 @@ export function createWorker(assets={}, {fetchImpl=fetch,projectId=firebaseConfi
   }
   const cleanupId = path.startsWith('/api/document-cleanup/') ? path.slice('/api/document-cleanup/'.length) : '';
   if (request.method === 'POST' && validRequestId.test(cleanupId)) return removeCompletedPdf(user, env, cleanupId);
+  const service=/^\/api\/service-documents\/(service-[a-f0-9-]{36})$/.exec(path);
+  if(service && request.method==='GET'){
+   const {response,data}=await firestore(user,'serviceRequests/'+service[1]);
+   if(!response.ok) fail(403,'document/access-denied','You do not have access to this design.');
+   const owner=value(data,'ownerId')?.stringValue;
+   if(!owner || (owner!==user.uid && !await administrator(user))) {
+    fail(403,'document/access-denied','You do not have access to this design.');
+   }
+   const hash=value(data,'design')?.mapValue?.fields?.fileHash?.stringValue;
+   if(!validHash.test(hash||'')) fail(404,'document/not-found','This design is unavailable.');
+   return download(env,scopedKey(owner,service[1],hash));
+  }
   const order=/^\/api\/documents\/([A-Za-z0-9_-]{1,128})$/.exec(path);
   if(order&&request.method==='GET'){
    const {response,data}=await firestore(user,'orders/'+encodeURIComponent(order[1]));

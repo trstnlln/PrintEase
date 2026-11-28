@@ -101,9 +101,14 @@ fun PrintEase(
     }
     val session = state.session
     val mainRoute = route in listOf("home", "orders", "account")
-    BackHandler(enabled = session != null && !mainRoute) {
-        if (!busy) model.navigate(if (route == "settings") "account" else "orders")
-    }
+    val backRoute =
+        when (route) {
+            "settings" -> "account"
+            "services" -> "home"
+            "order-messages" -> "detail"
+            else -> "orders"
+        }
+    BackHandler(enabled = session != null && !mainRoute) { if (!busy) model.navigate(backRoute) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -117,6 +122,8 @@ fun PrintEase(
                                 when (route) {
                                     "request" -> "New print request"
                                     "settings" -> "Shop settings"
+                                    "services" -> "Service requests"
+                                    "order-messages" -> "Order messages"
                                     else -> "Order details"
                                 },
                                 style = MaterialTheme.typography.titleLarge,
@@ -124,12 +131,7 @@ fun PrintEase(
                     },
                     navigationIcon = {
                         if (!mainRoute)
-                            IconButton(
-                                onClick = {
-                                    model.navigate(if (route == "settings") "account" else "orders")
-                                },
-                                enabled = !busy,
-                            ) {
+                            IconButton(onClick = { model.navigate(backRoute) }, enabled = !busy) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                             }
                     },
@@ -240,6 +242,25 @@ fun PrintEase(
                             model.navigate("home")
                         },
                     )
+                route == "services" ->
+                    ServiceRequestsContent(
+                        model.serviceDesk,
+                        model.documents,
+                        session,
+                        state.settings.acceptingOrders,
+                    )
+                route == "order-messages" -> {
+                    if (state.orders.any { it.id == selected })
+                        Column(
+                            Modifier.widthIn(max = 700.dp)
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(22.dp)
+                        ) {
+                            MessageThread(model.serviceDesk, session, "orders", selected)
+                        }
+                    else EmptyPanel("Order unavailable", "Return to Orders to open your request.")
+                }
                 route == "detail" -> {
                     val order = state.orders.find { it.id == selected }
                     if (order != null)
@@ -264,6 +285,7 @@ fun PrintEase(
                             onEdit = { model.editCorrection(order) },
                             onCleanup = { model.cleanupPdf(order.id) },
                             onSaveFile = { index -> downloadPdf(order, index) },
+                            onMessages = { model.navigate("order-messages") },
                             printToolsAvailable = state.printToolsAvailable,
                             onPrinted = { index, checked ->
                                 model.markPrinted(order.id, index, checked)
@@ -306,6 +328,7 @@ fun PrintEase(
                         route == "home",
                         onNew = { model.navigate("request") },
                         onOrder = model::openOrder,
+                        onServices = { model.navigate("services") },
                         submittedId = submittedId,
                         hasDraft = pdf != null,
                     )
@@ -695,6 +718,7 @@ fun Dashboard(
     onOrder: (String) -> Unit,
     submittedId: String? = null,
     hasDraft: Boolean = false,
+    onServices: (() -> Unit)? = null,
 ) {
     val session = state.session ?: return
     var filter by rememberSaveable { mutableStateOf("All") }
@@ -871,6 +895,26 @@ fun Dashboard(
                         Icons.Default.TaskAlt,
                         Modifier.weight(1f),
                     )
+                }
+            }
+        }
+        onServices?.let { open ->
+            item {
+                Panel(Modifier.fillMaxWidth()) {
+                    Text(
+                        if (session.admin) "Service requests" else "Other shop services",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Text(
+                        if (session.admin) "Review requests, send quotes, and reply to customers."
+                        else "Request PVC ID, bookbinding, scanning, and more."
+                    )
+                    OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            if (session.admin) "Open service requests"
+                            else "Browse services and requests"
+                        )
+                    }
                 }
             }
         }
@@ -1546,6 +1590,7 @@ fun OrderDetail(
     printToolsAvailable: Boolean = false,
     onPrinted: (Int, Boolean) -> Unit = { _, _ -> },
     onSaveFile: (Int) -> Unit = {},
+    onMessages: (() -> Unit)? = null,
 ) {
     val checklistActive = admin && printToolsAvailable && order.status == OrderStatus.Printing
     val checkedAll = order.printedFiles.size == order.attachments.size + 1
@@ -1563,6 +1608,11 @@ fun OrderDetail(
             .padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        onMessages?.let { open ->
+            OutlinedButton(onClick = open, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (admin) "Message customer" else "Message shop")
+            }
+        }
         ReviewPanel(order, admin, reviewAvailable, !busy && !cached, onReview) {
             if (hasDraft) replaceForCorrection = true else onEdit()
         }

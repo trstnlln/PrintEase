@@ -482,3 +482,38 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .shell:has(.customer-home) .bottom-nav { padding-top: .25rem; }
   .shell:has(.customer-home) .top-actions { gap: .375rem; }
 }
+
+.service-entry,
+.service-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+.service-entry > div { flex: 1 1 230px; }
+a.service-row { color: var(--ink); text-decoration: none; }
+.service-row > div { min-width: 0; overflow-wrap: anywhere; }
+.service-form > label,
+.service-thread form > label { margin-bottom: -8px; }
+.service-form textarea,
+.service-thread textarea { min-height: 72px; }
+.service-instructions,
+.service-messages p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.service-messages { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.service-messages li {
+  width: fit-content;
+  max-width: 90%;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--soft);
+}
+.service-messages li.own { justify-self: end; }
+.service-messages small { color: var(--muted); margin-left: 6px; }
+@media (max-width: 540px) {
+  .service-entry > a { width: 100%; }
+  .service-messages li { max-width: 100%; }
+}
+.service-messages { max-height: min(45vh, 440px); overflow-y: auto; }
+.service-messages:focus-visible { outline: 3px solid #99c85b; outline-offset: 3px; }

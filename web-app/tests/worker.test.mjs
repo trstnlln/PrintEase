@@ -7,11 +7,12 @@ const SITE='https://test.printease.example',projectId='demo-printease';
 const token=(uid,extra={})=>btoa(JSON.stringify({alg:'RS256'}))+'.'+btoa(JSON.stringify({sub:uid,aud:projectId,iss:`https://securetoken.google.com/${projectId}`,exp:9999999999,...extra}))+'.signature';
 async function setup(){
  const bucket=new MemoryBucket(),bytes=samplePDF(2),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),n=>n.toString(16).padStart(2,'0')).join('');
- const state={denyToken:false,disabled:false,validSince:0,order:null,roles:new Set(),referenced:false,denyQuery:false,lookups:0};
+ const state={denyToken:false,disabled:false,validSince:0,order:null,service:null,roles:new Set(),referenced:false,denyQuery:false,lookups:0};
  const worker=createWorker({}, {projectId,apiKey:'test-key',origin:SITE,fetchImpl:async(url,init)=>{
   if(url.includes('accounts:lookup')){state.lookups++;const {idToken}=JSON.parse(init.body);if(state.denyToken)return new Response('{}',{status:400});const uid=JSON.parse(atob(idToken.split('.')[1])).sub;return Response.json({users:[{localId:uid,disabled:state.disabled,validSince:state.validSince}]});}
   if(url.endsWith('/documents:runQuery')){if(state.denyQuery)return new Response('{}',{status:403});return Response.json(state.referenced?[{document:{name:'bound'}}]:[{readTime:'now'}]);}
   if(url.includes('/documents/orders/'))return state.order?Response.json(state.order):new Response('{}',{status:404});
+  if(url.includes('/documents/serviceRequests/'))return state.service?Response.json(state.service):new Response('{}',{status:404});
   if(url.includes('/documents/admins/')){const uid=url.split('/').at(-1);return state.roles.has(uid)?Response.json({fields:{enabled:{booleanValue:true}}}):new Response('{}',{status:404});}
   throw new Error('Unexpected backend request');
  }});
@@ -87,4 +88,25 @@ test('an interrupted batch skips private PDFs the server already received',async
  assert.equal((await s.call(path,{method:'HEAD',jwt:null})).status,401);
  assert.equal((await s.call(path,{method:'HEAD',uid:'other'})).status,404);
  assert.equal((await s.call(path,{method:'HEAD'})).status,204);
+});
+
+test('a service design is downloadable only by its customer and authorized shop staff', async () => {
+ const s = await setup();
+ const id = 'service-11223344-1122-1122-1122-112233445566';
+ const upload = '/api/uploads/' + id + '/' + s.hash;
+ const download = '/api/service-documents/' + id;
+ assert.equal((await s.call(upload, { method: 'PUT', body: s.bytes })).status, 200);
+ s.state.service = { fields: {
+  ownerId: { stringValue: 'student' },
+  design: { mapValue: { fields: { fileHash: { stringValue: s.hash } } } },
+ } };
+ assert.equal((await s.call(download, { jwt: null })).status, 401);
+ assert.equal((await s.call(download, { uid: 'another-customer' })).status, 403);
+ assert.equal((await s.call(download)).status, 200);
+ s.state.roles.add('shop-admin');
+ const file = await s.call(download, { uid: 'shop-admin' });
+ assert.equal(file.status, 200);
+ assert.equal(file.headers.get('Cache-Control'), 'private, no-store');
+ assert.deepEqual(new Uint8Array(await file.arrayBuffer()), s.bytes);
+ assert.equal((await s.call(upload, { method: 'PUT', body: s.bytes })).status, 409);
 });

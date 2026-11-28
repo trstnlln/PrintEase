@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.*
 class PrintViewModel(application: Application, private val saved: SavedStateHandle) :
     AndroidViewModel(application) {
     val documents = Documents(application)
+    internal val serviceDesk = ServiceDesk(application, documents)
     var setupError: String? = null
         private set
 
