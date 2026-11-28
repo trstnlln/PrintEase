@@ -248,8 +248,8 @@ test('expanded sizes and per-file choices require a scoped request that the shop
      pageRanges:[{start:1,end:1000}],selectedPages:1000,actualSize:true},
    review:{stage:'submitted',version:0,addons:[],note:'',quote:null}
  };
- const first = {fileName:'Cover.pdf', fileHash:'8'.repeat(64), options:{...order(id).options,paper:'A3',color:true,duplex:false,actualSize:true}};
- const second = {fileName:'Appendix.pdf', fileHash:'9'.repeat(64), options:{...order(id).options,paper:'B5',copies:1,actualSize:true}};
+ const first = {fileName:'Cover.pdf', fileHash:'8'.repeat(64), options:{...order(id).options,paper:'Custom 200x330 mm',color:true,duplex:false,actualSize:true}};
+ const second = {fileName:'Appendix.pdf', fileHash:'9'.repeat(64), options:{...order(id).options,paper:'Custom 190x240 mm',copies:1,actualSize:true}};
  const target = doc(studentDb,'orders/'+id);
  await assertSucceeds(getDoc(doc(studentDb,'capabilities/paper-sizes-v1')));
  await assertSucceeds(getDoc(doc(studentDb,'capabilities/print-tools-v1')));

@@ -1,4 +1,4 @@
-import { MAX_ATTACHMENTS, batchRangesValid, requestOutOfStock } from "./attachment.mjs";
+import { MAX_ATTACHMENTS, batchRangeMessage, batchRangesValid, hasPartialRanges, requestOutOfStock, validCopies, validFileOptions } from "./attachment.mjs";
 import { clockMinutes } from "./pickup-schedule.mjs";
 import { customPaper, requiresPaperQuote, paperLabel, printScaleLabel } from "./paper.mjs";
 import { addons, MAX_QUOTE } from "./review.mjs";
@@ -294,12 +294,8 @@ class PrintEase {
           this.toast(removed ? "PDF removed. The order history is still saved." : "More PDF versions remain. Run cleanup again.");
         });
       }
-      case "remove-attachment": {
-        const index = Number(node.dataset.index);
-        this.s.draft.attachments = (this.s.draft.attachments ?? []).filter((_,i) => i !== index);
-        await this.saveDraft();
-        return this.render();
-      }
+      case "remove-print-file":
+        return this.removePrintFile(Number(node.dataset.index));
       case "resize-image": {
         const index = Number(node.dataset.index);
         const input = document.getElementById("image-size-" + index);
@@ -329,11 +325,6 @@ class PrintEase {
         if (!order) return;
         const index = Number(node.dataset.index);
         return this.action(() => this.backend.markPrinted(order.id, index, !order.printedFiles?.includes(index)));
-      }
-      case "draft-attachment-preview": {
-        const item = this.s.draft.attachments?.[Number(node.dataset.index)];
-        if (!item) return;
-        return this.previewPdf(item.pdf.name, async () => new Uint8Array(await item.file.arrayBuffer()), item.options);
       }
       case "attachment-preview": {
         const order = this.s.orders.find(item => item.id === this.s.selected);
@@ -370,9 +361,10 @@ class PrintEase {
         });
       }
       case "draft-preview": {
-        const draft = this.s.draft;
-        if (draft.paperError) return this.toast(draft.paperError);
-        return this.previewPdf(draft.pdf.name, async () => new Uint8Array(await draft.file.arrayBuffer()), draft.options);
+        const index = Number(node.dataset.index);
+        const item = index === 0 ? this.s.draft : this.s.draft.attachments?.[index - 1];
+        if (!item?.pdf || item.paperError || item.rangeError) return;
+        return this.previewPdf(item.pdf.name, async () => new Uint8Array(await item.file.arrayBuffer()), item.options);
       }
       case "order-preview": {
         const order = this.s.orders.find((o) => o.id === this.s.selected);
@@ -466,61 +458,49 @@ class PrintEase {
     }
     if (this.s.route !== "request") return;
     const d = this.s.draft;
-    if (target.dataset.attachmentField) {
-      const item = d.attachments?.[Number(target.dataset.attachmentIndex)];
+    const field = target.dataset.printField;
+    if (field) {
+      const card = target.closest("[data-print-file-index]");
+      const index = Number(card?.dataset.printFileIndex);
+      const item = index === 0 ? d : d.attachments?.[index - 1];
       if (!item) return;
-      const field = target.dataset.attachmentField;
       if (field === "copies") {
         item.rawCopies = target.value;
         const copies = Number(target.value);
         if (Number.isInteger(copies) && copies >= 1 && copies <= 100) item.options.copies = copies;
-      } else if (field === "paper") item.options.paper = target.value;
-      else if (field === "actualSize") item.options.actualSize = target.value === "actual";
+      } else if (field === "ranges") {
+        item.rawRanges = target.value;
+        try {
+          item.options.pageRanges = parsePageRanges(target.value, item.options.pages);
+          delete item.options.selectedPages;
+          item.rangeError = null;
+        } catch (error) {
+          item.rangeError = error.message;
+        }
+      } else if (field === "paper") {
+        item.paperError = null;
+        if (target.value === "Custom") {
+          item.paperWidth = "";
+          item.paperHeight = "";
+          item.paperError = "Enter the width and height in millimeters.";
+          item.options.paper = "Custom 210x297 mm";
+        } else item.options.paper = target.value;
+        this.render();
+      } else if (field === "paperWidth" || field === "paperHeight") {
+        item[field] = target.value;
+        const value = customPaper(card.querySelector('[data-print-field="paperWidth"]').value, card.querySelector('[data-print-field="paperHeight"]').value);
+        item.paperError = value ? null : "Enter whole millimeters from 50 to 1,000.";
+        if (value) item.options.paper = value;
+      } else if (field === "actualSize") item.options.actualSize = target.value === "actual";
       else if (field === "color" || field === "duplex") item.options[field] = target.checked;
-      if (field === "paper") this.render();
-      this.updateEstimate();
-      this.saveDraft().catch(() => {});
-      return;
-    }
-    if (id === "copies") {
-      d.rawCopies = target.value;
-      const number = Number(target.value);
-      if (Number.isInteger(number) && number >= 1 && number <= 100) d.options.copies = number;
-    } else if (id === "page-ranges") {
-      d.rawRanges = target.value;
-      try {
-        d.options.pageRanges = parsePageRanges(target.value, d.options.pages);
-        delete d.options.selectedPages;
-        d.rangeError = null;
-      } catch (error) {
-        d.rangeError = error.message;
-      }
     } else if (target.dataset.addon && !d.revision) {
       const chosen = new Set(d.addons || []);
       if (target.checked) chosen.add(target.dataset.addon);
       else chosen.delete(target.dataset.addon);
       d.addons = addons.filter(addon => chosen.has(addon.id)).map(addon => addon.id);
-    } else if (id === "scale") d.options.actualSize = target.value === "actual";
-    else if (id === "color") d.options.color = target.checked;
-    else if (id === "duplex") d.options.duplex = target.checked;
-    else if (target.name === "paper") {
-      d.paperError = null;
-      if (target.value === "Custom") {
-        d.paperWidth = "";
-        d.paperHeight = "";
-        d.paperError = "Enter the width and height in millimeters.";
-        d.options.paper = "Custom 210x297 mm";
-      } else d.options.paper = target.value;
-      this.render();
-    } else if (id === "paper-width" || id === "paper-height") {
-      const key = id === "paper-width" ? "paperWidth" : "paperHeight";
-      d[key] = target.value;
-      const value = customPaper(document.getElementById("paper-width")?.value, document.getElementById("paper-height")?.value);
-      d.paperError = value ? null : "Enter whole millimeters from 50 to 1,000.";
-      if (value) d.options.paper = value;
     } else return;
     this.updateEstimate();
-    this.saveDraft().catch((e2) => this.toast(errorMessage(e2)));
+    this.saveDraft().catch(error => this.toast(errorMessage(error)));
   }
   async onSubmit(event) {
     if (event.target.id === "review-form") {
@@ -620,9 +600,35 @@ class PrintEase {
       return false;
     }
   }
-  async clearDraft() {
+  async removePrintFile(index) {
+    if (this.s.busy || !Number.isInteger(index) || index < 0) return;
+    const draft = this.s.draft;
+    if (!draft.pdf) return;
+    const attachments = draft.attachments ?? [];
+    if (index > attachments.length) return;
+    const remaining = attachments.filter((_, i) => index !== i + 1);
+    this.s.requestError = null;
+    let saving;
+    if (index > 0) {
+      draft.attachments = remaining;
+      saving = this.saveDraft();
+    } else if (remaining.length) {
+      const [next, ...extras] = remaining;
+      this.s.draft = { ...freshDraft(), id: draft.id, revision: draft.revision, addons: draft.addons,
+        ...next, attachments: extras };
+      saving = this.saveDraft(true);
+    } else {
+      saving = this.clearDraft({ ...freshDraft(), revision: draft.revision, addons: draft.addons });
+    }
+    this.render();
+    const nextButton = document.getElementById(`remove-print-file-${Math.min(index, attachments.length - 1)}`);
+    (nextButton ?? document.getElementById("pdf-input"))?.focus({ preventScroll: true });
+    const saved = await saving;
+    if (saved === false && this.s.route === "request") this.render();
+  }
+  async clearDraft(next = freshDraft()) {
     const key = this.draftKey;
-    this.s.draft = freshDraft();
+    this.s.draft = next;
     this.s.requestError = null;
     this.s.draftWarning = null;
     try {
@@ -683,44 +689,56 @@ class PrintEase {
       await this.saveDraft(index === 0);
     }, "request");
   }
-  validAttachmentCopies() {
-    return (this.s.draft.attachments ?? []).every(({rawCopies, options}) =>
-      rawCopies === undefined || (rawCopies !== "" && Number(rawCopies) === options.copies));
-  }
   updateEstimate() {
-    const d = this.s.draft, o = d.options, cost = estimate(o, this.s.settings.rates), valid = !!d.rawCopies.trim() && Number.isInteger(Number(d.rawCopies)) && Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 && !d.rangeError && !d.paperError && this.validAttachmentCopies() && batchRangesValid(d);
+    const d = this.s.draft, o = d.options, cost = estimate(o, this.s.settings.rates);
+    const files = [d, ...(d.attachments ?? [])];
+    const rangesAvailable = files.length === 1;
+    const valid = files.every(validFileOptions) && batchRangesValid(d);
     const set = (id, value) => {
       const node = document.getElementById(id);
       if (node) node.textContent = value;
     };
-    set("summary-copies", valid ? o.copies : "\u2014");
+    set("summary-copies", validCopies(d) ? o.copies : "\u2014");
     set("summary-mode", o.color ? "Color" : "Black & white");
     set("summary-sides", o.duplex ? "Double-sided" : "Single-sided");
     set("summary-paper", paperLabel(o.paper));
     set("summary-scale", printScaleLabel(o));
-    set("paper-dimension-help", d.paperError || "Enter whole millimeters from 50 to 1,000.");
-    document.getElementById("paper-dimension-help")?.classList.toggle("danger-text", !!d.paperError);
     const quoteOnly = requiresPaperQuote(o.paper) || !!d.attachments?.length;
     set("summary-price-label", quoteOnly ? "Pricing" : "Estimated total");
     set("summary-total", d.pdf && valid && !requestOutOfStock(d, this.s.settings) ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
     set("mobile-total", d.pdf && valid && !requestOutOfStock(d, this.s.settings) ? (quoteOnly ? "Shop quote" : pesos(cost.total)) : "\u2014");
     set("summary-formula", quoteOnly ? "The shop checks your files and sends one price for approval." : d.pdf && valid ? `${selectedPages(o)} selected pages \xD7 ${o.copies} copies \xD7 ${pesos(cost.rate)} per printed side. ${cost.sheets} sheets \xB7 Payment at pickup` : "Choose a document to calculate your estimate.");
-    const rangeProblem = d.rangeError || (!batchRangesValid(d) ? "Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately." : null);
-    set("range-help", rangeProblem || "Leave blank for all pages, or enter 1-3, 5, 8-10.");
-    document.getElementById("range-help")?.classList.toggle("danger-text", !!rangeProblem);
-    document.getElementById("page-ranges")?.setAttribute("aria-invalid", String(!!rangeProblem));
-    set("copy-help", Number(d.rawCopies) >= 1 && Number(d.rawCopies) <= 100 ? "Choose 1\u2013100 copies." : "Enter a whole number from 1 to 100.");
-    document.getElementById("copy-help")?.classList.toggle("danger-text", !valid);
-    document.getElementById("copies")?.setAttribute("aria-invalid", String(!valid));
+    document.querySelectorAll("[data-print-file-index]").forEach(card => {
+      const file = files[Number(card.dataset.printFileIndex)];
+      const updateHelp = (name, message, invalid) => {
+        const help = card.querySelector(`[data-${name}-help]`);
+        if (help) {
+          help.textContent = message;
+          help.classList.toggle("danger-text", invalid);
+        }
+      };
+      const rangeProblem = file.rangeError || (!rangesAvailable && hasPartialRanges(file.options) ? batchRangeMessage : "");
+      const range = card.querySelector('[data-print-field="ranges"]');
+      range.disabled = this.s.busy || !file.pdf || (!rangesAvailable && !rangeProblem);
+      range.setAttribute("aria-invalid", String(!!rangeProblem));
+      updateHelp("range", rangeProblem || (rangesAvailable ? "Leave blank for all pages, or enter 1-3, 5, 8-10." : batchRangeMessage), !!rangeProblem);
+      const copies = validCopies(file);
+      card.querySelector('[data-print-field="copies"]').setAttribute("aria-invalid", String(!copies));
+      updateHelp("copy", copies ? "Choose 1–100 copies." : "Enter a whole number from 1 to 100.", !copies);
+      updateHelp("paper", file.paperError || "Enter whole millimeters from 50 to 1,000.", !!file.paperError);
+      card.querySelectorAll('[data-print-field="paperWidth"],[data-print-field="paperHeight"]').forEach(input => input.setAttribute("aria-invalid", String(!!file.paperError)));
+      const preview = card.querySelector('[data-action="draft-preview"]');
+      if (preview) preview.disabled = this.s.busy || !!file.paperError || !!file.rangeError;
+    });
     document.querySelectorAll('[data-action="review"]').forEach((button) => button.disabled = !d.pdf || !valid || requestOutOfStock(d, this.s.settings) || this.s.busy || (!this.s.settings.acceptingOrders && !d.revision) || !!this.s.settingsError);
   }
   review() {
     const d = this.s.draft;
-    if (d.paperError) return this.toast(d.paperError);
+    if (!d.pdf) return this.toast("Choose a file to print.");
     if (requestOutOfStock(d, this.s.settings)) return this.toast("Choose a paper size the shop can supply.");
-    if (!batchRangesValid(d)) return this.toast("Multi-PDF requests print all pages. Clear the page ranges or submit this PDF separately.");
-    if (!this.validAttachmentCopies()) return this.toast("Enter 1–100 copies for each PDF.");
-    if (!d.pdf || !d.rawCopies.trim() || Number(d.rawCopies) !== d.options.copies || d.rangeError) return this.toast("Choose a PDF and a valid number of copies.");
+    if (!batchRangesValid(d)) return this.toast(batchRangeMessage);
+    const invalid = [d, ...(d.attachments ?? [])].find(file => !validFileOptions(file));
+    if (invalid) return this.toast(invalid.paperError || invalid.rangeError || "Enter 1–100 copies for each file.");
     if ((!this.s.settings.acceptingOrders && !d.revision) || this.s.settingsError) return this.toast(this.s.settingsError || "The shop has paused new requests. Your draft is saved.");
     const quotedVersion = this.s.settings.version;
     const cost = estimate(d.options, this.s.settings.rates);
@@ -837,7 +855,9 @@ class PrintEase {
       file.name = item.fileName;
       const pdf = { ...await inspectPdf(file), imagePercent: await readImageSize(file) };
       if (pdf.pages !== item.options.pages) throw new Error("A saved PDF no longer matches its page count.");
-      return { pdf, file, options: structuredClone(item.options), rawCopies: String(item.options.copies) };
+      const options = structuredClone(item.options);
+      validateOptions(options);
+      return { pdf, file, options, rawCopies: String(options.copies) };
     }));
     if(uid!==this.s.session?.uid||generation!==this.generation)return;
     const draft={id:correcting ? order.id : crypto.randomUUID(),revision,addons:order.review?.addons,attachments,pdf,file,options,rawCopies:String(options.copies),rawRanges:rangeText(options.pageRanges),rangeError:null};

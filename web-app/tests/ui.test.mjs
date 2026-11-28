@@ -250,7 +250,7 @@ test('the top picker accepts a batch and keeps print settings close to each file
  const app=await setup(t);await app.backend.login(false);app.go('request');
  const picker=document.querySelector('#pdf-input');
  assert.equal(picker.multiple,true);
- const first=await selectedFile(2),second=await selectedFile(3),third=await selectedFile(1);
+ const first=await selectedFile(2),second=await selectedFile(3),third=await selectedFile(4);
  first.name='Report.pdf';second.name='Notes.pdf';third.name='Cover.pdf';
  Object.defineProperty(picker,'files',{value:[first,second]});
  await app.onInput({target:picker,type:'change'});
@@ -267,6 +267,8 @@ test('the top picker accepts a batch and keeps print settings close to each file
  const names = ['Report.pdf', 'Notes.pdf', 'Cover.pdf'];
  assert.deepEqual(cards.map(card => card.firstElementChild.querySelector('h3').textContent), names);
  assert.deepEqual(cards.map(card => document.getElementById(card.getAttribute('aria-labelledby')).textContent), names);
+ assert.deepEqual(cards.map(card => [...card.querySelectorAll('[data-print-field]')].map(field => field.dataset.printField)),
+   Array(3).fill(['ranges', 'paper', 'actualSize', 'copies', 'color', 'duplex']));
  assert.deepEqual(cards.map(card => card.querySelector('input[type=number]').id), ['copies', 'file-0-copies', 'file-1-copies']);
  for (const [id, value] of [['copies', '2'], ['file-0-copies', '3'], ['file-1-copies', '4']]) {
   const target = document.getElementById(id);
@@ -278,10 +280,25 @@ test('the top picker accepts a batch and keeps print settings close to each file
   target.checked = true;
   app.onInput({target});
  }
+ const edit = (id, value) => {
+  const target = document.getElementById(id);
+  assert.ok(target, id);
+  target.value = value;
+  app.onInput({target});
+ };
+ assert.ok(document.getElementById('page-ranges').disabled);
+ assert.ok(document.getElementById('file-0-ranges').disabled);
+ assert.ok(document.getElementById('file-1-ranges').disabled);
+ edit('file-1-paper', 'Custom');
+ assert.ok(document.querySelector('[data-action="review"]').disabled);
+ edit('file-1-paperWidth', '200');
+ edit('file-1-paperHeight', '330');
  app.review();
  const reviewFiles = [...document.querySelectorAll('.review-request-files section')];
  assert.deepEqual(reviewFiles.map(file => file.querySelector('h3').textContent), names);
  assert.equal(document.activeElement, reviewFiles[0].querySelector('h3'));
+ assert.deepEqual(reviewFiles.map(file => file.querySelector('dd').textContent),
+   ['All 2 pages', 'All 3 pages', 'All 4 pages']);
  assert.deepEqual(reviewFiles.map(file => [...file.querySelectorAll('dd')].slice(2, 5).map(option => option.textContent)), [
   ['2', 'Black & white', 'Single-sided'],
   ['3', 'Color', 'Single-sided'],
@@ -290,6 +307,7 @@ test('the top picker accepts a batch and keeps print settings close to each file
  await app.onClick({target:document.querySelector('[data-action="confirm"]'),preventDefault(){}});
  const submitted = app.s.orders.find(order => order.fileName === names[0]);
  assert.equal(submitted.options.copies, 2);
+ assert.equal(submitted.attachments[1].options.paper, 'Custom 200x330 mm');
  assert.deepEqual(submitted.attachments.map(({fileName,options}) => [fileName,options.copies,options.color,options.duplex]), [
   ['Notes.pdf',3,true,false], ['Cover.pdf',4,false,true]
  ]);
@@ -297,6 +315,44 @@ test('the top picker accepts a batch and keeps print settings close to each file
  const shortcut=document.querySelector('.compact-action');
  assert.equal(shortcut.getAttribute('aria-label'),'New print request');
  assert.equal(shortcut.querySelectorAll('svg').length,1);
+});
+test('remove buttons promote the next file with its own settings and clear the last file', async t => {
+ const app = await setup(t);
+ await app.backend.login(false);
+ app.go('request');
+ const first = await selectedFile(1), second = await selectedFile(2), third = await selectedFile(3);
+ first.name = 'Report.pdf';
+ second.name = 'Notes.pdf';
+ third.name = 'Cover.pdf';
+ await app.pickFiles([first, second, third]);
+ const copies = document.getElementById('file-0-copies');
+ copies.value = '7';
+ app.onInput({target: copies});
+ const paper = document.getElementById('file-0-paper');
+ paper.value = 'A3';
+ app.onInput({target: paper});
+ const remove = index => app.onClick({
+  target: document.getElementById('remove-print-file-' + index),
+  preventDefault() {}
+ });
+ assert.equal(document.getElementById('remove-print-file-0').getAttribute('aria-label'), 'Remove Report.pdf');
+ await remove(0);
+ assert.equal(app.s.draft.pdf.name, 'Notes.pdf');
+ assert.equal(app.s.draft.options.pages, 2);
+ assert.equal(document.getElementById('copies').value, '7');
+ assert.equal(app.s.draft.options.paper, 'A3');
+ assert.equal(document.querySelector('#paper-size option[selected]').value, 'A3');
+ assert.match(document.getElementById('print-file-2').textContent, /Cover/);
+ assert.equal((await db.get('settings', app.draftKey)).value.pdf.name, 'Notes.pdf');
+ assert.equal((await db.get('files', app.draftKey)).blob.size, app.s.draft.file.size);
+ await remove(1);
+ assert.equal(document.querySelectorAll('.file-options [data-action="remove-print-file"]').length, 1);
+ assert.ok(!document.getElementById('page-ranges').disabled);
+ await remove(0);
+ assert.equal(app.s.draft.pdf, null);
+ assert.equal(await db.get('files', app.draftKey), undefined);
+ assert.ok(document.querySelector('[data-action="review"]').disabled);
+ assert.ok(document.getElementById('pdf-input').multiple);
 });
 test('applying a custom image size saves the updated file and preserves the draft ID',async t=>{
  const app=await setup(t);await app.backend.login(false);app.go('request');

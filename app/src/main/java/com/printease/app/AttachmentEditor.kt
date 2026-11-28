@@ -3,14 +3,17 @@ package com.printease.app
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 
@@ -31,95 +34,185 @@ internal fun FileOptionsHeading(
     }
 }
 
+internal val printOptionTextSaver =
+    listSaver<PrintOptionText, String>(
+        save = { listOf(it.copies, it.ranges, it.width, it.height) },
+        restore = { PrintOptionText(it[0], it[1], it[2], it[3]) },
+    )
+
 @Composable
-fun AttachmentEditor(
-    item: AttachmentDraft,
+internal fun PrintOptionsEditor(
+    pdf: PdfFile?,
+    options: PrintOptions,
+    input: PrintOptionText,
     busy: Boolean,
-    onChange: (AttachmentDraft) -> Unit,
-    onRemove: () -> Unit,
-    position: Int,
-    count: Int,
     stock: PaperStock,
+    paperSizesAvailable: Boolean,
     printToolsAvailable: Boolean,
+    allPagesRequired: Boolean,
+    onChange: (PrintOptions, PrintOptionText) -> Unit,
     onPreview: () -> Unit,
     onResize: (Int) -> Unit,
+    position: Int,
+    count: Int,
+    onRemove: (() -> Unit)? = null,
 ) {
     var choosePaper by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val custom = customPaperDimensions(options.paper) != null
+    val validPaper = input.validPaper(options)
+    val ranges = runCatching { parsePageRanges(input.ranges, options.pages) }
+    val rangeConflict = allPagesRequired && options.selectedPages != options.pages
+    val validCopies = input.validCopies(options)
+    if (pdf != null) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FileOptionsHeading(item.pdf.name, position, count, Modifier.weight(1f))
-            TextButton(
-                onRemove,
-                modifier = Modifier.semantics { contentDescription = "Remove ${item.pdf.name}" },
-                enabled = !busy,
-            ) {
-                Text("Remove")
-            }
-        }
-        Text("${item.pdf.pages} pages · All pages", style = MaterialTheme.typography.bodySmall)
-        Box {
-            OutlinedButton(
-                { choosePaper = true },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !busy,
-            ) {
-                Text("Paper · ${paperLabel(item.options.paper)}", Modifier.weight(1f))
-                Icon(Icons.Default.ExpandMore, null)
-            }
-            DropdownMenu(expanded = choosePaper, onDismissRequest = { choosePaper = false }) {
-                (standardPaperSizes + quotedPaperSizes).forEach { size ->
-                    DropdownMenuItem(
-                        text = { Text(stock.menuLabel(size, printToolsAvailable)) },
-                        enabled = stock.status(size) != "out",
-                        onClick = {
-                            choosePaper = false
-                            onChange(item.copy(options = item.options.copy(paper = size)))
-                        },
-                    )
+            FileOptionsHeading(pdf.name, position, count, Modifier.weight(1f))
+            if (onRemove != null)
+                IconButton(onRemove, enabled = !busy) {
+                    Icon(Icons.Default.Close, "Remove ${pdf.name}")
                 }
+        }
+    }
+    OutlinedTextField(
+        input.ranges,
+        { text ->
+            val value = text.take(120)
+            val parsed = runCatching { parsePageRanges(value, options.pages) }.getOrNull()
+            onChange(
+                parsed?.let { options.copy(pageRanges = it) } ?: options,
+                input.copy(ranges = value),
+            )
+        },
+        label = { Text("Pages to print") },
+        placeholder = { Text("All pages") },
+        supportingText = {
+            Text(
+                ranges.exceptionOrNull()?.message
+                    ?: if (allPagesRequired) batchRangeMessage
+                    else "Leave blank for all pages, or enter 1-3, 5, 8-10"
+            )
+        },
+        isError = ranges.isFailure || rangeConflict,
+        enabled = !busy && pdf != null && (!allPagesRequired || rangeConflict || ranges.isFailure),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text("Paper size", fontWeight = FontWeight.SemiBold)
+    Box {
+        OutlinedButton(
+            { choosePaper = true },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(paperLabel(options.paper), Modifier.weight(1f))
+            Icon(Icons.Default.ExpandMore, null)
+        }
+        DropdownMenu(expanded = choosePaper, onDismissRequest = { choosePaper = false }) {
+            val sizes =
+                standardPaperSizes +
+                    if (paperSizesAvailable) quotedPaperSizes + "Custom" else emptyList()
+            sizes.forEach { size ->
+                DropdownMenuItem(
+                    text = { Text(stock.menuLabel(size, printToolsAvailable)) },
+                    enabled = stock.status(size) != "out",
+                    onClick = {
+                        choosePaper = false
+                        if (size == "Custom") {
+                            onChange(
+                                options.copy(paper = "Custom 210x297 mm"),
+                                input.copy(width = "", height = ""),
+                            )
+                        } else onChange(options.copy(paper = size), input)
+                    },
+                )
             }
         }
-        if (stock.status(item.options.paper) == "out")
-            Text(
-                "Out of stock. Choose another paper size.",
-                color = MaterialTheme.colorScheme.error,
+    }
+    if (custom) {
+        val updateDimensions: (PrintOptionText) -> Unit = { text ->
+            val paper = customPaper(text.width, text.height)
+            onChange(paper?.let { options.copy(paper = it) } ?: options, text)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                input.width,
+                { updateDimensions(input.copy(width = it.filter(Char::isDigit).take(4))) },
+                modifier = Modifier.weight(1f),
+                label = { Text("Width (mm)") },
+                isError = !validPaper,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                enabled = !busy,
             )
-        OutlinedTextField(
-            item.copiesText,
-            { text ->
-                val input = text.filter(Char::isDigit).take(3)
-                val copies = input.toIntOrNull()?.takeIf { it in 1..100 } ?: item.options.copies
-                onChange(
-                    item.copy(options = item.options.copy(copies = copies), copiesText = input)
-                )
-            },
-            Modifier.fillMaxWidth(),
-            enabled = !busy,
-            label = { Text("Copies") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = !item.validCopies,
-            supportingText = { Text("1–100 copies") },
+            OutlinedTextField(
+                input.height,
+                { updateDimensions(input.copy(height = it.filter(Char::isDigit).take(4))) },
+                modifier = Modifier.weight(1f),
+                label = { Text("Height (mm)") },
+                isError = !validPaper,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                enabled = !busy,
+            )
+        }
+        Text(
+            "Enter whole millimeters from 50 to 1,000.",
+            style = MaterialTheme.typography.bodySmall,
         )
-        if (printToolsAvailable)
-            PreferenceSwitch(
-                "Actual size",
-                "Off for Fit to paper",
-                item.options.actualSize,
-                !busy,
-            ) {
-                onChange(item.copy(options = item.options.copy(actualSize = it)))
-            }
-        ImageSizeEditor(item.pdf, busy, onResize)
-        OutlinedButton(onPreview, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
+    }
+    if (needsPaperQuote(options.paper))
+        Text(
+            "The shop checks stock and confirms the final price.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    val availability = stock.status(options.paper)
+    if (printToolsAvailable || availability == "out")
+        Text(
+            if (availability == "out") "Out of stock. Choose another paper size."
+            else stockLabels.getValue(availability),
+            color =
+                if (availability == "out") MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    if (printToolsAvailable)
+        PreferenceSwitch("Actual size", "Off for Fit to paper", options.actualSize, !busy) {
+            onChange(options.copy(actualSize = it), input)
+        }
+    if (pdf != null) {
+        ImageSizeEditor(pdf, busy, onResize)
+        OutlinedButton(
+            onPreview,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !busy && validPaper && ranges.isSuccess,
+        ) {
+            Icon(Icons.Default.Visibility, null)
+            Spacer(Modifier.width(8.dp))
             Text("Preview print layout")
         }
-        PreferenceSwitch("Print in color", "Off for black & white", item.options.color, !busy) {
-            onChange(item.copy(options = item.options.copy(color = it)))
-        }
-        PreferenceSwitch("Double-sided", "Print on both sides", item.options.duplex, !busy) {
-            onChange(item.copy(options = item.options.copy(duplex = it)))
-        }
+    }
+    OutlinedTextField(
+        input.copies,
+        { text ->
+            val value = text.filter(Char::isDigit).take(3)
+            val copies = value.toIntOrNull()?.takeIf { it in 1..100 } ?: options.copies
+            onChange(options.copy(copies = copies), input.copy(copies = value))
+        },
+        modifier = Modifier.fillMaxWidth(),
+        enabled = !busy,
+        label = { Text("Copies") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        isError = !validCopies,
+        supportingText = {
+            Text(if (validCopies) "Choose 1–100 copies" else "Enter a number from 1 to 100")
+        },
+    )
+    HorizontalDivider()
+    PreferenceSwitch("Print in color", "Off for black & white", options.color, !busy) {
+        onChange(options.copy(color = it), input)
+    }
+    PreferenceSwitch("Double-sided", "Use both sides to save paper", options.duplex, !busy) {
+        onChange(options.copy(duplex = it), input)
     }
 }
 

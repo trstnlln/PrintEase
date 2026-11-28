@@ -106,7 +106,14 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                     AttachmentDraft(
                         pdf,
                         options,
-                        item.getString("copiesText", options.copies.toString()),
+                        PrintOptionText(options).let { defaults ->
+                            PrintOptionText(
+                                item.getString("copiesText", defaults.copies),
+                                item.getString("rangesText", defaults.ranges),
+                                item.getString("paperWidth", defaults.width),
+                                item.getString("paperHeight", defaults.height),
+                            )
+                        },
                     )
                 }
                 .getOrNull()
@@ -125,7 +132,10 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
                         putBoolean("color", item.options.color)
                         putBoolean("duplex", item.options.duplex)
                         putBoolean("actualSize", item.options.actualSize)
-                        putString("copiesText", item.copiesText)
+                        putString("copiesText", item.input.copies)
+                        putString("rangesText", item.input.ranges)
+                        putString("paperWidth", item.input.width)
+                        putString("paperHeight", item.input.height)
                     }
                 }
             )
@@ -175,10 +185,30 @@ class PrintViewModel(application: Application, private val saved: SavedStateHand
         }
     }
 
-    fun removeAttachment(index: Int) {
-        if (busy.value) return
-        attachments.value.getOrNull(index)?.let { File(it.pdf.path).delete() }
-        saveAttachments(attachments.value.filterIndexed { i, _ -> i != index })
+    fun removePrintFile(index: Int) {
+        if (busy.value || index < 0) return
+        if (index > 0) {
+            val item = attachments.value.getOrNull(index - 1) ?: return
+            saveAttachments(attachments.value.filterIndexed { i, _ -> i != index - 1 })
+            File(item.pdf.path).delete()
+            return
+        }
+        val previous = pdf.value ?: return
+        val next = attachments.value.firstOrNull()
+        if (next == null) {
+            setOptions(PrintOptions())
+            pdf.value = null
+            saved.remove<String>("pdfPath")
+            saved.remove<String>("pdfName")
+            saved.remove<String>("draftId")
+        } else {
+            setOptions(next.options)
+            pdf.value = next.pdf
+            saved["pdfPath"] = next.pdf.path
+            saved["pdfName"] = next.pdf.name
+            saveAttachments(attachments.value.drop(1))
+        }
+        File(previous.path).delete()
     }
 
     fun navigate(value: String) {
